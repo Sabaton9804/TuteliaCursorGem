@@ -1,0 +1,14 @@
+{
+  "name": "Tutelia",
+  "description": "Gestión inteligente de tutelas de urgencia para despachos judiciales en Colombia. Incluye radicación, flujo de trabajo, términos y síntesis procesal con IA.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "AI procedural synthesis",
+    "Judicial workflow management",
+    "Deadline tracking (Semáforo)",
+    "Electronic document repository"
+  ]
+}

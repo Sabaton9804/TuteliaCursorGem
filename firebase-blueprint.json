@@ -1,0 +1,112 @@
+{
+  "entities": {
+    "court": {
+      "title": "Juzgado",
+      "description": "Unidad judicial (despacho) que gestiona expedientes.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "city": { "type": "string" }
+      },
+      "required": ["id", "name", "email"]
+    },
+    "userProfile": {
+      "title": "Perfil de Usuario",
+      "description": "Funcionario del juzgado.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["judge", "clerk", "official", "admin"] },
+        "courtId": { "type": "string" }
+      },
+      "required": ["id", "email", "role", "courtId"]
+    },
+    "case": {
+      "title": "Expediente",
+      "description": "Una tutela en trámite.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "radicado": { "type": "string" },
+        "courtId": { "type": "string" },
+        "claimant": { "type": "string" },
+        "defendant": { "type": "string" },
+        "status": { "type": "string", "enum": ["received", "admitted", "transfer", "judgment", "archived"] },
+        "operationalStatus": { "type": "string" },
+        "assignedTo": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "deadlineAt": { "type": "string", "format": "date-time" },
+        "sgdeId": { "type": "string" },
+        "sourceChannel": { "type": "string" },
+        "summary": { "type": "string" },
+        "claimantId": { "type": "string" },
+        "claimantEmail": { "type": "string" },
+        "defendantId": { "type": "string" },
+        "defendantEmail": { "type": "string" },
+        "legalHechos": { "type": "string" },
+        "legalPretensiones": { "type": "string" },
+        "legalDerechoTutelado": { "type": "string" },
+        "legalIdentificaciones": { "type": "string" }
+      },
+      "required": ["id", "radicado", "courtId", "status", "createdAt"]
+    },
+    "document": {
+      "title": "Documento",
+      "description": "Archivo asociado a un expediente.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "caseId": { "type": "string" },
+        "type": { "type": "string" },
+        "name": { "type": "string" },
+        "storageKey": { "type": "string" },
+        "hash": { "type": "string" },
+        "sgdeId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "caseId", "type", "storageKey", "createdAt"]
+    },
+    "action": {
+      "title": "Actuación",
+      "description": "Evento en la historia del expediente.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "caseId": { "type": "string" },
+        "userId": { "type": "string" },
+        "type": { "type": "string" },
+        "description": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "metadata": { "type": "object" }
+      },
+      "required": ["id", "caseId", "userId", "type", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/courts/{courtId}": {
+      "schema": "court",
+      "description": "Información del juzgado."
+    },
+    "/courts/{courtId}/users/{userId}": {
+      "schema": "userProfile",
+      "description": "Usuarios pertenecientes a un juzgado."
+    },
+    "/courts/{courtId}/cases/{caseId}": {
+      "schema": "case",
+      "description": "Expedientes del juzgado."
+    },
+    "/courts/{courtId}/cases/{caseId}/documents/{docId}": {
+      "schema": "document",
+      "description": "Documentos de un expediente."
+    },
+    "/courts/{courtId}/cases/{caseId}/actions/{actionId}": {
+      "schema": "action",
+      "description": "Bitácora de actuaciones del expediente."
+    }
+  }
+}
