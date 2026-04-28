@@ -21,11 +21,11 @@ import {
 } from 'lucide-react';
 import { collection, addDoc, serverTimestamp, updateDoc, query, getDocs, limit, orderBy, where } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
+import { signInAnonymously } from 'firebase/auth';
 import { handleFirestoreError } from '../lib/error-handler';
 import { motion, AnimatePresence } from 'motion/react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { PDFDocument } from 'pdf-lib';
-import { GoogleGenAI, Type } from "@google/genai";
 import { COURT_CONSTANTS, RIGHTS_LIST } from '../constants';
 
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -194,6 +194,48 @@ interface LegalAnalysis {
   pretensiones: string;
 }
 
+const NEW_CASE_DRAFT_KEY = 'tutelia_new_case_draft';
+const AI_ANALYSIS_CACHE_KEY = 'tutelia_ai_analysis_cache_v1';
+
+function getUserFriendlyAiError(err: any): string {
+  const status = err?.status;
+  const rawMessage = String(err?.message || "");
+  const normalized = rawMessage.toLowerCase();
+
+  if (status === 429 || normalized.includes("resource_exhausted") || normalized.includes("rate limit") || normalized.includes("quota")) {
+    return "La cuota de OpenAI está agotada temporalmente (error 429). Espere unos segundos o revise límites/facturación.";
+  }
+
+  if (status === 404 || rawMessage.includes("models/") || rawMessage.includes("NOT_FOUND")) {
+    return "El modelo de IA configurado no está disponible para esta API key.";
+  }
+
+  if (status === 401 || normalized.includes("incorrect api key") || normalized.includes("api key") || normalized.includes("unauthorized")) {
+    return "La API key de OpenAI es inválida o no tiene permisos. Revise OPENAI_API_KEY en .env.local.";
+  }
+
+  if (status === 413 || normalized.includes("entity too large")) {
+    return "El documento es demasiado grande para procesarlo por API.";
+  }
+
+  return err?.message || "Error al analizar el documento con IA.";
+}
+
+function getUserFriendlyRadicadoError(err: any): string {
+  const rawMessage = String(err?.message || '').toLowerCase();
+  const code = String(err?.code || '').toLowerCase();
+
+  if (rawMessage.includes('auth/admin-restricted-operation') || code.includes('auth/admin-restricted-operation')) {
+    return 'Firebase tiene deshabilitado el acceso anónimo. Active Authentication > Sign-in method > Anonymous en su proyecto Firebase para poder radicar en modo local.';
+  }
+
+  if (rawMessage.includes('permission-denied') || rawMessage.includes('insufficient permissions')) {
+    return 'Su usuario no tiene permisos en Firestore para crear expedientes. Verifique reglas y autenticación activa.';
+  }
+
+  return err?.message || 'Error desconocido al radicar expediente.';
+}
+
 export default function NewCase() {
   const [file, setFile] = useState<File | null>(null);
   const [isParsing, setIsParsing] = useState(false);
@@ -211,6 +253,38 @@ export default function NewCase() {
   const [consecutive, setConsecutive] = useState('00600');
   const [radicadoError, setRadicadoError] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(NEW_CASE_DRAFT_KEY);
+      if (!raw) return;
+      const draft = JSON.parse(raw);
+      if (draft.parsedData) setParsedData(draft.parsedData);
+      if (Array.isArray(draft.attachments)) setAttachments(draft.attachments);
+      if (typeof draft.selectedDocIndex === 'number') setSelectedDocIndex(draft.selectedDocIndex);
+      if (Array.isArray(draft.selectedForMerge)) setSelectedForMerge(draft.selectedForMerge);
+      if (draft.aiAnalysis) setAiAnalysis(draft.aiAnalysis);
+      if (typeof draft.consecutive === 'string') setConsecutive(draft.consecutive);
+    } catch (e) {
+      console.error('No se pudo restaurar borrador local de radicacion', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!parsedData) return;
+    try {
+      localStorage.setItem(NEW_CASE_DRAFT_KEY, JSON.stringify({
+        parsedData,
+        attachments,
+        selectedDocIndex,
+        selectedForMerge,
+        aiAnalysis,
+        consecutive,
+      }));
+    } catch (e) {
+      console.error('No se pudo guardar borrador local de radicacion', e);
+    }
+  }, [parsedData, attachments, selectedDocIndex, selectedForMerge, aiAnalysis, consecutive]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -271,6 +345,13 @@ export default function NewCase() {
     setError(null);
 
     try {
+      if (!auth.currentUser) {
+        await signInAnonymously(auth);
+      }
+      if (!auth.currentUser) {
+        throw new Error('No hay sesión activa de Firebase. Vuelva a iniciar sesión local para radicar.');
+      }
+
       const year = new Date().getFullYear().toString();
       const finalConsecutive = consecutive.padStart(5, '0');
       const radicadoFormatted = getFullRadicado(finalConsecutive);
@@ -403,14 +484,17 @@ export default function NewCase() {
       });
 
       console.log("Radicación completada con éxito. Redirigiendo...");
+      localStorage.removeItem(NEW_CASE_DRAFT_KEY);
       navigate(`/case/${caseRef.id}`);
     } catch (err: any) {
       console.error("Error al radicar:", err);
-      let errorMsg = err.message || 'Error desconocido';
+      let errorMsg = getUserFriendlyRadicadoError(err);
       try {
         const parsed = JSON.parse(err.message);
         if (parsed.error) errorMsg = parsed.error;
-      } catch (e) {}
+      } catch (e) {
+        // keep friendly mapped message
+      }
       setError(`Error de radicación: ${errorMsg}`);
     } finally {
       setIsRadicating(false);
@@ -505,11 +589,17 @@ export default function NewCase() {
     setIsAnalyzing(true);
     setError(null);
     try {
-      const apiKey = (process as any).env.GEMINI_API_KEY;
-      if (!apiKey) throw new Error("API Key de Gemini no encontrada.");
+      const cacheKey = `${currentDoc.filename || 'doc'}::${currentDoc.size || 0}::${(currentDoc.content || '').slice(0, 64)}`;
+      const rawCache = localStorage.getItem(AI_ANALYSIS_CACHE_KEY);
+      if (rawCache) {
+        const parsedCache = JSON.parse(rawCache) as Record<string, LegalAnalysis>;
+        if (parsedCache[cacheKey]) {
+          setAiAnalysis(parsedCache[cacheKey]);
+          setIsAnalyzing(false);
+          return;
+        }
+      }
 
-      const ai = new GoogleGenAI({ apiKey });
-      
       const rightsListText = RIGHTS_LIST.map(r => `Art. ${r.art} — ${r.title}`).join('\n');
 
       const prompt = `
@@ -531,47 +621,32 @@ export default function NewCase() {
         Responde estrictamente en formato JSON según el esquema proporcionado.
       `;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash", 
-        contents: [
-          {
-            role: "user",
-            parts: [
-              { text: prompt },
-              {
-                inlineData: {
-                  mimeType: "application/pdf",
-                  data: currentDoc.content
-                }
-              }
-            ]
-          }
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              accionante: { type: Type.STRING },
-              accionanteId: { type: Type.STRING },
-              accionanteEmail: { type: Type.STRING },
-              accionado: { type: Type.STRING },
-              accionadoId: { type: Type.STRING },
-              accionadoEmail: { type: Type.STRING },
-              derechoTutelado: { type: Type.STRING },
-              hechos: { type: Type.STRING },
-              pretensiones: { type: Type.STRING }
-            },
-            required: ["accionante", "accionanteId", "accionanteEmail", "accionado", "accionadoId", "accionadoEmail", "derechoTutelado", "hechos", "pretensiones"]
-          }
-        }
+      const response = await fetch('/api/ai/legal-analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt,
+          pdfBase64: currentDoc.content,
+        }),
       });
 
-      const result = JSON.parse(response.text || "{}");
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw Object.assign(new Error(payload.error || 'Error al analizar el documento con IA.'), {
+          status: response.status,
+        });
+      }
+
+      const payload = await response.json();
+      const result = JSON.parse(payload.text || "{}");
       setAiAnalysis(result);
+      const raw = localStorage.getItem(AI_ANALYSIS_CACHE_KEY);
+      const cache = raw ? JSON.parse(raw) : {};
+      cache[cacheKey] = result;
+      localStorage.setItem(AI_ANALYSIS_CACHE_KEY, JSON.stringify(cache));
     } catch (err: any) {
       console.error("AI Analysis Error:", err);
-      setError(err.message || 'Error al analizar el documento con IA.');
+      setError(getUserFriendlyAiError(err));
     } finally {
       setIsAnalyzing(false);
     }

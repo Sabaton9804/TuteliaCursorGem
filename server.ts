@@ -1,3 +1,4 @@
+import dotenv from 'dotenv';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
@@ -7,17 +8,45 @@ import multer from 'multer';
 import { simpleParser } from 'mailparser';
 import JSZip from 'jszip';
 import axios from 'axios';
+import OpenAI from 'openai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.join(process.cwd(), '.env.local') });
+dotenv.config();
 
 const PORT = 3000;
+const BODY_LIMIT = '100mb';
+
+function getOpenAiClient() {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error('Falta OPENAI_API_KEY. Defina la variable en .env.local.');
+  }
+  return new OpenAI({ apiKey });
+}
+
+function mapAiError(error: any) {
+  const status = error?.status || 500;
+  const rawMessage = String(error?.message || '');
+  if (status === 429 || rawMessage.includes('rate limit') || rawMessage.includes('quota')) {
+    return {
+      status: 429,
+      message: 'Cuota o límite de OpenAI agotado temporalmente. Intente de nuevo en unos segundos.'
+    };
+  }
+  if (status === 401 || rawMessage.toLowerCase().includes('api key')) {
+    return { status: 401, message: 'API key de OpenAI inválida o no autorizada.' };
+  }
+  return { status, message: rawMessage || 'Error inesperado al consultar OpenAI.' };
+}
 
 async function startServer() {
   const app = express();
   const upload = multer({ storage: multer.memoryStorage() });
 
-  app.use(express.json());
+  app.use(express.json({ limit: BODY_LIMIT }));
+  app.use(express.urlencoded({ extended: true, limit: BODY_LIMIT }));
 
   // API Routes
   app.get('/api/health', (req, res) => {
@@ -264,8 +293,121 @@ async function startServer() {
     }
   });
 
+  app.post('/api/ai/summarize', async (req, res) => {
+    try {
+      const { claim, rawText } = req.body || {};
+      if (!rawText) {
+        return res.status(400).json({ error: 'rawText es requerido' });
+      }
+
+      const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+      const openai = getOpenAiClient();
+      const prompt = `
+Eres un asistente juridico especializado en derecho constitucional colombiano.
+Tu tarea es sintetizar los puntos clave de una demanda de tutela por urgencia.
+
+REMITENTE/ACCIONANTE: ${claim || 'No especificado'}
+CUERPO DEL CORREO/DEMANDA:
+${rawText}
+
+FORMATO DE SALIDA (USAR MARKDOWN):
+### Sintesis Operativa
+**1. Derechos presuntamente vulnerados:** (Lista breve)
+**2. Hechos relevantes:** (Maximo 3 puntos clave)
+**3. Pretension principal:** (Sintesis de lo pedido)
+**4. Urgencia detectada:** (Por que es urgente o si hay riesgo de dano irremediable)
+`;
+
+      const result = await openai.responses.create({
+        model,
+        input: prompt,
+      });
+
+      return res.json({ text: result.output_text || '' });
+    } catch (error: any) {
+      console.error('OpenAI summarize error:', error);
+      const mapped = mapAiError(error);
+      return res.status(mapped.status).json({ error: mapped.message });
+    }
+  });
+
+  app.post('/api/ai/legal-analysis', async (req, res) => {
+    try {
+      const { prompt, pdfBase64 } = req.body || {};
+      if (!prompt || !pdfBase64) {
+        return res.status(400).json({ error: 'prompt y pdfBase64 son requeridos' });
+      }
+
+      const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+      const openai = getOpenAiClient();
+      const schema = {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          accionante: { type: 'string' },
+          accionanteId: { type: 'string' },
+          accionanteEmail: { type: 'string' },
+          accionado: { type: 'string' },
+          accionadoId: { type: 'string' },
+          accionadoEmail: { type: 'string' },
+          derechoTutelado: { type: 'string' },
+          hechos: { type: 'string' },
+          pretensiones: { type: 'string' }
+        },
+        required: [
+          'accionante',
+          'accionanteId',
+          'accionanteEmail',
+          'accionado',
+          'accionadoId',
+          'accionadoEmail',
+          'derechoTutelado',
+          'hechos',
+          'pretensiones'
+        ]
+      };
+
+      const result = await openai.responses.create({
+        model,
+        input: [
+          {
+            role: 'user',
+            content: [
+              { type: 'input_text', text: prompt },
+              {
+                type: 'input_file',
+                filename: 'documento.pdf',
+                file_data: `data:application/pdf;base64,${pdfBase64}`
+              }
+            ]
+          }
+        ],
+        text: {
+          format: {
+            type: 'json_schema',
+            name: 'analisis_tutela',
+            schema,
+            strict: true
+          }
+        }
+      });
+
+      const content = result.output_text || '{}';
+      return res.json({ text: content });
+    } catch (error: any) {
+      console.error('OpenAI legal-analysis error:', error);
+      const mapped = mapAiError(error);
+      return res.status(mapped.status).json({ error: mapped.message });
+    }
+  });
+
   // Error handler for API routes
   app.use('/api', (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err?.type === 'entity.too.large') {
+      return res.status(413).json({
+        error: 'El documento es demasiado grande para procesarlo por API. Intente un archivo mas pequeno.'
+      });
+    }
     console.error('API Error:', err);
     res.status(err.status || 500).json({
       error: err.message || 'Internal Server Error',

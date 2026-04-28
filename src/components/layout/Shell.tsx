@@ -33,20 +33,47 @@ export default function Shell({ children }: ShellProps) {
   const navigate = useNavigate();
   const location = useLocation();
 
+  const ensureAnonymousSession = async () => {
+    if (!auth.currentUser) {
+      await signInAnonymously(auth);
+    }
+  };
+
   useEffect(() => {
     // Check for local session first
     const savedUser = localStorage.getItem('tutelia_mock_user');
     if (savedUser) {
       const u = JSON.parse(savedUser);
-      setUser(u);
-      setProfile({
-        id: u.uid,
-        email: u.email,
-        name: u.displayName,
-        role: 'admin',
-        courtId: 'court-1'
-      });
-      setLoading(false);
+      ensureAnonymousSession()
+        .then(() => {
+          const localUser = {
+            ...u,
+            uid: auth.currentUser?.uid || u.uid,
+          };
+          localStorage.setItem('tutelia_mock_user', JSON.stringify(localUser));
+          setUser(localUser);
+          setProfile({
+            id: localUser.uid,
+            email: localUser.email,
+            name: localUser.displayName,
+            role: 'admin',
+            courtId: 'court-1'
+          });
+          setLoginError(null);
+        })
+        .catch((err) => {
+          console.error("Could not restore local Firebase session", err);
+          setLoginError("No se pudo restaurar sesión Firebase. El modo local permite navegar, pero no radicar sin autenticación.");
+          setUser(u);
+          setProfile({
+            id: u.uid,
+            email: u.email,
+            name: u.displayName,
+            role: 'admin',
+            courtId: 'court-1'
+          });
+        })
+        .finally(() => setLoading(false));
       return;
     }
 
@@ -88,10 +115,9 @@ export default function Shell({ children }: ShellProps) {
     e.preventDefault();
     if (localCredentials.user === 'admin' && localCredentials.pass === 'admin') {
       try {
-        // Sign in anonymously so Firestore recognizes an authenticated session
-        const userCred = await signInAnonymously(auth);
+        await ensureAnonymousSession();
         const mockUser = {
-          uid: userCred.user.uid,
+          uid: auth.currentUser?.uid || 'local-admin',
           email: 'admin@tutelia.gov.co',
           displayName: 'Administrador Local',
         };
@@ -104,9 +130,10 @@ export default function Shell({ children }: ShellProps) {
           role: 'admin',
           courtId: 'court-1'
         });
+        setLoginError(null);
       } catch (err) {
         console.error("Local login failed at auth level", err);
-        setLoginError("Error al inicializar sesión segura local.");
+        setLoginError("No se pudo autenticar en Firebase (anónimo). Sin eso, no se puede radicar en Firestore.");
       }
     } else {
       setLoginError("Credenciales locales incorrectas. Use admin / admin.");
