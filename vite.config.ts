@@ -5,11 +5,14 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    /** Permite usar NEXT_PUBLIC_SUPABASE_* del .env (típico de plantillas) además de VITE_*. */
+    envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
       },
+      dedupe: ['pdfjs-dist'],
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.

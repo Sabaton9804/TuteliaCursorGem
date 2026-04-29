@@ -10,7 +10,7 @@ function mapGeminiError(error: any): Error {
   }
 
   if (status === 401 || normalized.includes("incorrect api key") || normalized.includes("api key") || normalized.includes("unauthorized")) {
-    return new Error("API key de OpenAI inválida. Revise OPENAI_API_KEY en .env.local.");
+    return new Error("API key de OpenAI inválida. Revise OPENAI_API_KEY en .env o .env.local.");
   }
 
   if (status === 404 || rawMessage.includes("models/") || rawMessage.includes("NOT_FOUND")) {
@@ -20,12 +20,12 @@ function mapGeminiError(error: any): Error {
   return error instanceof Error ? error : new Error("Error inesperado al consultar Gemini.");
 }
 
-export async function summarizeCase(claim: string, rawText: string) {
+export async function summarizeCase(claim: string, rawText: string, contextBlock?: string) {
   try {
     const response = await fetch('/api/ai/summarize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ claim, rawText }),
+      body: JSON.stringify({ claim, rawText, contextBlock: contextBlock?.trim() || undefined }),
     });
 
     if (!response.ok) {

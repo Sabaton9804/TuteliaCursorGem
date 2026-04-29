@@ -1,20 +1,27 @@
-import React, { useState, useEffect } from 'react';
-import { collection, query, orderBy, onSnapshot, where } from 'firebase/firestore';
-import { db } from '../lib/firebase';
-import { Case } from '../types';
-import { 
-  Clock, 
-  AlertTriangle, 
-  CheckCircle2, 
-  ChevronRight, 
-  Filter, 
-  ArrowUpDown,
-  Search
-} from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { supabase } from '../lib/supabase';
+import { rowToCase } from '../lib/supabase-mappers';
+import type { Case } from '../types';
+import { Clock, AlertTriangle, CheckCircle2, Search } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import { format, differenceInDays } from 'date-fns';
+import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { formatRadicado } from '../lib/formatters';
+import { buildExpedienteViewRow } from '../lib/expedientes-view-model';
+import { resolveAssigneeForCase } from '../lib/court-staff-assignees';
+
+const COURT_ID = 'court-1';
+
+function statusLabelEs(status: string): string {
+  const m: Record<string, string> = {
+    received: 'Recibido',
+    admitted: 'Admitido',
+    transfer: 'Traslado',
+    judgment: 'Fallo',
+    archived: 'Archivado',
+  };
+  return m[status] || status;
+}
 
 export default function Dashboard() {
   const [cases, setCases] = useState<Case[]>([]);
@@ -24,47 +31,73 @@ export default function Dashboard() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // In a real app we'd get courtId from context
-    const courtId = 'court-1';
-    const q = query(
-      collection(db, 'courts', courtId, 'cases'),
-      orderBy('updatedAt', 'desc')
-    );
+    let cancelled = false;
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const casesData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Case[];
-      setCases(casesData);
-      setLoading(false);
-    }, (error) => {
-      console.error("Firestore Error in Dashboard:", error);
-      // If permission denied, it might be because the profile is still being created
-      // We don't set loading false yet, or we show a small error
-      if (error.message.includes('permission-denied')) {
+    async function loadCases() {
+      const { data, error } = await supabase
+        .from('cases')
+        .select('*')
+        .eq('court_id', COURT_ID)
+        .order('updated_at', { ascending: false });
+      if (cancelled) return;
+      if (error) {
+        console.error('Supabase Error in Dashboard:', error);
         setLoading(false);
+        return;
       }
-    });
+      setCases((data || []).map((r) => rowToCase(r as Record<string, unknown>)));
+      setLoading(false);
+    }
 
-    return unsubscribe;
+    void loadCases();
+
+    const channel = supabase
+      .channel(`dashboard-cases-${COURT_ID}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'cases', filter: `court_id=eq.${COURT_ID}` },
+        () => void loadCases()
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      void supabase.removeChannel(channel);
+    };
   }, []);
 
-  const getSemaforo = (caseItem: Case) => {
-    if (caseItem.status === 'archived') return { color: 'bg-gray-200', icon: CheckCircle2, text: 'CERRADO' };
-    
-    // Mock deadline if not set
-    const deadline = caseItem.deadlineAt ? new Date(caseItem.deadlineAt) : new Date();
-    const daysLeft = differenceInDays(deadline, new Date());
+  const metrics = useMemo(() => {
+    const rows = cases.map(buildExpedienteViewRow);
+    const active = cases.filter((c) => c.status !== 'archived').length;
+    const critical = rows.filter(
+      (r) =>
+        r.urgency === 'urgent' &&
+        r.stage !== 'archivado' &&
+        r.stage !== 'fallo_notificado'
+    ).length;
+    const pendingSignature = rows.filter((r) => r.stage === 'fallo_redactado').length;
+    const sgdeLinked = cases.filter((c) => Boolean(c.sgdeId?.trim())).length;
+    return { active, critical, pendingSignature, sgdeLinked };
+  }, [cases]);
 
-    if (daysLeft < 0) return { color: 'bg-red-500 text-white', icon: AlertTriangle, text: 'VENCIDO' };
-    if (daysLeft < 2) return { color: 'bg-orange-500 text-white', icon: Clock, text: 'URGENTE' };
-    return { color: 'bg-green-500 text-white', icon: CheckCircle2, text: 'EN TÉRMINO' };
+  const getSemaforo = (caseItem: Case) => {
+    const row = buildExpedienteViewRow(caseItem);
+    if (row.stage === 'archivado' || caseItem.status === 'archived') {
+      return { color: 'bg-gray-200', icon: CheckCircle2, text: 'CERRADO' as const };
+    }
+    if (row.businessDaysRemaining <= 0) {
+      return { color: 'bg-red-500 text-white', icon: AlertTriangle, text: 'VENCIDO' as const };
+    }
+    if (row.urgency === 'urgent') {
+      return { color: 'bg-orange-500 text-white', icon: Clock, text: 'URGENTE' as const };
+    }
+    return { color: 'bg-green-500 text-white', icon: CheckCircle2, text: 'EN TÉRMINO' as const };
   };
 
-  const filteredCases = cases.filter(c => {
-    const matchesSearch = c.radicado.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          c.claimant.toLowerCase().includes(searchTerm.toLowerCase());
+  const filteredCases = cases.filter((c) => {
+    const matchesSearch =
+      c.radicado.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.claimant.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'all' || c.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -72,21 +105,31 @@ export default function Dashboard() {
   return (
     <div className="space-y-10">
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="card-modern p-6 border-b-4 border-b-accent">
-          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Expedientes Activos</div>
-          <div className="text-3xl font-bold text-slate-900 tracking-tight">{cases.length.toString().padStart(3, '0')}</div>
-        </div>
-        <div className="card-modern p-6 border-b-4 border-b-red-500">
-          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Términos Críticos</div>
-          <div className="text-3xl font-bold text-red-600 tracking-tight">008</div>
-        </div>
+        <Link
+          to="/cases"
+          className="card-modern p-6 border-b-4 border-b-accent block hover:bg-slate-50/50 transition-colors focus:outline-none focus:ring-2 focus:ring-accent/30 rounded-xl"
+        >
+          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Expedientes activos</div>
+          <div className="text-3xl font-bold text-slate-900 tracking-tight tabular-nums">{metrics.active}</div>
+          <div className="text-[10px] font-bold text-accent mt-2 uppercase tracking-wider">Abrir módulo expedientes →</div>
+        </Link>
+        <Link
+          to="/cases?vista=lista"
+          className="card-modern p-6 border-b-4 border-b-red-500 block hover:bg-slate-50/50 transition-colors focus:outline-none focus:ring-2 focus:ring-red-200 rounded-xl"
+        >
+          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Términos críticos</div>
+          <div className="text-3xl font-bold text-red-600 tracking-tight tabular-nums">{metrics.critical}</div>
+          <div className="text-[10px] font-bold text-slate-400 mt-2 uppercase tracking-wider">≤2d háb. o vencido (no archivado)</div>
+        </Link>
         <div className="card-modern p-6 border-b-4 border-b-amber-400">
-          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Pendiente Firma</div>
-          <div className="text-3xl font-bold text-slate-900 tracking-tight">015</div>
+          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Pendiente firma</div>
+          <div className="text-3xl font-bold text-slate-900 tracking-tight tabular-nums">{metrics.pendingSignature}</div>
+          <div className="text-[10px] font-bold text-slate-400 mt-2 uppercase tracking-wider">En etapa fallo redactado</div>
         </div>
         <div className="card-modern p-6 border-b-4 border-b-green-500">
           <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Sincronización SGDE</div>
-          <div className="text-3xl font-bold text-green-600 tracking-tight">134</div>
+          <div className="text-3xl font-bold text-green-600 tracking-tight tabular-nums">{metrics.sgdeLinked}</div>
+          <div className="text-[10px] font-bold text-slate-400 mt-2 uppercase tracking-wider">Expedientes con ID SGDE</div>
         </div>
       </div>
 
@@ -94,8 +137,8 @@ export default function Dashboard() {
         <div className="p-6 border-b border-slate-50 bg-slate-50/30 flex flex-col md:flex-row gap-4 items-center">
           <div className="flex-1 relative w-full">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input 
-              type="text" 
+            <input
+              type="text"
               placeholder="Buscar por radicado, accionante o demandado..."
               className="input-modern pl-11 bg-white"
               value={searchTerm}
@@ -103,7 +146,7 @@ export default function Dashboard() {
             />
           </div>
           <div className="flex gap-3 w-full md:w-auto">
-            <select 
+            <select
               className="input-modern py-2 min-w-[200px]"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
@@ -113,6 +156,7 @@ export default function Dashboard() {
               <option value="admitted">Admitidos</option>
               <option value="transfer">Traslado</option>
               <option value="judgment">Fallo</option>
+              <option value="archived">Archivado</option>
             </select>
           </div>
         </div>
@@ -121,73 +165,126 @@ export default function Dashboard() {
           <table className="w-full border-collapse">
             <thead>
               <tr className="bg-white border-b border-slate-100">
-                <th className="px-6 py-4 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">Identificación Radicado</th>
-                <th className="px-6 py-4 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">Partes Intervinientes</th>
-                <th className="px-6 py-4 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">Estado Procesal</th>
-                <th className="px-6 py-4 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">Vencimiento del Término</th>
+                <th className="px-6 py-4 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+                  Identificación Radicado
+                </th>
+                <th className="px-6 py-4 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+                  Partes intervinientes
+                </th>
+                <th className="px-6 py-4 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+                  Estado procesal
+                </th>
+                <th className="px-6 py-4 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+                  Término (10d háb.)
+                </th>
                 <th className="px-6 py-4 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">Responsable</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
               {loading ? (
-                <tr><td colSpan={5} className="p-12 text-center text-sm text-slate-400 animate-pulse font-medium">Consultando sistema judicial...</td></tr>
+                <tr>
+                  <td colSpan={5} className="p-12 text-center text-sm text-slate-400 animate-pulse font-medium">
+                    Consultando expedientes…
+                  </td>
+                </tr>
               ) : filteredCases.length === 0 ? (
-                <tr><td colSpan={5} className="p-12 text-center text-sm text-slate-400 font-medium">No hay registros coincidentes para la búsqueda.</td></tr>
-              ) : filteredCases.map((c) => {
-                const sem = getSemaforo(c);
-                return (
-                  <tr 
-                    key={c.id} 
-                    className="hover:bg-slate-50/80 transition-colors cursor-pointer group" 
-                    onClick={() => navigate(`/case/${c.id}`)}
-                  >
-                    <td className="px-6 py-5">
-                      <div className="text-sm font-bold text-accent tracking-tight group-hover:underline">{formatRadicado(c.radicado)}</div>
-                      <div className="text-[10px] text-slate-400 font-medium mt-0.5">ORDEN DE TUTELA</div>
-                    </td>
-                    <td className="px-6 py-5">
-                      <div className="flex flex-col">
-                        <span className="text-sm font-semibold text-slate-700">{c.claimant}</span>
-                        <div className="flex items-center gap-1.5 mt-1">
-                           <span className="text-[9px] font-bold text-slate-300 uppercase">vs</span>
-                           <span className="text-[11px] font-medium text-slate-500 truncate max-w-[200px]">{c.defendant || 'ADMINISTRACIÓN PÚBLICA'}</span>
+                <tr>
+                  <td colSpan={5} className="p-12 text-center text-sm text-slate-400 font-medium">
+                    No hay registros coincidentes para la búsqueda.
+                  </td>
+                </tr>
+              ) : (
+                filteredCases.map((c) => {
+                  const sem = getSemaforo(c);
+                  const row = buildExpedienteViewRow(c);
+                  const assignee = resolveAssigneeForCase(c.assignedTo, c.id);
+                  return (
+                    <tr
+                      key={c.id}
+                      className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
+                      onClick={() => navigate(`/case/${c.id}`)}
+                    >
+                      <td className="px-6 py-5">
+                        <div className="text-sm font-bold text-accent tracking-tight group-hover:underline">
+                          {formatRadicado(c.radicado)}
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-5">
-                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
-                        c.status === 'received' ? 'bg-blue-50 text-blue-600 border border-blue-100' :
-                        c.status === 'admitted' ? 'bg-amber-50 text-amber-600 border border-amber-100' :
-                        'bg-slate-100 text-slate-500 border border-slate-200'
-                      }`}>
-                        {c.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-5">
-                      <div className={`flex items-center gap-2 text-xs font-bold ${sem.text === 'VENCIDO' ? 'text-red-500' : 'text-emerald-600'}`}>
-                        <div className={`w-2 h-2 rounded-full ${sem.text === 'VENCIDO' ? 'bg-red-500' : 'bg-emerald-500 shadow-sm'}`} />
-                        {c.deadlineAt ? format(new Date(c.deadlineAt), 'dd MMM yyyy', { locale: es }) : '02 días hábiles'}
-                      </div>
-                    </td>
-                    <td className="px-6 py-5">
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-500">
-                          MA
+                        <div className="text-[10px] text-slate-400 font-medium mt-0.5">Orden de tutela</div>
+                      </td>
+                      <td className="px-6 py-5">
+                        <div className="flex flex-col">
+                          <span className="text-sm font-semibold text-slate-700">{c.claimant}</span>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <span className="text-[9px] font-bold text-slate-300 uppercase">vs</span>
+                            <span className="text-[11px] font-medium text-slate-500 truncate max-w-[200px]">
+                              {c.defendant || '—'}
+                            </span>
+                          </div>
                         </div>
-                        <span className="text-xs font-semibold text-slate-600">Dra. Arango</span>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+                      </td>
+                      <td className="px-6 py-5">
+                        <span
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
+                            c.status === 'received'
+                              ? 'bg-blue-50 text-blue-600 border border-blue-100'
+                              : c.status === 'admitted'
+                                ? 'bg-amber-50 text-amber-600 border border-amber-100'
+                                : 'bg-slate-100 text-slate-500 border border-slate-200'
+                          }`}
+                        >
+                          {statusLabelEs(c.status)}
+                        </span>
+                      </td>
+                      <td className="px-6 py-5">
+                        <div
+                          className={`flex flex-col gap-0.5 text-xs font-bold ${
+                            sem.text === 'VENCIDO' ? 'text-red-500' : sem.text === 'URGENTE' ? 'text-orange-600' : 'text-emerald-600'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div
+                              className={`w-2 h-2 rounded-full shrink-0 ${
+                                sem.text === 'VENCIDO'
+                                  ? 'bg-red-500'
+                                  : sem.text === 'URGENTE'
+                                    ? 'bg-orange-500'
+                                    : 'bg-emerald-500 shadow-sm'
+                              }`}
+                            />
+                            {format(row.deadlineDate, 'd MMM yyyy', { locale: es })}
+                          </div>
+                          <span className="text-[10px] font-semibold text-slate-500 normal-case pl-4">
+                            {row.stage === 'archivado' || c.status === 'archived'
+                              ? '—'
+                              : row.businessDaysRemaining <= 0
+                                ? 'Vencido (10d háb.)'
+                                : `${row.businessDaysRemaining} días hábiles restantes`}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-5">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-6 h-6 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-[9px] font-bold text-slate-600 shrink-0">
+                            {assignee.initials}
+                          </div>
+                          <span className="text-xs font-semibold text-slate-600 truncate" title={assignee.name}>
+                            {assignee.name}
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
       </div>
-      
+
       <footer className="flex justify-between items-center text-[11px] text-slate-400 font-bold uppercase tracking-widest px-2">
-         <div>Filtro: {filteredCases.length} de {cases.length} expedientes operativos</div>
-         <div>Última actualización: {format(new Date(), 'hh:mm a')}</div>
+        <div>
+          Filtro: {filteredCases.length} de {cases.length} expedientes
+        </div>
+        <div>Última actualización: {format(new Date(), 'hh:mm a', { locale: es })}</div>
       </footer>
     </div>
   );

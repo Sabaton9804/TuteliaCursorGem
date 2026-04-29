@@ -4,6 +4,7 @@ import Shell from './components/layout/Shell';
 import Dashboard from './pages/Dashboard';
 import NewCase from './pages/NewCase';
 import CaseDetail from './pages/CaseDetail';
+import CasesList from './pages/CasesList';
 import Settings from './pages/Settings';
 
 export default function App() {
@@ -13,6 +14,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/new" element={<NewCase />} />
+          <Route path="/cases" element={<CasesList />} />
           <Route path="/case/:id" element={<CaseDetail />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>

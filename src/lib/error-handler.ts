@@ -1,33 +1,41 @@
-import { auth } from './firebase';
+import { supabase } from './supabase';
 
-export interface FirestoreErrorInfo {
+export interface DataPermissionErrorInfo {
   error: string;
   operationType: 'create' | 'update' | 'delete' | 'list' | 'get' | 'write';
   path: string | null;
   authInfo: {
     userId: string | null;
     email: string | null;
-    emailVerified: boolean;
-    isAnonymous: boolean;
-    providerInfo: any[];
-  }
+  };
 }
 
-export function handleFirestoreError(error: any, operationType: FirestoreErrorInfo['operationType'], path: string | null = null) {
-  if (error.code === 'permission-denied') {
-    const info: FirestoreErrorInfo = {
-      error: error.message,
+export async function handleDataPermissionError(
+  error: any,
+  operationType: DataPermissionErrorInfo['operationType'],
+  path: string | null = null
+) {
+  const code = String(error?.code ?? '');
+  const msg = String(error?.message ?? '');
+  const isRls =
+    code === '42501' ||
+    msg.toLowerCase().includes('permission denied') ||
+    msg.toLowerCase().includes('row-level security') ||
+    msg.toLowerCase().includes('rls');
+
+  if (isRls) {
+    const { data } = await supabase.auth.getUser();
+    const u = data.user;
+    const info: DataPermissionErrorInfo = {
+      error: msg,
       operationType,
       path,
       authInfo: {
-        userId: auth.currentUser?.uid || null,
-        email: auth.currentUser?.email || null,
-        emailVerified: auth.currentUser?.emailVerified || false,
-        isAnonymous: auth.currentUser?.isAnonymous || false,
-        providerInfo: auth.currentUser?.providerData || []
-      }
+        userId: u?.id ?? null,
+        email: u?.email ?? null,
+      },
     };
-    console.error("Firestore Permission Error:", info);
+    console.error('Supabase / RLS:', info);
     throw new Error(JSON.stringify(info));
   }
   throw error;

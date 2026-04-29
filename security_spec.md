@@ -20,6 +20,9 @@
 12. Creating a case without being authenticated.
 
 ## Implementation Details
-- `firestore.rules` enforces `isMember(courtId)` for every operation.
+- Supabase **RLS** en tablas `courts`, `profiles`, `cases`, `case_documents`, `case_actions`: acceso para rol `authenticated` (equivalente al antiguo `request.auth != null` en Firestore). Endurecer con políticas por `court_id` cuando haya membresía real.
+- Bucket privado **`case-documents`** (Storage): adjuntos por expediente bajo prefijo `cases/{case_id}/…`; políticas `storage.objects` alineadas a `authenticated`. Endurecer por prefijo/court cuando exista membresía.
+- **URLs firmadas** (`createSignedUrl`): TTL corto en cliente (p. ej. 30 min, ver `CASE_DOCUMENT_SIGNED_URL_TTL_SEC`); renovar al cambiar de documento o al expirar.
+- **Objetos huérfanos** en Storage si se borra el caso en SQL sin borrar el bucket: mitigar con webhook + Edge Function o tarea programada (no automático en la migración actual).
 - `isValidId(id)` guards against ID poisoning.
 - `update` rules will be matured to use `affectedKeys().hasOnly()` in a production hardening phase.

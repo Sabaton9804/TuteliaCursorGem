@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { db, auth } from '../lib/firebase';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { supabase } from '../lib/supabase';
 import { Settings as SettingsIcon, Shield, Database, Trash2, CheckCircle2 } from 'lucide-react';
 
 export default function Settings() {
@@ -11,26 +10,35 @@ export default function Settings() {
     setIsInitializing(true);
     setStatus('Iniciando...');
     try {
-      // Create Court
-      await setDoc(doc(db, 'courts', 'court-1'), {
-        name: 'Juzgado Civil del Circuito 01 de Bogotá',
-        email: 'j01ccbog@notificaciones.jud.co',
-        city: 'Bogotá',
-        id: 'court-1'
-      });
+      await supabase.from('courts').upsert(
+        {
+          id: 'court-1',
+          name: 'Juzgado Civil del Circuito 01 de Bogotá',
+          email: 'j01ccbog@notificaciones.jud.co',
+          city: 'Bogotá',
+        },
+        { onConflict: 'id' }
+      );
 
-      // Create User Profile for current user
-      if (auth.currentUser) {
-        await setDoc(doc(db, 'courts', 'court-1', 'users', auth.currentUser.uid), {
-          id: auth.currentUser.uid,
-          email: auth.currentUser.email,
-          name: auth.currentUser.displayName || 'Funcionario',
-          role: 'admin',
-          courtId: 'court-1'
-        });
+      const { data: u } = await supabase.auth.getUser();
+      if (u.user) {
+        const name =
+          (typeof u.user.user_metadata?.full_name === 'string' && u.user.user_metadata.full_name) ||
+          u.user.email?.split('@')[0] ||
+          'Funcionario';
+        await supabase.from('profiles').upsert(
+          {
+            id: u.user.id,
+            email: u.user.email || '',
+            name,
+            role: 'admin',
+            court_id: 'court-1',
+          },
+          { onConflict: 'id' }
+        );
       }
 
-      setStatus('Demo inicializada con éxito.');
+      setStatus('Demo inicializada con éxito (Supabase).');
     } catch (error) {
       console.error(error);
       setStatus('Error al inicializar.');
@@ -101,7 +109,7 @@ export default function Settings() {
         <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
           <div className="space-y-2">
             <h3 className="text-xl font-bold text-white">Estado de la Base de Datos</h3>
-            <p className="text-sm font-medium text-slate-400">Su despacho está operando sobre infraestructura Cloud Enterprise.</p>
+            <p className="text-sm font-medium text-slate-400">Su despacho está operando sobre Supabase (PostgreSQL + Auth).</p>
           </div>
           <div className="flex gap-4">
             <div className="bg-white/5 border border-white/10 px-6 py-3 rounded-2xl">
