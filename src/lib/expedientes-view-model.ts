@@ -4,6 +4,7 @@ import {
   startOfLocalDay,
   tenthBusinessDayDeadline,
 } from './business-days';
+import { DERECHO_TUTELADO_LABELS } from './sierju-case-codes';
 import type { ExpedienteAssignee } from './court-staff-assignees';
 import { resolveAssigneeForCase } from './court-staff-assignees';
 
@@ -24,11 +25,20 @@ export type UrgencyLevel = 'urgent' | 'warn' | 'ok' | 'neutral';
 const DERECHO_UI_MAX = 72;
 
 /**
- * Texto del derecho tutelado para listas y tablero: viene del expediente (`legal_derecho_tutelado`),
- * sin sustituirlo por heurísticas. Si aún no está cargado en BD, se muestra un aviso neutro.
+ * Texto del derecho tutelado para listas y tablero: prioriza la clasificación SIERJU si existe;
+ * si no, el texto del expediente (`legal_derecho_tutelado`).
  */
 export function derechoTuteladoDisplay(c: Case): string {
   const raw = c.legalDerechoTutelado?.replace(/\s+/g, ' ').trim();
+  const code = c.derechoTuteladoCode;
+  if (code) {
+    const label = DERECHO_TUTELADO_LABELS[code];
+    if (code === 'OTROS' && raw) {
+      const snippet = raw.length <= DERECHO_UI_MAX ? raw : `${raw.slice(0, DERECHO_UI_MAX - 1)}…`;
+      return `${label}: ${snippet}`;
+    }
+    return label;
+  }
   if (!raw) return 'Sin indicar';
   if (raw.length <= DERECHO_UI_MAX) return raw;
   return `${raw.slice(0, DERECHO_UI_MAX - 1)}…`;

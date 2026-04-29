@@ -11,6 +11,13 @@ import JSZip from 'jszip';
 import axios from 'axios';
 import OpenAI from 'openai';
 import {
+  extraerTextoPlanoDocx,
+  aplicarMapeoEnDocx,
+  analizarVariablesDocxConIa,
+} from './docx-plantilla-server';
+import { catalogoTextoParaPromptIA } from './src/lib/plantilla-marcadores-catalog.ts';
+import type { DocumentTemplateTipo } from './src/types.ts';
+import {
   ACTA_REPARTO_DISPLAY_NAME,
   detectActaRepartoInPdfBuffer,
   filenameSuggestsActaReparto,
@@ -67,7 +74,7 @@ function loadProjectEnv() {
 
   const hasOpenAi = Boolean(process.env.OPENAI_API_KEY?.trim());
   console.log(
-    `[tutelia] OPENAI_API_KEY: ${hasOpenAi ? 'OK' : 'NO encontrada'}. ` +
+    `[tutelia] OPENAI_API_KEY: ${hasOpenAi ? 'OK' : 'NO'}. ` +
       `Raíz server: ${projectRoot}. cwd: ${cwd}. ` +
       `Archivos leídos: ${loadedFrom.length ? loadedFrom.join(' | ') : '(ninguno)'}`
   );
@@ -116,7 +123,7 @@ function getOpenAiClient() {
 }
 
 function mapAiError(error: any) {
-  const status = error?.status || 500;
+  const status = error?.status ?? error?.statusCode ?? 500;
   const rawMessage = String(error?.message || '');
   if (status === 429 || rawMessage.includes('rate limit') || rawMessage.includes('quota')) {
     return {
@@ -627,6 +634,70 @@ FORMATO DE SALIDA (USAR MARKDOWN):
     }
   });
 
+  /** Rutas plantilla-docx en Router montado (evita conflictos con el 404 genérico `/api` en Express 4). */
+  type UploadedDocx = { buffer: Buffer; originalname?: string };
+  const plantillaDocxRouter = express.Router();
+  plantillaDocxRouter.post('/analizar', upload.single('archivo'), async (req, res) => {
+    try {
+      const multerReq = req as Express.Request & { file?: UploadedDocx };
+      const file = multerReq.file;
+      const tipoRaw = String((req.body as { tipo?: string })?.tipo ?? 'libre');
+      const tipo: DocumentTemplateTipo =
+        tipoRaw === 'informe_ingreso' || tipoRaw === 'auto_admisorio' || tipoRaw === 'libre' ? tipoRaw : 'libre';
+      if (!file?.buffer?.length) {
+        return res.status(400).json({ error: 'Adjunte un archivo .docx' });
+      }
+      const lower = file.originalname?.toLowerCase() ?? '';
+      if (!lower.endsWith('.docx')) {
+        return res.status(400).json({ error: 'Solo se admiten archivos .docx' });
+      }
+      const texto = await extraerTextoPlanoDocx(Buffer.from(file.buffer));
+      const catalogo = catalogoTextoParaPromptIA(tipo);
+      const suggestions = await analizarVariablesDocxConIa(texto, catalogo);
+      const muestra = texto.length > 80000 ? texto.slice(0, 80000) : texto;
+      return res.json({
+        textoPlanoMuestra: muestra,
+        textoPlanoLength: texto.length,
+        suggestions,
+      });
+    } catch (error: any) {
+      console.error('plantilla-docx analizar:', error);
+      const mapped = mapAiError(error);
+      return res.status(mapped.status).json({ error: mapped.message });
+    }
+  });
+  plantillaDocxRouter.post('/aplicar', upload.single('archivo'), async (req, res) => {
+    try {
+      const multerReq = req as Express.Request & { file?: UploadedDocx };
+      const file = multerReq.file;
+      if (!file?.buffer?.length) {
+        return res.status(400).json({ error: 'Adjunte el archivo .docx' });
+      }
+      let mappings: Array<{ original: string; marcador: string }> = [];
+      try {
+        mappings = JSON.parse(String((req.body as { mappings?: string })?.mappings ?? '[]')) as Array<{
+          original: string;
+          marcador: string;
+        }>;
+      } catch {
+        return res.status(400).json({ error: 'El campo mappings no es JSON válido' });
+      }
+      if (!Array.isArray(mappings)) {
+        return res.status(400).json({ error: 'mappings debe ser un array' });
+      }
+      const processed = await aplicarMapeoEnDocx(Buffer.from(file.buffer), mappings);
+      const previewText = await extraerTextoPlanoDocx(processed);
+      return res.json({
+        processedBase64: processed.toString('base64'),
+        previewText: previewText.length > 120000 ? previewText.slice(0, 120000) : previewText,
+      });
+    } catch (error: any) {
+      console.error('plantilla-docx aplicar:', error);
+      return res.status(500).json({ error: error?.message || 'Error al procesar el documento' });
+    }
+  });
+  app.use('/api/plantilla-docx', plantillaDocxRouter);
+
   // Error handler for API routes
   app.use('/api', (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
     if (err?.type === 'entity.too.large') {
@@ -641,9 +712,15 @@ FORMATO DE SALIDA (USAR MARKDOWN):
     });
   });
 
-  // Catch-all for /api routes that don't match
-  app.all('/api/*', (req, res) => {
-    res.status(404).json({ error: `API route ${req.method} ${req.url} not found` });
+  // 404 solo para rutas /api que no existen (no usar app.all('/api/*'): en Express 4.* puede fallar el matcheo de rutas POST concretas).
+  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (!req.originalUrl.startsWith('/api')) {
+      return next();
+    }
+    if (res.headersSent) {
+      return next();
+    }
+    res.status(404).json({ error: `API route ${req.method} ${req.originalUrl} not found` });
   });
 
   // Vite middleware for development

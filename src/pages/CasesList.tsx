@@ -8,6 +8,7 @@ import ExpedientesViews, { type ExpedientesViewMode } from '../components/expedi
 import { buildExpedienteViewRow } from '../lib/expedientes-view-model';
 import { assignedToMatchesProfile, SUSTANCIADORES } from '../lib/court-staff-assignees';
 import { intentFreshNewCaseFromMenu } from '../lib/new-case-nav';
+import { CASE_LIST_COLUMNS } from '../lib/case-list-query';
 
 const COURT_ID = 'court-1';
 
@@ -114,7 +115,7 @@ export default function CasesList() {
         sortBy === 'created' ? 'created_at' : sortBy === 'radicado' ? 'radicado' : 'updated_at';
       const { data, error } = await supabase
         .from('cases')
-        .select('*')
+        .select(CASE_LIST_COLUMNS)
         .eq('court_id', COURT_ID)
         .order(col, { ascending: false });
 
@@ -125,7 +126,7 @@ export default function CasesList() {
         setLoading(false);
         return;
       }
-      setCases((data || []).map((r) => rowToCase(r as Record<string, unknown>)));
+      setCases((data || []).map((r) => rowToCase(r as unknown as Record<string, unknown>)));
       setLoading(false);
     }
 

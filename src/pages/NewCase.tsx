@@ -39,6 +39,7 @@ import { DEFAULT_NOTEBOOK_CODE } from '../lib/expediente-notebook';
 import { logPdfViewerDebug } from '../lib/pdf-payload-debug';
 import { fetchParseSessionAttachment, uint8ArrayToBase64 } from '../lib/parse-session-attachment';
 import { NEW_CASE_FRESH_EVENT, NEW_CASE_FRESH_NAV_FLAG } from '../lib/new-case-nav';
+import { guessDerechoTuteladoCodeFromText } from '../lib/sierju-case-codes';
 
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
@@ -829,6 +830,8 @@ export default function NewCase() {
 
       const claimantNames = aiAnalysis ? joinPartyField(aiAnalysis.accionantes, 'nombre') : '';
       const defendantNames = aiAnalysis ? joinPartyField(aiAnalysis.accionados, 'nombre') : '';
+      const derechoText = aiAnalysis?.derechoTutelado || '';
+      const guessedDerecho = guessDerechoTuteladoCodeFromText(derechoText);
       const caseRow = {
         court_id: casesCourtId,
         radicado: radicadoFormatted,
@@ -845,7 +848,8 @@ export default function NewCase() {
         defendant_email: aiAnalysis ? joinPartyField(aiAnalysis.accionados, 'email') : '',
         legal_hechos: aiAnalysis?.hechos || '',
         legal_pretensiones: aiAnalysis?.pretensiones || '',
-        legal_derecho_tutelado: aiAnalysis?.derechoTutelado || '',
+        legal_derecho_tutelado: derechoText,
+        derecho_tutelado_code: guessedDerecho ?? null,
         legal_identificaciones: aiAnalysis ? buildLegalIdentificaciones(aiAnalysis) : '',
         raw_html: parsedData.html || '',
         email_metadata: {

@@ -1,3 +1,5 @@
+import type { UserRole } from '../types';
+
 /**
  * Personal del despacho (coincide con scripts/seed-court-users.mts).
  * Sustanciadores: reparto por defecto cuando `cases.assigned_to` está vacío.
@@ -11,6 +13,8 @@ export interface ExpedienteAssignee {
   text: string;
   /** Correos seed para coincidir si `assigned_to` guarda email. */
   emails?: readonly string[];
+  /** Cargo formal en el organigrama (Equipo de trabajo / seed). */
+  courtRole?: UserRole;
 }
 
 export const DESPACHO_STAFF: readonly ExpedienteAssignee[] = [
@@ -22,6 +26,7 @@ export const DESPACHO_STAFF: readonly ExpedienteAssignee[] = [
     bg: 'bg-violet-100',
     text: 'text-violet-900',
     emails: ['gloria.montero.cabas@tutelia-despacho.seed'],
+    courtRole: 'judge',
   },
   {
     id: 'camilo-marroquin',
@@ -31,6 +36,7 @@ export const DESPACHO_STAFF: readonly ExpedienteAssignee[] = [
     bg: 'bg-blue-100',
     text: 'text-blue-800',
     emails: ['camilo.marroquin.hernandez@tutelia-despacho.seed'],
+    courtRole: 'clerk',
   },
   {
     id: 'diego-guarin',
@@ -40,6 +46,7 @@ export const DESPACHO_STAFF: readonly ExpedienteAssignee[] = [
     bg: 'bg-emerald-100',
     text: 'text-emerald-900',
     emails: ['diego.guarin.vega@tutelia-despacho.seed'],
+    courtRole: 'sustanciador',
   },
   {
     id: 'myriam-fonseca',
@@ -49,6 +56,7 @@ export const DESPACHO_STAFF: readonly ExpedienteAssignee[] = [
     bg: 'bg-teal-100',
     text: 'text-teal-900',
     emails: ['myriam.fonseca.alvarez@tutelia-despacho.seed'],
+    courtRole: 'sustanciador',
   },
   {
     id: 'yeiner-osorio',
@@ -58,6 +66,7 @@ export const DESPACHO_STAFF: readonly ExpedienteAssignee[] = [
     bg: 'bg-amber-100',
     text: 'text-amber-900',
     emails: ['yeiner.osorio.florez@tutelia-despacho.seed'],
+    courtRole: 'escribiente',
   },
   {
     id: 'lina-martinez',
@@ -67,6 +76,7 @@ export const DESPACHO_STAFF: readonly ExpedienteAssignee[] = [
     bg: 'bg-orange-100',
     text: 'text-orange-900',
     emails: ['lina.martinez.orjuela@tutelia-despacho.seed'],
+    courtRole: 'escribiente',
   },
   {
     id: 'edisson-cantor',
@@ -76,6 +86,7 @@ export const DESPACHO_STAFF: readonly ExpedienteAssignee[] = [
     bg: 'bg-slate-200',
     text: 'text-slate-800',
     emails: ['edisson.cantor.burgos@tutelia-despacho.seed'],
+    courtRole: 'asistente_judicial',
   },
 ] as const;
 

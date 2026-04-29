@@ -9,6 +9,11 @@ import {
   X,
   Search,
   AlertTriangle,
+  FileStack,
+  Users,
+  BarChart3,
+  ChevronsLeft,
+  ChevronsRight,
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured, assertSupabaseConfigured } from '../../lib/supabase';
 import { getDevAdminEmail, resolveDevAdminPassword } from '../../lib/dev-admin-auth';
@@ -23,6 +28,8 @@ import type { Provider, User } from '@supabase/supabase-js';
 interface ShellProps {
   children: React.ReactNode;
 }
+
+const SIDEBAR_COLLAPSED_KEY = 'tutelia_sidebar_collapsed';
 
 function mapSessionUser(user: User): { uid: string; email: string | undefined; displayName: string; photoURL?: string } {
   const meta = user.user_metadata || {};
@@ -40,6 +47,13 @@ export default function Shell({ children }: ShellProps) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return typeof localStorage !== 'undefined' && localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
   const [loginError, setLoginError] = useState<string | null>(null);
   /** Por defecto credenciales locales hasta configurar Google / Microsoft en Supabase. */
   const [useLocalAuth, setUseLocalAuth] = useState(true);
@@ -200,6 +214,14 @@ export default function Shell({ children }: ShellProps) {
       subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }, [sidebarCollapsed]);
 
   const handleLocalLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -416,27 +438,54 @@ export default function Shell({ children }: ShellProps) {
     { name: 'Dashboard', path: '/', icon: LayoutDashboard },
     { name: 'Nueva Tutela', path: '/new', icon: PlusCircle },
     { name: 'Expedientes', path: '/cases', icon: Gavel },
+    { name: 'Estadísticas', path: '/estadisticas', icon: BarChart3 },
+    { name: 'Plantillas', path: '/plantillas', icon: FileStack },
+    { name: 'Equipo de trabajo', path: '/equipo', icon: Users },
     { name: 'Sincronización SGDE', path: '/sgde', icon: Search },
     { name: 'Configuración', path: '/settings', icon: Settings },
   ];
 
+  const sidebarWidthClass = sidebarCollapsed ? 'md:pl-[72px]' : 'md:pl-[280px]';
+
   return (
     <div className="min-h-screen flex bg-bg text-slate-900 font-sans">
-      <aside className="hidden md:flex flex-col w-[280px] bg-primary text-white shrink-0">
-        <div className="p-8">
-          <div className="flex items-center gap-3 mb-10">
-            <div className="bg-accent p-2 rounded-lg">
-              <Scale className="w-6 h-6 text-white" />
+      <aside
+        className={`hidden md:flex flex-col bg-primary text-white shrink-0 fixed left-0 top-0 z-30 h-screen border-r border-white/10 transition-[width] duration-200 ease-out ${
+          sidebarCollapsed ? 'w-[72px]' : 'w-[280px]'
+        }`}
+      >
+        <div className={`flex flex-col flex-1 min-h-0 overflow-y-auto overflow-x-hidden ${sidebarCollapsed ? 'p-3' : 'p-8'}`}>
+          <div
+            className={`flex items-center gap-3 mb-8 shrink-0 ${sidebarCollapsed ? 'flex-col gap-4' : 'justify-between'}`}
+          >
+            <div className={`flex items-center gap-3 min-w-0 ${sidebarCollapsed ? 'flex-col' : ''}`}>
+              <div className="bg-accent p-2 rounded-lg shrink-0">
+                <Scale className="w-6 h-6 text-white" />
+              </div>
+              {!sidebarCollapsed && (
+                <span className="text-xl font-bold tracking-tight text-white truncate">Tutelia</span>
+              )}
             </div>
-            <span className="text-xl font-bold tracking-tight text-white">Tutelia</span>
+            <button
+              type="button"
+              onClick={() => setSidebarCollapsed((c) => !c)}
+              className="shrink-0 rounded-lg p-2 text-slate-400 hover:text-white hover:bg-white/10 transition-colors focus:outline-none focus:ring-2 focus:ring-accent/40"
+              title={sidebarCollapsed ? 'Expandir menú' : 'Contraer menú'}
+              aria-expanded={!sidebarCollapsed}
+              aria-label={sidebarCollapsed ? 'Expandir menú lateral' : 'Contraer menú lateral'}
+            >
+              {sidebarCollapsed ? <ChevronsRight className="w-5 h-5" /> : <ChevronsLeft className="w-5 h-5" />}
+            </button>
           </div>
 
-          <div className="bg-white/5 p-4 rounded-xl border border-white/10 mb-8">
-            <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1">Despacho judicial</p>
-            <p className="text-xs font-semibold text-white/90">Juzgado 051 Civil del Circuito de Bogotá D.C.</p>
-          </div>
+          {!sidebarCollapsed && (
+            <div className="bg-white/5 p-4 rounded-xl border border-white/10 mb-8 shrink-0">
+              <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1">Despacho judicial</p>
+              <p className="text-xs font-semibold text-white/90">Juzgado 051 Civil del Circuito de Bogotá D.C.</p>
+            </div>
+          )}
 
-          <nav className="space-y-1">
+          <nav className={`space-y-1 flex-1 ${sidebarCollapsed ? 'pb-4' : ''}`}>
             {navItems.map((item) => {
               const isActive = location.pathname === item.path;
               const Icon = item.icon;
@@ -444,39 +493,44 @@ export default function Shell({ children }: ShellProps) {
                 <Link
                   key={item.name}
                   to={item.path}
+                  title={sidebarCollapsed ? item.name : undefined}
                   onClick={
                     item.path === '/new'
                       ? () => intentFreshNewCaseFromMenu(location.pathname === '/new')
                       : undefined
                   }
-                  className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                  className={`flex items-center rounded-xl text-sm font-medium transition-all ${
+                    sidebarCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-4 py-3'
+                  } ${
                     isActive
                       ? 'bg-accent text-white shadow-lg shadow-accent/20'
                       : 'text-slate-400 hover:text-white hover:bg-white/5'
                   }`}
                 >
-                  <Icon className="w-4 h-4" />
-                  {item.name}
+                  <Icon className="w-4 h-4 shrink-0" />
+                  {!sidebarCollapsed && item.name}
                 </Link>
               );
             })}
           </nav>
         </div>
 
-        <div className="mt-auto p-8 border-t border-white/5">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-[10px] font-bold overflow-hidden shadow-sm">
+        <div className={`mt-auto border-t border-white/5 shrink-0 ${sidebarCollapsed ? 'p-3 flex justify-center' : 'p-8'}`}>
+          <div className={`flex items-center gap-3 ${sidebarCollapsed ? 'justify-center' : ''}`}>
+            <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-[10px] font-bold overflow-hidden shadow-sm shrink-0">
               {user.photoURL ? <img src={user.photoURL} alt="" /> : user.email?.[0].toUpperCase()}
             </div>
-            <div className="flex-1 truncate">
-              <p className="text-xs font-bold text-white truncate">{user.displayName || 'Funcionario'}</p>
-              <p className="text-[10px] text-slate-500 font-medium tracking-wider">CONECTADO</p>
-            </div>
+            {!sidebarCollapsed && (
+              <div className="flex-1 min-w-0 truncate">
+                <p className="text-xs font-bold text-white truncate">{user.displayName || 'Funcionario'}</p>
+                <p className="text-[10px] text-slate-500 font-medium tracking-wider">CONECTADO</p>
+              </div>
+            )}
           </div>
         </div>
       </aside>
 
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <div className={`flex-1 flex flex-col min-w-0 overflow-hidden transition-[padding] duration-200 ease-out ${sidebarWidthClass}`}>
         <header className="bg-white border-b border-slate-100 sticky top-0 z-10">
           <div className="px-10 py-6 flex items-center justify-between">
             <div>

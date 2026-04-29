@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { rowToCase } from '../lib/supabase-mappers';
-import type { Case } from '../types';
 import { Clock, AlertTriangle, CheckCircle2, Search } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { formatRadicado } from '../lib/formatters';
-import { buildExpedienteViewRow } from '../lib/expedientes-view-model';
-import { resolveAssigneeForCase } from '../lib/court-staff-assignees';
+import { buildExpedienteViewRow, type ExpedienteViewRow } from '../lib/expedientes-view-model';
+import { CASE_LIST_COLUMNS } from '../lib/case-list-query';
+import type { Case } from '../types';
 
 const COURT_ID = 'court-1';
 
@@ -21,6 +21,20 @@ function statusLabelEs(status: string): string {
     archived: 'Archivado',
   };
   return m[status] || status;
+}
+
+function semaforoFromRow(row: ExpedienteViewRow) {
+  const c = row.case;
+  if (row.stage === 'archivado' || c.status === 'archived') {
+    return { color: 'bg-gray-200', icon: CheckCircle2, text: 'CERRADO' as const };
+  }
+  if (row.businessDaysRemaining <= 0) {
+    return { color: 'bg-red-500 text-white', icon: AlertTriangle, text: 'VENCIDO' as const };
+  }
+  if (row.urgency === 'urgent') {
+    return { color: 'bg-orange-500 text-white', icon: Clock, text: 'URGENTE' as const };
+  }
+  return { color: 'bg-green-500 text-white', icon: CheckCircle2, text: 'EN TÉRMINO' as const };
 }
 
 export default function Dashboard() {
@@ -36,7 +50,7 @@ export default function Dashboard() {
     async function loadCases() {
       const { data, error } = await supabase
         .from('cases')
-        .select('*')
+        .select(CASE_LIST_COLUMNS)
         .eq('court_id', COURT_ID)
         .order('updated_at', { ascending: false });
       if (cancelled) return;
@@ -45,7 +59,7 @@ export default function Dashboard() {
         setLoading(false);
         return;
       }
-      setCases((data || []).map((r) => rowToCase(r as Record<string, unknown>)));
+      setCases((data || []).map((r) => rowToCase(r as unknown as Record<string, unknown>)));
       setLoading(false);
     }
 
@@ -66,41 +80,31 @@ export default function Dashboard() {
     };
   }, []);
 
+  const expedienteRows = useMemo(() => cases.map(buildExpedienteViewRow), [cases]);
+
   const metrics = useMemo(() => {
-    const rows = cases.map(buildExpedienteViewRow);
     const active = cases.filter((c) => c.status !== 'archived').length;
-    const critical = rows.filter(
+    const critical = expedienteRows.filter(
       (r) =>
         r.urgency === 'urgent' &&
         r.stage !== 'archivado' &&
         r.stage !== 'fallo_notificado'
     ).length;
-    const pendingSignature = rows.filter((r) => r.stage === 'fallo_redactado').length;
+    const pendingSignature = expedienteRows.filter((r) => r.stage === 'fallo_redactado').length;
     const sgdeLinked = cases.filter((c) => Boolean(c.sgdeId?.trim())).length;
     return { active, critical, pendingSignature, sgdeLinked };
-  }, [cases]);
+  }, [cases, expedienteRows]);
 
-  const getSemaforo = (caseItem: Case) => {
-    const row = buildExpedienteViewRow(caseItem);
-    if (row.stage === 'archivado' || caseItem.status === 'archived') {
-      return { color: 'bg-gray-200', icon: CheckCircle2, text: 'CERRADO' as const };
-    }
-    if (row.businessDaysRemaining <= 0) {
-      return { color: 'bg-red-500 text-white', icon: AlertTriangle, text: 'VENCIDO' as const };
-    }
-    if (row.urgency === 'urgent') {
-      return { color: 'bg-orange-500 text-white', icon: Clock, text: 'URGENTE' as const };
-    }
-    return { color: 'bg-green-500 text-white', icon: CheckCircle2, text: 'EN TÉRMINO' as const };
-  };
-
-  const filteredCases = cases.filter((c) => {
-    const matchesSearch =
-      c.radicado.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      c.claimant.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || c.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const filteredRows = useMemo(() => {
+    const term = searchTerm.toLowerCase();
+    return expedienteRows.filter((r) => {
+      const c = r.case;
+      const matchesSearch =
+        c.radicado.toLowerCase().includes(term) || c.claimant.toLowerCase().includes(term);
+      const matchesStatus = statusFilter === 'all' || c.status === statusFilter;
+      return matchesSearch && matchesStatus;
+    });
+  }, [expedienteRows, searchTerm, statusFilter]);
 
   return (
     <div className="space-y-10">
@@ -187,17 +191,17 @@ export default function Dashboard() {
                     Consultando expedientes…
                   </td>
                 </tr>
-              ) : filteredCases.length === 0 ? (
+              ) : filteredRows.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="p-12 text-center text-sm text-slate-400 font-medium">
                     No hay registros coincidentes para la búsqueda.
                   </td>
                 </tr>
               ) : (
-                filteredCases.map((c) => {
-                  const sem = getSemaforo(c);
-                  const row = buildExpedienteViewRow(c);
-                  const assignee = resolveAssigneeForCase(c.assignedTo, c.id);
+                filteredRows.map((row) => {
+                  const c = row.case;
+                  const sem = semaforoFromRow(row);
+                  const assignee = row.assignee;
                   return (
                     <tr
                       key={c.id}
@@ -282,7 +286,7 @@ export default function Dashboard() {
 
       <footer className="flex justify-between items-center text-[11px] text-slate-400 font-bold uppercase tracking-widest px-2">
         <div>
-          Filtro: {filteredCases.length} de {cases.length} expedientes
+          Filtro: {filteredRows.length} de {cases.length} expedientes
         </div>
         <div>Última actualización: {format(new Date(), 'hh:mm a', { locale: es })}</div>
       </footer>

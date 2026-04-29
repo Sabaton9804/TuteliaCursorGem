@@ -1,4 +1,5 @@
 import type { Action, Case, CaseStatus, Document, UserProfile } from '../types';
+import { parseDecisionType, parseDerechoTuteladoCode } from './sierju-case-codes';
 import { parseUserRole } from './user-roles';
 
 export function rowToCase(row: Record<string, unknown>): Case {
@@ -25,12 +26,17 @@ export function rowToCase(row: Record<string, unknown>): Case {
     legalHechos: row.legal_hechos ? String(row.legal_hechos) : undefined,
     legalPretensiones: row.legal_pretensiones ? String(row.legal_pretensiones) : undefined,
     legalDerechoTutelado: row.legal_derecho_tutelado ? String(row.legal_derecho_tutelado) : undefined,
+    derechoTuteladoCode: parseDerechoTuteladoCode(row.derecho_tutelado_code),
+    decisionType: parseDecisionType(row.decision_type),
     legalIdentificaciones: row.legal_identificaciones ? String(row.legal_identificaciones) : undefined,
     subject: row.subject ? String(row.subject) : undefined,
     rawText: row.raw_text ? String(row.raw_text) : undefined,
     rawHtml: row.raw_html ? String(row.raw_html) : undefined,
     emailMetadata: (row.email_metadata as Record<string, unknown>) || undefined,
     expedienteCuadernosExtra: parseExpedienteCuadernosExtra(row.expediente_cuadernos_extra),
+    informeIngresoRegistradoAt: row.informe_ingreso_registrado_at
+      ? ts(row.informe_ingreso_registrado_at)
+      : undefined,
   };
 }
 

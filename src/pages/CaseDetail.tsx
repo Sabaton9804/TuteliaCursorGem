@@ -3,6 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { rowToAction, rowToCase, rowToCaseDoc } from '../lib/supabase-mappers';
 import { Action, Case, Document as CaseDoc } from '../types';
+import type { CaseStatus } from '../types';
 import { 
   FileText, 
   History,
@@ -14,6 +15,7 @@ import {
   Loader2,
   Scale,
   UserCog,
+  FolderOutput,
 } from 'lucide-react';
 import { format, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -29,16 +31,24 @@ import {
 } from '../lib/case-document-storage';
 import { sanitizeExpedienteFilenameForDisplay } from '../lib/sanitize-expediente-filename';
 import { ExpedienteDigitalPanel } from '../components/expediente/ExpedienteDigitalPanel';
+import { CaseDespachoDocumentosPanel } from '../components/expediente/CaseDespachoDocumentosPanel';
 import { buildCaseTimeline, buildSynthesisContextBlock } from '../lib/case-detail-context';
 import { resolveAssigneeForCase, SUSTANCIADORES } from '../lib/court-staff-assignees';
 import { ensureSupabaseSessionForWrites } from '../lib/supabase-write-auth';
-
+import {
+  DERECHO_TUTELADO_CODES,
+  DERECHO_TUTELADO_LABELS,
+  DECISION_TYPES,
+  DECISION_TYPE_LABELS,
+  parseDerechoTuteladoCode,
+  parseDecisionType,
+} from '../lib/sierju-case-codes';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
-type ExpedienteTab = 'sintesis' | 'expediente' | 'actuaciones';
+type ExpedienteTab = 'sintesis' | 'expediente' | 'actuaciones' | 'documentos';
 
-const TAB_QUERY_VALUES = new Set<string>(['sintesis', 'expediente', 'actuaciones']);
+const TAB_QUERY_VALUES = new Set<string>(['sintesis', 'expediente', 'actuaciones', 'documentos']);
 
 const CASE_STATUS_LABEL: Record<string, string> = {
   received: 'Recibido',
@@ -49,7 +59,7 @@ const CASE_STATUS_LABEL: Record<string, string> = {
 };
 
 function parseExpedienteTabParam(raw: string | null): ExpedienteTab {
-  if (raw === 'expediente' || raw === 'actuaciones') return raw;
+  if (raw === 'expediente' || raw === 'actuaciones' || raw === 'documentos') return raw;
   return 'sintesis';
 }
 
@@ -538,6 +548,8 @@ export default function CaseDetail() {
   const [assignSaving, setAssignSaving] = useState(false);
   const [newActionText, setNewActionText] = useState('');
   const [manualActSaving, setManualActSaving] = useState(false);
+  const [derechoCodeSaving, setDerechoCodeSaving] = useState(false);
+  const [decisionSaving, setDecisionSaving] = useState(false);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -752,8 +764,89 @@ export default function CaseDetail() {
     }
   };
 
+  const handleDerechoTuteladoCodeChange = useCallback(
+    async (raw: string) => {
+      if (!id || !caseItem) return;
+      const next = raw === '' ? undefined : parseDerechoTuteladoCode(raw);
+      if (raw !== '' && !next) return;
+      const prev = caseItem.derechoTuteladoCode;
+      if ((next ?? undefined) === (prev ?? undefined)) return;
+      setDerechoCodeSaving(true);
+      try {
+        await ensureSupabaseSessionForWrites();
+        const now = new Date().toISOString();
+        const { error: upErr } = await supabase
+          .from('cases')
+          .update({ derecho_tutelado_code: next ?? null, updated_at: now })
+          .eq('id', id);
+        if (upErr) throw upErr;
+
+        const { data: u } = await supabase.auth.getUser();
+        const uname = u.user?.user_metadata?.full_name || u.user?.email || 'Sistema';
+        await supabase.from('case_actions').insert({
+          case_id: id,
+          type: 'derecho_tutelado_code',
+          description: next
+            ? `Clasificación SIERJU: ${DERECHO_TUTELADO_LABELS[next]}`
+            : 'Clasificación SIERJU eliminada',
+          user_id: u.user?.id ?? null,
+          user_name: String(uname),
+          metadata: { previous: prev ?? null, next: next ?? null },
+        });
+        await refetchCase();
+        await refetchActions();
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setDerechoCodeSaving(false);
+      }
+    },
+    [id, caseItem, refetchCase, refetchActions]
+  );
+
+  const handleDecisionTypeChange = useCallback(
+    async (raw: string) => {
+      if (!id || !caseItem) return;
+      const next = raw === '' ? undefined : parseDecisionType(raw);
+      if (raw !== '' && !next) return;
+      const prev = caseItem.decisionType;
+      if ((next ?? undefined) === (prev ?? undefined)) return;
+      setDecisionSaving(true);
+      try {
+        await ensureSupabaseSessionForWrites();
+        const now = new Date().toISOString();
+        const { error: upErr } = await supabase
+          .from('cases')
+          .update({ decision_type: next ?? null, updated_at: now })
+          .eq('id', id);
+        if (upErr) throw upErr;
+
+        const { data: u } = await supabase.auth.getUser();
+        const uname = u.user?.user_metadata?.full_name || u.user?.email || 'Sistema';
+        await supabase.from('case_actions').insert({
+          case_id: id,
+          type: 'decision_type',
+          description: next
+            ? `Tipo de decisión: ${DECISION_TYPE_LABELS[next]}`
+            : 'Tipo de decisión eliminado',
+          user_id: u.user?.id ?? null,
+          user_name: String(uname),
+          metadata: { previous: prev ?? null, next: next ?? null },
+        });
+        await refetchCase();
+        await refetchActions();
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setDecisionSaving(false);
+      }
+    },
+    [id, caseItem, refetchCase, refetchActions]
+  );
+
   const handleStatusChange = async (newStatus: string) => {
     if (!id || !caseItem) return;
+    const previousStatus = caseItem.status as CaseStatus;
     try {
       await ensureSupabaseSessionForWrites();
       const now = new Date().toISOString();
@@ -768,9 +861,14 @@ export default function CaseDetail() {
       const { error: insErr } = await supabase.from('case_actions').insert({
         case_id: id,
         type: 'status_change',
-        description: `Cambio de estado a ${newStatus.toUpperCase()}`,
+        description: `Cambio de estado: ${CASE_STATUS_LABEL[previousStatus] ?? previousStatus} → ${CASE_STATUS_LABEL[newStatus] ?? newStatus}`,
         user_id: u.user?.id ?? null,
         user_name: String(uname),
+        metadata: {
+          kind: 'status_change',
+          previous_status: previousStatus,
+          new_status: newStatus,
+        },
       });
       if (insErr) throw insErr;
       await refetchCase();
@@ -836,6 +934,59 @@ export default function CaseDetail() {
           </div>
         </div>
       </header>
+
+      <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3 sm:gap-5">
+        <div className="min-w-[200px] flex-1 space-y-1">
+          <label className="text-[9px] font-bold uppercase tracking-wider text-slate-400" htmlFor="derecho-tutelado-code">
+            Clasificación SIERJU (alimenta el informe global)
+          </label>
+          <div className="flex items-center gap-2">
+            <select
+              id="derecho-tutelado-code"
+              className="input-modern min-h-[40px] flex-1 text-xs font-medium"
+              value={caseItem.derechoTuteladoCode ?? ''}
+              disabled={derechoCodeSaving}
+              onChange={(e) => void handleDerechoTuteladoCodeChange(e.target.value)}
+            >
+              <option value="">Sin clasificar</option>
+              {DERECHO_TUTELADO_CODES.map((code) => (
+                <option key={code} value={code}>
+                  {DERECHO_TUTELADO_LABELS[code]}
+                </option>
+              ))}
+            </select>
+            {derechoCodeSaving ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-slate-400" aria-hidden /> : null}
+          </div>
+        </div>
+        {caseItem.status === 'judgment' || caseItem.status === 'archived' ? (
+          <div className="min-w-[200px] flex-1 space-y-1">
+            <label className="text-[9px] font-bold uppercase tracking-wider text-slate-400" htmlFor="decision-type">
+              Tipo de decisión
+            </label>
+            <div className="flex items-center gap-2">
+              <select
+                id="decision-type"
+                className="input-modern min-h-[40px] flex-1 text-xs font-medium"
+                value={caseItem.decisionType ?? ''}
+                disabled={decisionSaving}
+                onChange={(e) => void handleDecisionTypeChange(e.target.value)}
+              >
+                <option value="">Sin registrar</option>
+                {DECISION_TYPES.map((dt) => (
+                  <option key={dt} value={dt}>
+                    {DECISION_TYPE_LABELS[dt]}
+                  </option>
+                ))}
+              </select>
+              {decisionSaving ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-slate-400" aria-hidden /> : null}
+            </div>
+          </div>
+        ) : (
+          <p className="pb-1 text-[11px] text-slate-400 sm:max-w-xs">
+            El tipo de decisión se registra cuando el estado es Fallo o Archivado.
+          </p>
+        )}
+      </div>
 
       {resolvedAssignee ? (
         <div className="flex w-full min-w-0 flex-col gap-4 rounded-2xl border border-slate-100 bg-white px-5 py-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:px-6">
@@ -932,6 +1083,24 @@ export default function CaseDetail() {
             }`}
           >
             Actuaciones
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="tab-documentos"
+            aria-selected={activeTab === 'documentos'}
+            aria-controls="panel-documentos"
+            onClick={() => setActiveTab('documentos')}
+            className={`shrink-0 border-b-2 px-3 py-3.5 text-[11px] font-bold uppercase tracking-widest transition-colors sm:px-5 ${
+              activeTab === 'documentos'
+                ? 'border-accent text-accent'
+                : 'border-transparent text-slate-400 hover:text-slate-600'
+            }`}
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <FolderOutput className="h-3.5 w-3.5" aria-hidden />
+              Despacho
+            </span>
           </button>
         </div>
       </nav>
@@ -1227,6 +1396,21 @@ export default function CaseDetail() {
             </div>
           </div>
           </div>
+        </div>
+
+        <div
+          id="panel-documentos"
+          role="tabpanel"
+          aria-labelledby="tab-documentos"
+          className={activeTab === 'documentos' ? 'block' : 'hidden'}
+        >
+          {caseItem ? (
+            <CaseDespachoDocumentosPanel
+              caseItem={caseItem}
+              caseId={caseItem.id}
+              onCaseUpdated={() => void refetchCase()}
+            />
+          ) : null}
         </div>
 
         <div

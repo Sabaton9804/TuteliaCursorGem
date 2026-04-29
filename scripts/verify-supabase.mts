@@ -130,6 +130,21 @@ async function testTuteliaTables(): Promise<boolean> {
     }
   }
 
+  const { error: sierjuColsErr } = await sb
+    .from('cases')
+    .select('derecho_tutelado_code,decision_type')
+    .limit(1);
+  if (sierjuColsErr) {
+    console.log(
+      'Columnas SIERJU en «cases»:',
+      sierjuColsErr.message,
+      '→ Ejecute supabase/migrations/20250429210000_cases_sierju_taxonomy_decision.sql en el SQL Editor.'
+    );
+    ok = false;
+  } else {
+    console.log('Columnas SIERJU (cases.derecho_tutelado_code, decision_type): OK.');
+  }
+
   const { data: court, error: ce } = await sb.from('courts').select('id,name').eq('id', 'court-1').maybeSingle();
   if (ce) {
     console.log('Consulta court-1:', ce.message);

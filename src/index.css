@@ -30,3 +30,52 @@
 .btn-primary {
   @apply px-6 py-3 bg-accent text-white font-semibold rounded-lg hover:bg-blue-700 transition-all active:scale-95 disabled:opacity-50 shadow-sm;
 }
+
+/* TipTap — editor de plantillas */
+.tiptap-template-editor .ProseMirror {
+  outline: none;
+}
+.tiptap-template-editor .ProseMirror p {
+  margin: 0.35em 0;
+}
+.tiptap-template-editor .ProseMirror ul,
+.tiptap-template-editor .ProseMirror ol {
+  margin: 0.35em 0;
+  padding-left: 1.25rem;
+}
+
+/* Editor plantillas — “hoja” A4 y tablas */
+.plantilla-doc-surface .ProseMirror {
+  min-height: 12rem;
+}
+.plantilla-doc-surface .ProseMirror table.plantilla-tiptap-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75em 0;
+  font-size: inherit;
+}
+.plantilla-doc-surface .ProseMirror table.plantilla-tiptap-table td,
+.plantilla-doc-surface .ProseMirror table.plantilla-tiptap-table th {
+  border: 1px solid #cbd5e1;
+  padding: 0.35rem 0.5rem;
+  vertical-align: top;
+}
+.plantilla-doc-surface .ProseMirror table.plantilla-tiptap-table th {
+  background: #f8fafc;
+  font-weight: 600;
+}
+
+/* Bloques marcados como condicionales en el editor de plantillas */
+.plantilla-inline-editor .ProseMirror p[data-toggle-key],
+.plantilla-inline-editor .ProseMirror h3[data-toggle-key],
+.plantilla-inline-editor .ProseMirror h4[data-toggle-key],
+.plantilla-inline-editor .ProseMirror td[data-toggle-key],
+.plantilla-inline-editor .ProseMirror th[data-toggle-key] {
+  border-left: 3px solid rgb(129 140 248);
+  padding-left: 0.5rem;
+  margin-left: -0.125rem;
+}
+
+.tiptap-template-focus:focus {
+  outline: none;
+}
