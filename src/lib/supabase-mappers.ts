@@ -1,6 +1,16 @@
-import type { Action, Case, CaseStatus, Document, UserProfile } from '../types';
+import type {
+  Action,
+  Case,
+  CaseAuditLogEntry,
+  CaseStatus,
+  CaseWordReview,
+  Document,
+  UserProfile,
+  WordReviewStatus,
+} from '../types';
 import { parseDecisionType, parseDerechoTuteladoCode } from './sierju-case-codes';
 import { parseUserRole } from './user-roles';
+import { DEFAULT_DEMO_COURT_ID } from './default-court';
 
 export function rowToCase(row: Record<string, unknown>): Case {
   const ts = (v: unknown) => (typeof v === 'string' ? v : v ? String(v) : '');
@@ -16,6 +26,9 @@ export function rowToCase(row: Record<string, unknown>): Case {
     createdAt: ts(row.created_at),
     updatedAt: ts(row.updated_at),
     deadlineAt: row.deadline_at ? ts(row.deadline_at) : undefined,
+    deadlineOverrideNote: row.deadline_override_note
+      ? String(row.deadline_override_note)
+      : undefined,
     sgdeId: row.sgde_id ? String(row.sgde_id) : undefined,
     sourceChannel: row.source_channel ? String(row.source_channel) : undefined,
     summary: row.summary ? String(row.summary) : undefined,
@@ -36,6 +49,9 @@ export function rowToCase(row: Record<string, unknown>): Case {
     expedienteCuadernosExtra: parseExpedienteCuadernosExtra(row.expediente_cuadernos_extra),
     informeIngresoRegistradoAt: row.informe_ingreso_registrado_at
       ? ts(row.informe_ingreso_registrado_at)
+      : undefined,
+    informeIngresoDocumentId: row.informe_ingreso_document_id
+      ? String(row.informe_ingreso_document_id)
       : undefined,
   };
 }
@@ -93,12 +109,60 @@ export function rowToAction(row: Record<string, unknown>): Action {
   };
 }
 
+const AUDIT_OPS = new Set(['INSERT', 'UPDATE', 'DELETE']);
+
+export function rowToCaseAuditLogEntry(row: Record<string, unknown>): CaseAuditLogEntry {
+  const ts = (v: unknown) => (typeof v === 'string' ? v : v ? String(v) : '');
+  const op = String(row.operation ?? '');
+  return {
+    id: String(row.id),
+    caseId: String(row.case_id ?? ''),
+    occurredAt: ts(row.occurred_at),
+    actorUserId: row.actor_user_id ? String(row.actor_user_id) : undefined,
+    sourceTable: String(row.source_table ?? ''),
+    operation: AUDIT_OPS.has(op) ? (op as CaseAuditLogEntry['operation']) : 'UPDATE',
+    rowId: row.row_id ? String(row.row_id) : undefined,
+    payload: (row.payload && typeof row.payload === 'object' ? row.payload : {}) as Record<string, unknown>,
+  };
+}
+
 export function rowToUserProfile(row: Record<string, unknown>): UserProfile {
   return {
     id: String(row.id),
     email: String(row.email ?? ''),
     name: String(row.name ?? ''),
     role: parseUserRole(row.role),
-    courtId: String(row.court_id ?? 'court-1'),
+    courtId: String(row.court_id ?? DEFAULT_DEMO_COURT_ID),
+  };
+}
+
+const WORD_REVIEW_STATUSES = new Set<WordReviewStatus>([
+  'pendiente_juez',
+  'observaciones_juez',
+  'aprobado_firma_pendiente',
+  'cerrado_con_pdf_firmado',
+]);
+
+function parseWordReviewStatus(raw: unknown): WordReviewStatus {
+  const s = typeof raw === 'string' ? raw : '';
+  return WORD_REVIEW_STATUSES.has(s as WordReviewStatus) ? (s as WordReviewStatus) : 'pendiente_juez';
+}
+
+export function rowToCaseWordReview(row: Record<string, unknown>): CaseWordReview {
+  const ts = (v: unknown) => (typeof v === 'string' ? v : v ? String(v) : '');
+  return {
+    id: String(row.id),
+    caseId: String(row.case_id ?? ''),
+    wordDocumentId: String(row.word_document_id ?? ''),
+    status: parseWordReviewStatus(row.status),
+    judgeNotes: row.judge_notes != null && String(row.judge_notes).trim() ? String(row.judge_notes) : undefined,
+    sustanciadorReply:
+      row.sustanciador_reply != null && String(row.sustanciador_reply).trim()
+        ? String(row.sustanciador_reply)
+        : undefined,
+    signedPdfDocumentId: row.signed_pdf_document_id ? String(row.signed_pdf_document_id) : undefined,
+    createdBy: row.created_by ? String(row.created_by) : undefined,
+    createdAt: ts(row.created_at),
+    updatedAt: ts(row.updated_at),
   };
 }

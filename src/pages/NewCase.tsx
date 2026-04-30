@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   Upload, 
@@ -40,9 +40,21 @@ import { logPdfViewerDebug } from '../lib/pdf-payload-debug';
 import { fetchParseSessionAttachment, uint8ArrayToBase64 } from '../lib/parse-session-attachment';
 import { NEW_CASE_FRESH_EVENT, NEW_CASE_FRESH_NAV_FLAG } from '../lib/new-case-nav';
 import { guessDerechoTuteladoCodeFromText } from '../lib/sierju-case-codes';
+import { startOfLocalDay, tenthBusinessDayDeadline } from '../lib/business-days';
+import { useSessionCourt } from '../contexts/SessionCourtContext';
+import {
+  computeInitialAssignedTo,
+  parseSustanciadorAssignmentMode,
+  SUSTANCIADOR_ASSIGNMENT_MODE_AUDIT,
+} from '../lib/sustanciador-reparto';
+import { insertAssignmentNotificationsForProfiles } from '../lib/assignment-notifications';
+import { deepSanitizeForPostgresInsert } from '../lib/sanitize-for-postgres';
 
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
+
+const PDF_VIEWER_ZOOM_SCALES = [0.5, 0.75, 1.0, 1.25, 1.5] as const;
+type PdfViewerZoom = 'fit' | (typeof PDF_VIEWER_ZOOM_SCALES)[number];
 
 function PdfViewer({
   content,
@@ -59,7 +71,11 @@ function PdfViewer({
 }) {
   const [numPages, setNumPages] = useState<number | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
-  const [scale, setScale] = useState(1.0);
+  const [zoom, setZoom] = useState<PdfViewerZoom>('fit');
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [fitWidthPx, setFitWidthPx] = useState(() =>
+    typeof window !== 'undefined' ? Math.max(240, Math.floor(window.innerWidth * 0.42)) : 640
+  );
   const [pdfBlob, setPdfBlob] = useState<Blob | null>(null);
   const [pdfJsError, setPdfJsError] = useState<string | null>(null);
   const [remoteBytes, setRemoteBytes] = useState<Uint8Array | null>(null);
@@ -145,6 +161,21 @@ function PdfViewer({
   const isImageCt = Boolean(contentType?.startsWith('image/'));
   const isNonPdfBytes =
     Boolean(decodedBytes) && !isImageCt && !looksLikePdf(decodedBytes!);
+
+  useLayoutEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const measure = () => {
+      const cs = getComputedStyle(el);
+      const pl = parseFloat(cs.paddingLeft) || 0;
+      const pr = parseFloat(cs.paddingRight) || 0;
+      setFitWidthPx(Math.max(240, Math.floor(el.clientWidth - pl - pr)));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [pdfBlob, pdfJsError, isImageCt, isNonPdfBytes]);
 
   useEffect(() => {
     if (import.meta.env.DEV && pdfBlob && !isImageCt && !isNonPdfBytes && decodedBytes) {
@@ -306,11 +337,17 @@ function PdfViewer({
     );
   }
 
+  const pageWidthProp = zoom === 'fit' && fitWidthPx > 0 ? fitWidthPx : undefined;
+  const pageScaleProp = zoom === 'fit' ? 1 : zoom;
+
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-100 overflow-hidden">
-      <div className="flex-1 overflow-auto p-4 flex justify-center">
+    <div className="flex-1 flex flex-col h-full bg-slate-100 overflow-hidden min-w-0">
+      <div
+        ref={viewportRef}
+        className="flex-1 overflow-auto p-4 flex justify-center min-w-0"
+      >
         {pdfBlob ? (
-          <div className="shadow-2xl">
+          <div className="shadow-2xl max-w-full">
             <Document
               file={pdfBlob}
               onLoadSuccess={onDocumentLoadSuccess}
@@ -358,7 +395,8 @@ function PdfViewer({
             >
               <Page
                 pageNumber={pageNumber}
-                scale={scale}
+                width={pageWidthProp}
+                scale={pageScaleProp}
                 renderTextLayer={false}
                 renderAnnotationLayer={false}
                 className="max-w-full"
@@ -397,15 +435,20 @@ function PdfViewer({
           <div className="h-4 w-px bg-slate-200 mx-2" />
 
           <select
-            value={scale}
-            onChange={(e) => setScale(Number(e.target.value))}
-            className="text-[10px] font-bold text-slate-500 uppercase bg-transparent border-none focus:ring-0 cursor-pointer"
+            value={zoom === 'fit' ? 'fit' : String(zoom)}
+            onChange={(e) => {
+              const v = e.target.value;
+              setZoom(v === 'fit' ? 'fit' : (Number(v) as PdfViewerZoom));
+            }}
+            className="text-[10px] font-bold text-slate-500 uppercase bg-transparent border-none focus:ring-0 cursor-pointer max-w-[11rem]"
+            title="Ajustar ancho encaja hojas horizontales en el panel"
           >
-            <option value={0.5}>50%</option>
-            <option value={0.75}>75%</option>
-            <option value={1.0}>100%</option>
-            <option value={1.25}>125%</option>
-            <option value={1.5}>150%</option>
+            <option value="fit">Ajustar ancho</option>
+            {PDF_VIEWER_ZOOM_SCALES.map((s) => (
+              <option key={s} value={s}>
+                {Math.round(s * 100)}%
+              </option>
+            ))}
           </select>
         </div>
 
@@ -573,10 +616,18 @@ function getUserFriendlyRadicadoError(err: any): string {
     );
   }
 
+  if (rawMessage.includes('unsupported unicode escape')) {
+    return (
+      'El contenido del correo o de la IA incluye caracteres que la base de datos no admite en metadatos JSON ' +
+      '(p. ej. bytes nulos o texto mal codificado). Intente de nuevo; si persiste, reenvíe el correo o quite anexos problemáticos.'
+    );
+  }
+
   return err?.message || 'Error desconocido al radicar expediente.';
 }
 
 export default function NewCase() {
+  const { courtId } = useSessionCourt();
   const [file, setFile] = useState<File | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const [parsedData, setParsedData] = useState<any>(null);
@@ -655,8 +706,6 @@ export default function NewCase() {
     return () => window.removeEventListener(NEW_CASE_FRESH_EVENT, onFresh);
   }, [resetNewCaseWizard]);
 
-  const casesCourtId = 'court-1';
-
   useEffect(() => {
     if (!parsedData) return;
     let cancelled = false;
@@ -671,7 +720,7 @@ export default function NewCase() {
         const res = await supabase
           .from('cases')
           .select('radicado')
-          .eq('court_id', casesCourtId)
+          .eq('court_id', courtId)
           .like('radicado', `${prefix}%`)
           .order('radicado', { ascending: false })
           .limit(1)
@@ -698,7 +747,7 @@ export default function NewCase() {
     return () => {
       cancelled = true;
     };
-  }, [parsedData]);
+  }, [parsedData, courtId]);
 
   useEffect(() => {
     if (!parsedData || radicationResult) return;
@@ -811,7 +860,7 @@ export default function NewCase() {
         const res = await supabase
           .from('cases')
           .select('id')
-          .eq('court_id', casesCourtId)
+          .eq('court_id', courtId)
           .eq('radicado', radicadoFormatted)
           .maybeSingle();
         dup = res.data;
@@ -828,13 +877,39 @@ export default function NewCase() {
         return;
       }
 
+      const { data: courtRow, error: courtFetchErr } = await supabase
+        .from('courts')
+        .select('sustanciador_assignment_mode, sustanciador_rr_cursor')
+        .eq('id', courtId)
+        .maybeSingle();
+      if (courtFetchErr) throw courtFetchErr;
+      const repartoMode = parseSustanciadorAssignmentMode(courtRow?.sustanciador_assignment_mode);
+      const rrRaw = courtRow?.sustanciador_rr_cursor;
+      const rrCursor =
+        typeof rrRaw === 'number' && Number.isFinite(rrRaw)
+          ? rrRaw
+          : typeof rrRaw === 'string'
+            ? Number.parseInt(rrRaw, 10) || 0
+            : 0;
+      const caseId = globalThis.crypto.randomUUID();
+      const { assignedTo, nextRrCursor } = computeInitialAssignedTo({
+        mode: repartoMode,
+        radicado: radicadoFormatted,
+        caseId,
+        rrCursor,
+      });
+
       const claimantNames = aiAnalysis ? joinPartyField(aiAnalysis.accionantes, 'nombre') : '';
       const defendantNames = aiAnalysis ? joinPartyField(aiAnalysis.accionados, 'nombre') : '';
       const derechoText = aiAnalysis?.derechoTutelado || '';
       const guessedDerecho = guessDerechoTuteladoCodeFromText(derechoText);
-      const caseRow = {
-        court_id: casesCourtId,
+      const filingForTerm = startOfLocalDay(new Date());
+      const deadlineAtIso = tenthBusinessDayDeadline(filingForTerm).toISOString();
+      const caseRow: Record<string, unknown> = {
+        id: caseId,
+        court_id: courtId,
         radicado: radicadoFormatted,
+        deadline_at: deadlineAtIso,
         claimant: claimantNames || parsedData.from || 'Anónimo',
         defendant: defendantNames || 'DESPACHO JUDICIAL',
         status: 'received',
@@ -861,12 +936,13 @@ export default function NewCase() {
           linkUrl: parsedData.linkUrl || null,
         },
       };
+      if (assignedTo) caseRow.assigned_to = assignedTo;
 
-      let caseId: string;
+      const caseRowForDb = deepSanitizeForPostgresInsert(caseRow) as Record<string, unknown>;
+
       try {
-        const ins = await supabase.from('cases').insert(caseRow).select('id').single();
+        const ins = await supabase.from('cases').insert(caseRowForDb).select('id').single();
         if (ins.error) throw ins.error;
-        caseId = ins.data!.id as string;
       } catch (e) {
         await handleDataPermissionError(e, 'create', 'cases');
         throw e;
@@ -961,13 +1037,52 @@ export default function NewCase() {
         }
       }
 
-      const { error: docErr } = await insertCaseDocumentRows(supabase, docRows);
+      const docRowsForDb = docRows.map((r) => deepSanitizeForPostgresInsert(r) as Record<string, unknown>);
+      const { error: docErr } = await insertCaseDocumentRows(supabase, docRowsForDb);
       if (docErr) {
         await handleDataPermissionError(docErr, 'create', 'case_documents');
         await removeCaseDocumentObjects(supabase, uploadedStoragePaths);
         const { error: delErr } = await supabase.from('cases').delete().eq('id', caseId);
         if (delErr) console.error('No se pudo revertir el expediente tras fallo en anexos:', delErr);
         throw docErr;
+      }
+
+      if (repartoMode === 'alternating') {
+        const { error: rrUpErr } = await supabase
+          .from('courts')
+          .update({
+            sustanciador_rr_cursor: nextRrCursor,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', courtId);
+        if (rrUpErr) console.error('No se pudo actualizar el cursor de reparto alternado:', rrUpErr);
+      }
+
+      if (assignedTo) {
+        const { data: u } = await supabase.auth.getUser();
+        const uname = u.user?.user_metadata?.full_name || u.user?.email || 'Sistema';
+        const actionRow = deepSanitizeForPostgresInsert({
+          case_id: caseId,
+          type: 'assignment',
+          description: `Asignación inicial (${SUSTANCIADOR_ASSIGNMENT_MODE_AUDIT[repartoMode]}): ${assignedTo}`,
+          user_id: u.user?.id ?? null,
+          user_name: String(uname),
+          metadata: {
+            kind: 'initial_radicacion',
+            mode: repartoMode,
+            radicado: radicadoFormatted,
+            assigned_to: assignedTo,
+          },
+        });
+        const { error: actErr } = await supabase.from('case_actions').insert(actionRow);
+        if (actErr) console.error('No se pudo registrar la asignación inicial en actuaciones:', actErr);
+        await insertAssignmentNotificationsForProfiles(supabase, {
+          courtId,
+          caseId,
+          radicado: radicadoFormatted,
+          assignedTo,
+          actorUserName: String(uname),
+        });
       }
 
       console.log('Radicación completada con éxito. Redirigiendo...');
@@ -995,6 +1110,9 @@ export default function NewCase() {
   const handleRename = (idx: number) => {
     const newAttachments = [...attachments];
     newAttachments[idx].filename = editingName;
+    // Mantener ambos alineados: el expediente y el visor priorizan `name` y usan
+    // `originalName` como respaldo; duplicar evita borradores incoherentes.
+    newAttachments[idx].originalName = editingName;
     setAttachments(newAttachments);
     setEditingIndex(null);
   };
@@ -1697,7 +1815,7 @@ export default function NewCase() {
           </div>
 
           {/* Viewer Section */}
-          <div className="lg:col-span-7 card-modern overflow-hidden bg-white flex flex-col h-[750px]">
+          <div className="lg:col-span-7 card-modern overflow-hidden bg-white flex flex-col h-[750px] min-w-0">
              <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <h2 className="text-sm font-bold text-slate-900 uppercase tracking-widest">

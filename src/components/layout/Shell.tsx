@@ -20,8 +20,11 @@ import { getDevAdminEmail, resolveDevAdminPassword } from '../../lib/dev-admin-a
 import { getSupabaseAuthErrorMessage, isLocalSupabaseAnonymousDisabled } from '../../lib/supabase-auth-errors';
 import { rowToUserProfile } from '../../lib/supabase-mappers';
 import { intentFreshNewCaseFromMenu } from '../../lib/new-case-nav';
+import { DEFAULT_DEMO_COURT_ID } from '../../lib/default-court';
 import { userRoleLabelEs } from '../../lib/user-roles';
 import { UserProfile } from '../../types';
+import { SessionCourtProvider } from '../../contexts/SessionCourtContext';
+import { AssignmentNotificationBell } from './AssignmentNotificationBell';
 import { motion, AnimatePresence } from 'motion/react';
 import type { Provider, User } from '@supabase/supabase-js';
 
@@ -97,7 +100,7 @@ export default function Shell({ children }: ShellProps) {
             email: raw.email || '',
             name: mapped.displayName,
             role: 'admin',
-            courtId: 'court-1',
+            courtId: DEFAULT_DEMO_COURT_ID,
           };
           await supabase.from('profiles').upsert(
             {
@@ -163,7 +166,7 @@ export default function Shell({ children }: ShellProps) {
               email: localUser.email || '',
               name: localUser.displayName,
               role: 'admin',
-              courtId: 'court-1',
+              courtId: DEFAULT_DEMO_COURT_ID,
             });
             setLoginError(null);
           } catch (err) {
@@ -183,7 +186,7 @@ export default function Shell({ children }: ShellProps) {
                 email: localUser.email || '',
                 name: localUser.displayName,
                 role: 'admin',
-                courtId: 'court-1',
+                courtId: DEFAULT_DEMO_COURT_ID,
               });
             } else {
               setLocalModeWithoutSupabase(false);
@@ -198,7 +201,7 @@ export default function Shell({ children }: ShellProps) {
                 email: u.email || '',
                 name: u.displayName || 'Administrador Local',
                 role: 'admin',
-                courtId: 'court-1',
+                courtId: DEFAULT_DEMO_COURT_ID,
               });
             }
           }
@@ -245,7 +248,7 @@ export default function Shell({ children }: ShellProps) {
           email: mockUser.email || '',
           name: mockUser.displayName,
           role: 'admin',
-          courtId: 'court-1',
+          courtId: DEFAULT_DEMO_COURT_ID,
         });
         setLoginError(null);
       } catch (err) {
@@ -262,7 +265,7 @@ export default function Shell({ children }: ShellProps) {
             email: mockUser.email,
             name: mockUser.displayName,
             role: 'admin',
-            courtId: 'court-1',
+            courtId: DEFAULT_DEMO_COURT_ID,
           });
           setLocalModeWithoutSupabase(true);
           setLoginError(null);
@@ -539,6 +542,7 @@ export default function Shell({ children }: ShellProps) {
             </div>
 
             <div className="flex items-center gap-4">
+              <AssignmentNotificationBell userId={user?.uid} />
               <div
                 className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-700 rounded-full border border-green-100 text-[11px] font-bold max-w-[min(100%,320px)]"
                 title={
@@ -588,17 +592,19 @@ export default function Shell({ children }: ShellProps) {
         )}
 
         <main className="flex-1 overflow-y-auto p-10 bg-bg">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={location.pathname}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
-            >
-              {children}
-            </motion.div>
-          </AnimatePresence>
+          <SessionCourtProvider profile={profile}>
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={location.pathname}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+              >
+                {children}
+              </motion.div>
+            </AnimatePresence>
+          </SessionCourtProvider>
         </main>
       </div>
 

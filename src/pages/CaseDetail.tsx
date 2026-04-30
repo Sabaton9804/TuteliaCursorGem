@@ -1,9 +1,15 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { rowToAction, rowToCase, rowToCaseDoc } from '../lib/supabase-mappers';
-import { Action, Case, Document as CaseDoc } from '../types';
-import type { CaseStatus } from '../types';
+import {
+  rowToAction,
+  rowToCase,
+  rowToCaseAuditLogEntry,
+  rowToCaseDoc,
+  rowToUserProfile,
+} from '../lib/supabase-mappers';
+import { Action, Case, CaseAuditLogEntry, Document as CaseDoc, UserProfile } from '../types';
+import type { CaseStatus, SustanciadorAssignmentMode } from '../types';
 import { 
   FileText, 
   History,
@@ -16,6 +22,8 @@ import {
   Scale,
   UserCog,
   FolderOutput,
+  FilePenLine,
+  Shield,
 } from 'lucide-react';
 import { format, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -30,11 +38,20 @@ import {
   CASE_DOCUMENT_SIGNED_URL_TTL_SEC,
 } from '../lib/case-document-storage';
 import { sanitizeExpedienteFilenameForDisplay } from '../lib/sanitize-expediente-filename';
+import { caseDocumentRawLabel } from '../lib/case-document-display-name';
 import { ExpedienteDigitalPanel } from '../components/expediente/ExpedienteDigitalPanel';
+import { ExpedienteDocxPreview } from '../components/expediente/ExpedienteDocxPreview';
 import { CaseDespachoDocumentosPanel } from '../components/expediente/CaseDespachoDocumentosPanel';
-import { buildCaseTimeline, buildSynthesisContextBlock } from '../lib/case-detail-context';
+import { CaseWordReviewPanel } from '../components/expediente/CaseWordReviewPanel';
+import { isCaseDocumentDocx } from '../lib/expediente-docx';
+import { buildCaseActuacionesTimeline, buildSynthesisContextBlock } from '../lib/case-detail-context';
 import { resolveAssigneeForCase, SUSTANCIADORES } from '../lib/court-staff-assignees';
 import { ensureSupabaseSessionForWrites } from '../lib/supabase-write-auth';
+import { parseSustanciadorAssignmentMode } from '../lib/sustanciador-reparto';
+import {
+  insertAssignmentNotificationsForProfiles,
+  markAssignmentNotificationsReadForCase,
+} from '../lib/assignment-notifications';
 import {
   DERECHO_TUTELADO_CODES,
   DERECHO_TUTELADO_LABELS,
@@ -46,9 +63,18 @@ import {
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
-type ExpedienteTab = 'sintesis' | 'expediente' | 'actuaciones' | 'documentos';
+type ExpedienteTab = 'sintesis' | 'expediente' | 'revision_word' | 'actuaciones' | 'historial' | 'documentos';
 
-const TAB_QUERY_VALUES = new Set<string>(['sintesis', 'expediente', 'actuaciones', 'documentos']);
+const TAB_QUERY_VALUES = new Set<string>([
+  'sintesis',
+  'expediente',
+  'revision_word',
+  'actuaciones',
+  'historial',
+  /** Compatibilidad con enlaces antiguos (?tab=auditoria). */
+  'auditoria',
+  'documentos',
+]);
 
 const CASE_STATUS_LABEL: Record<string, string> = {
   received: 'Recibido',
@@ -59,7 +85,14 @@ const CASE_STATUS_LABEL: Record<string, string> = {
 };
 
 function parseExpedienteTabParam(raw: string | null): ExpedienteTab {
-  if (raw === 'expediente' || raw === 'actuaciones' || raw === 'documentos') return raw;
+  if (raw === 'auditoria' || raw === 'historial') return 'historial';
+  if (
+    raw === 'expediente' ||
+    raw === 'revision_word' ||
+    raw === 'actuaciones' ||
+    raw === 'documentos'
+  )
+    return raw;
   return 'sintesis';
 }
 
@@ -74,6 +107,9 @@ function base64ToBytes(b64: string): Uint8Array | null {
     return null;
   }
 }
+
+const PDF_VIEWER_ZOOM_SCALES = [0.5, 0.75, 1.0, 1.25, 1.5] as const;
+type PdfViewerZoom = 'fit' | (typeof PDF_VIEWER_ZOOM_SCALES)[number];
 
 function PdfViewer({
   content,
@@ -93,7 +129,11 @@ function PdfViewer({
 }) {
   const [numPages, setNumPages] = useState<number | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
-  const [scale, setScale] = useState(1.0);
+  const [zoom, setZoom] = useState<PdfViewerZoom>('fit');
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [fitWidthPx, setFitWidthPx] = useState(() =>
+    typeof window !== 'undefined' ? Math.max(240, Math.floor(window.innerWidth * 0.42)) : 640
+  );
   const [pdfBlob, setPdfBlob] = useState<Blob | null>(null);
   const [pdfJsError, setPdfJsError] = useState<string | null>(null);
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
@@ -112,7 +152,25 @@ function PdfViewer({
     setPdfJsError(null);
     setNumPages(null);
     setPageNumber(1);
+    setZoom('fit');
   }, [content, storagePath]);
+
+  const documentFile = signedUrl || pdfBlob;
+
+  useLayoutEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const measure = () => {
+      const cs = getComputedStyle(el);
+      const pl = parseFloat(cs.paddingLeft) || 0;
+      const pr = parseFloat(cs.paddingRight) || 0;
+      setFitWidthPx(Math.max(240, Math.floor(el.clientWidth - pl - pr)));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [documentFile, pdfJsError, isImage]);
 
   useEffect(() => {
     if (!pathTrim) {
@@ -399,8 +457,6 @@ function PdfViewer({
     );
   }
 
-  const documentFile = signedUrl || pdfBlob;
-
   if (!documentFile) {
     return (
       <div className="flex-1 flex items-center justify-center min-h-[400px]">
@@ -409,10 +465,16 @@ function PdfViewer({
     );
   }
 
+  const pageWidthProp = zoom === 'fit' && fitWidthPx > 0 ? fitWidthPx : undefined;
+  const pageScaleProp = zoom === 'fit' ? 1 : zoom;
+
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-100 min-h-[600px] overflow-hidden">
-      <div className="flex-1 overflow-auto p-4 flex justify-center">
-        <div className="shadow-2xl">
+    <div className="flex-1 flex flex-col h-full bg-slate-100 min-h-[600px] overflow-hidden min-w-0">
+      <div
+        ref={viewportRef}
+        className="flex-1 overflow-auto p-4 flex justify-center min-w-0"
+      >
+        <div className="shadow-2xl max-w-full">
           <Document
             file={documentFile}
             onLoadSuccess={onDocumentLoadSuccess}
@@ -463,9 +525,10 @@ function PdfViewer({
               </div>
             }
           >
-            <Page 
-              pageNumber={pageNumber} 
-              scale={scale} 
+            <Page
+              pageNumber={pageNumber}
+              width={pageWidthProp}
+              scale={pageScaleProp}
               renderTextLayer={false}
               renderAnnotationLayer={false}
               className="max-w-full"
@@ -498,16 +561,21 @@ function PdfViewer({
           
           <div className="h-4 w-px bg-slate-200 mx-2" />
           
-          <select 
-            value={scale} 
-            onChange={(e) => setScale(Number(e.target.value))}
-            className="text-[10px] font-bold text-slate-500 uppercase bg-transparent border-none focus:ring-0 cursor-pointer"
+          <select
+            value={zoom === 'fit' ? 'fit' : String(zoom)}
+            onChange={(e) => {
+              const v = e.target.value;
+              setZoom(v === 'fit' ? 'fit' : (Number(v) as PdfViewerZoom));
+            }}
+            className="text-[10px] font-bold text-slate-500 uppercase bg-transparent border-none focus:ring-0 cursor-pointer max-w-[11rem]"
+            title="Ajustar ancho encaja hojas horizontales en el panel"
           >
-            <option value={0.5}>50%</option>
-            <option value={0.75}>75%</option>
-            <option value={1.0}>100%</option>
-            <option value={1.25}>125%</option>
-            <option value={1.5}>150%</option>
+            <option value="fit">Ajustar ancho</option>
+            {PDF_VIEWER_ZOOM_SCALES.map((s) => (
+              <option key={s} value={s}>
+                {Math.round(s * 100)}%
+              </option>
+            ))}
           </select>
         </div>
 
@@ -544,24 +612,32 @@ export default function CaseDetail() {
   /** Evita mostrar «sincronizando» cuando en realidad no hay filas en `case_documents`. */
   const [docsLoaded, setDocsLoaded] = useState(false);
   const [actions, setActions] = useState<Action[]>([]);
+  const [auditLog, setAuditLog] = useState<CaseAuditLogEntry[]>([]);
+  const [auditFetchErr, setAuditFetchErr] = useState<string | null>(null);
+  const [auditActorNames, setAuditActorNames] = useState<Record<string, string>>({});
   const [assignDraft, setAssignDraft] = useState('');
   const [assignSaving, setAssignSaving] = useState(false);
   const [newActionText, setNewActionText] = useState('');
   const [manualActSaving, setManualActSaving] = useState(false);
   const [derechoCodeSaving, setDerechoCodeSaving] = useState(false);
   const [decisionSaving, setDecisionSaving] = useState(false);
+  const [deadlineDraft, setDeadlineDraft] = useState('');
+  const [deadlineNoteDraft, setDeadlineNoteDraft] = useState('');
+  const [deadlineSaving, setDeadlineSaving] = useState(false);
+  const [courtAssignmentMode, setCourtAssignmentMode] = useState<SustanciadorAssignmentMode | null>(null);
+  const [sessionProfile, setSessionProfile] = useState<UserProfile | null>(null);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const timeline = useMemo(
-    () => (caseItem ? buildCaseTimeline(caseItem, docs, actions) : []),
-    [caseItem, docs, actions],
+    () => (caseItem ? buildCaseActuacionesTimeline(caseItem, actions) : []),
+    [caseItem, actions],
   );
 
   const resolvedAssignee = useMemo(() => {
     if (!caseItem) return null;
-    return resolveAssigneeForCase(caseItem.assignedTo, caseItem.id);
-  }, [caseItem]);
+    return resolveAssigneeForCase(caseItem.assignedTo, caseItem.id, courtAssignmentMode);
+  }, [caseItem, courtAssignmentMode]);
 
   const activeTab = useMemo(
     () => parseExpedienteTabParam(searchParams.get('tab')),
@@ -597,8 +673,31 @@ export default function CaseDetail() {
   }, [searchParams, setSearchParams]);
 
   useEffect(() => {
+    if (searchParams.get('tab') !== 'auditoria') return;
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('tab', 'historial');
+        return next;
+      },
+      { replace: true },
+    );
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
     if (caseItem) setAssignDraft(caseItem.assignedTo?.trim() ?? '');
   }, [caseItem?.assignedTo, caseItem?.id]);
+
+  useEffect(() => {
+    if (!caseItem) return;
+    const iso = caseItem.deadlineAt?.trim();
+    if (iso && isValid(parseISO(iso))) {
+      setDeadlineDraft(format(parseISO(iso), 'yyyy-MM-dd'));
+    } else {
+      setDeadlineDraft('');
+    }
+    setDeadlineNoteDraft(caseItem.deadlineOverrideNote?.trim() ?? '');
+  }, [caseItem?.id, caseItem?.deadlineAt, caseItem?.deadlineOverrideNote]);
 
   const refetchDocs = useCallback(async () => {
     if (!id) return;
@@ -640,6 +739,70 @@ export default function CaseDetail() {
     }
   }, [id]);
 
+  const refetchAudit = useCallback(async () => {
+    if (!id) return;
+    try {
+      setAuditFetchErr(null);
+      const { data, error } = await supabase
+        .from('case_audit_log')
+        .select('*')
+        .eq('case_id', id)
+        .order('occurred_at', { ascending: false });
+      if (error) throw error;
+      setAuditLog((data ?? []).map((r) => rowToCaseAuditLogEntry(r as Record<string, unknown>)));
+    } catch (e) {
+      console.error('case_audit_log:', e);
+      setAuditFetchErr(
+        'No se pudo cargar el historial técnico. Aplique la migración SQL en Supabase (case_audit_log) o revise permisos.',
+      );
+      setAuditLog([]);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    if (auditLog.length === 0) {
+      setAuditActorNames({});
+      return;
+    }
+    const ids = [...new Set(auditLog.map((e) => e.actorUserId).filter(Boolean))] as string[];
+    if (ids.length === 0) {
+      setAuditActorNames({});
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const { data, error } = await supabase.from('profiles').select('id,name').in('id', ids);
+      if (cancelled || error) return;
+      const map: Record<string, string> = {};
+      for (const r of data ?? []) {
+        const row = r as Record<string, unknown>;
+        map[String(row.id)] = String(row.name ?? '').trim() || String(row.id);
+      }
+      setAuditActorNames(map);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [auditLog]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const { data: auth } = await supabase.auth.getSession();
+      const uid = auth.session?.user?.id;
+      if (!uid) {
+        if (!cancelled) setSessionProfile(null);
+        return;
+      }
+      const { data: row } = await supabase.from('profiles').select('*').eq('id', uid).maybeSingle();
+      if (cancelled) return;
+      setSessionProfile(row ? rowToUserProfile(row as Record<string, unknown>) : null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
@@ -656,6 +819,7 @@ export default function CaseDetail() {
     void loadCase();
     void refetchDocs();
     void refetchActions();
+    void refetchAudit();
 
     const channel = supabase
       .channel(`case-detail-${id}`)
@@ -668,13 +832,90 @@ export default function CaseDetail() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'case_actions', filter: `case_id=eq.${id}` }, () => {
         void refetchActions();
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'case_audit_log', filter: `case_id=eq.${id}` }, () => {
+        void refetchAudit();
+      })
       .subscribe();
 
     return () => {
       cancelled = true;
       void supabase.removeChannel(channel);
     };
-  }, [id, refetchDocs, refetchActions]);
+  }, [id, refetchDocs, refetchActions, refetchAudit]);
+
+  useEffect(() => {
+    const cid = caseItem?.courtId?.trim();
+    if (!cid) {
+      setCourtAssignmentMode(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const { data, error } = await supabase
+        .from('courts')
+        .select('sustanciador_assignment_mode')
+        .eq('id', cid)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error) {
+        console.error('courts (reparto):', error);
+        setCourtAssignmentMode(null);
+        return;
+      }
+      setCourtAssignmentMode(parseSustanciadorAssignmentMode(data?.sustanciador_assignment_mode));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [caseItem?.courtId]);
+
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    void (async () => {
+      const { data: s } = await supabase.auth.getSession();
+      const uid = s.session?.user?.id;
+      if (!uid || cancelled) return;
+      await markAssignmentNotificationsReadForCase(supabase, { caseId: id, recipientUserId: uid });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  const handleSaveDeadline = useCallback(async () => {
+    if (!id || !caseItem) return;
+    setDeadlineSaving(true);
+    try {
+      await ensureSupabaseSessionForWrites();
+      const now = new Date().toISOString();
+      let deadline_at: string | null = null;
+      const raw = deadlineDraft.trim();
+      if (raw) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+        if (m) {
+          const y = Number(m[1]);
+          const mo = Number(m[2]);
+          const d = Number(m[3]);
+          deadline_at = new Date(y, mo - 1, d, 12, 0, 0, 0).toISOString();
+        }
+      }
+      const { error: upErr } = await supabase
+        .from('cases')
+        .update({
+          deadline_at,
+          deadline_override_note: deadlineNoteDraft.trim() || null,
+          updated_at: now,
+        })
+        .eq('id', id);
+      if (upErr) throw upErr;
+      await refetchCase();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setDeadlineSaving(false);
+    }
+  }, [id, caseItem, deadlineDraft, deadlineNoteDraft, refetchCase]);
 
   const handleApplyAssign = useCallback(async () => {
     if (!id || !caseItem) return;
@@ -697,11 +938,26 @@ export default function CaseDetail() {
         case_id: id,
         type: 'assignment',
         description: next
-          ? `Sustanciador asignado: ${next}`
-          : 'Sustanciador desasignado — reparto automático del despacho',
+          ? `Sustanciador asignado (${formatRadicado(caseItem.radicado)}): ${next}`
+          : `Sustanciador desasignado (${formatRadicado(caseItem.radicado)})`,
         user_id: u.user?.id ?? null,
         user_name: String(uname),
+        metadata: {
+          kind: 'assignment',
+          previous: prev || null,
+          next: next.length > 0 ? next : null,
+          radicado: caseItem.radicado,
+        },
       });
+      if (next) {
+        await insertAssignmentNotificationsForProfiles(supabase, {
+          courtId: caseItem.courtId,
+          caseId: id,
+          radicado: caseItem.radicado,
+          assignedTo: next,
+          actorUserName: String(uname),
+        });
+      }
       await refetchCase();
       await refetchActions();
     } catch (err) {
@@ -741,7 +997,7 @@ export default function CaseDetail() {
     setIsSummarizing(true);
     try {
       await ensureSupabaseSessionForWrites();
-      const contextBlock = buildSynthesisContextBlock(caseItem, docs);
+      const contextBlock = buildSynthesisContextBlock(caseItem, docs, courtAssignmentMode);
       const summary = await summarizeCase(caseItem.claimant, caseItem.rawText || '', contextBlock);
       const now = new Date().toISOString();
       await supabase.from('cases').update({ summary, updated_at: now }).eq('id', id);
@@ -1001,7 +1257,9 @@ export default function CaseDetail() {
             <span className="min-w-0 text-sm font-semibold text-slate-800">
               {caseItem.assignedTo?.trim()
                 ? caseItem.assignedTo.trim()
-                : `${resolvedAssignee.name} (reparto automático)`}
+                : courtAssignmentMode === 'manual_unassigned'
+                  ? 'Sin sustanciador asignado'
+                  : `${resolvedAssignee.name} (sin assigned_to; regla del juzgado)`}
             </span>
           </div>
           <div className="flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end">
@@ -1011,7 +1269,11 @@ export default function CaseDetail() {
               onChange={(e) => setAssignDraft(e.target.value)}
               aria-label="Elegir sustanciador asignado"
             >
-              <option value="">Reparto automático (sin asignar)</option>
+              <option value="">
+                {courtAssignmentMode === 'manual_unassigned'
+                  ? 'Sin asignar (modo manual del juzgado)'
+                  : 'Sin asignar'}
+              </option>
               {SUSTANCIADORES.map((s) => (
                 <option key={s.id} value={s.name}>
                   {s.initials} — {s.name}
@@ -1072,6 +1334,25 @@ export default function CaseDetail() {
           <button
             type="button"
             role="tab"
+            id="tab-documentos-por-revisar"
+            aria-selected={activeTab === 'revision_word'}
+            aria-controls="panel-documentos-por-revisar"
+            title="Documentos Word pendientes de revisión: apuntes, nueva versión y PDF firmado"
+            onClick={() => setActiveTab('revision_word')}
+            className={`shrink-0 border-b-2 px-3 py-3.5 text-[11px] font-bold uppercase tracking-widest transition-colors sm:px-5 ${
+              activeTab === 'revision_word'
+                ? 'border-accent text-accent'
+                : 'border-transparent text-slate-400 hover:text-slate-600'
+            }`}
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <FilePenLine className="h-3.5 w-3.5" aria-hidden />
+              Documentos por revisar
+            </span>
+          </button>
+          <button
+            type="button"
+            role="tab"
             id="tab-actuaciones"
             aria-selected={activeTab === 'actuaciones'}
             aria-controls="panel-actuaciones"
@@ -1087,9 +1368,29 @@ export default function CaseDetail() {
           <button
             type="button"
             role="tab"
+            id="tab-historial"
+            aria-selected={activeTab === 'historial'}
+            aria-controls="panel-historial"
+            title="Historial técnico interno: cada cambio en base de datos del expediente (no es actuación judicial)"
+            onClick={() => setActiveTab('historial')}
+            className={`shrink-0 border-b-2 px-3 py-3.5 text-[11px] font-bold uppercase tracking-widest transition-colors sm:px-5 ${
+              activeTab === 'historial'
+                ? 'border-accent text-accent'
+                : 'border-transparent text-slate-400 hover:text-slate-600'
+            }`}
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <Shield className="h-3.5 w-3.5" aria-hidden />
+              Historial
+            </span>
+          </button>
+          <button
+            type="button"
+            role="tab"
             id="tab-documentos"
             aria-selected={activeTab === 'documentos'}
             aria-controls="panel-documentos"
+            title="Documentos posteriores a la radicación: informe de secretaría y auto del despacho"
             onClick={() => setActiveTab('documentos')}
             className={`shrink-0 border-b-2 px-3 py-3.5 text-[11px] font-bold uppercase tracking-widest transition-colors sm:px-5 ${
               activeTab === 'documentos'
@@ -1099,7 +1400,7 @@ export default function CaseDetail() {
           >
             <span className="inline-flex items-center gap-1.5">
               <FolderOutput className="h-3.5 w-3.5" aria-hidden />
-              Despacho
+              Generar documentos
             </span>
           </button>
         </div>
@@ -1145,13 +1446,55 @@ export default function CaseDetail() {
                   <span className="font-semibold text-slate-600">Plazo / término en sistema: </span>
                   {caseItem.deadlineAt && isValid(parseISO(caseItem.deadlineAt))
                     ? format(parseISO(caseItem.deadlineAt), "EEEE d 'de' MMMM yyyy", { locale: es })
-                    : 'No registrado — complételo en el tablero o actuaciones si aplica'}
+                    : 'No registrado — complételo abajo o ejecute el backfill de plazos'}
+                  {caseItem.deadlineOverrideNote?.trim() ? (
+                    <span className="block mt-1 text-xs font-normal text-slate-500 normal-case">
+                      Nota al plazo: {caseItem.deadlineOverrideNote.trim()}
+                    </span>
+                  ) : null}
                 </li>
                 <li>
                   <span className="font-semibold text-slate-600">Piezas en expediente digital: </span>
                   {docs.length === 0 ? 'Ninguna aún' : `${docs.length} (se envían títulos a la IA al analizar)`}
                 </li>
               </ul>
+              <div className="mt-4 pt-4 border-t border-slate-200/80 space-y-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
+                  Ajuste del fin de término (10 días háb.)
+                </p>
+                <p className="text-[11px] text-slate-500 leading-snug">
+                  Uso excepcional (suspensión, corrección, etc.). Vacíe la fecha y guarde para quitar el plazo en base de datos.
+                </p>
+                <div className="flex flex-col sm:flex-row gap-3 sm:items-end flex-wrap">
+                  <label className="flex flex-col gap-1 text-[11px] font-medium text-slate-600 min-w-0">
+                    Fecha fin del término
+                    <input
+                      type="date"
+                      className="input-modern py-2 text-sm bg-white max-w-[220px]"
+                      value={deadlineDraft}
+                      onChange={(e) => setDeadlineDraft(e.target.value)}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveDeadline()}
+                    disabled={deadlineSaving}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-[11px] font-bold uppercase tracking-widest text-white hover:bg-slate-800 disabled:opacity-60 shrink-0"
+                  >
+                    {deadlineSaving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+                    Guardar plazo
+                  </button>
+                </div>
+                <label className="flex flex-col gap-1 text-[11px] font-medium text-slate-600">
+                  Nota (motivo o referencia)
+                  <textarea
+                    className="input-modern min-h-[72px] text-sm bg-white resize-y"
+                    value={deadlineNoteDraft}
+                    onChange={(e) => setDeadlineNoteDraft(e.target.value)}
+                    placeholder="Ej. suspensión por acuerdo de partes; oficio CSJ 123…"
+                  />
+                </label>
+              </div>
             </div>
 
             <div className="bg-white">
@@ -1312,9 +1655,7 @@ export default function CaseDetail() {
               <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400 flex items-center gap-2">
                 <FileText className="w-4 h-4 text-accent" />
                 {selectedDoc && selectedDoc.name !== 'CorreoReparto'
-                  ? `Visor: ${sanitizeExpedienteFilenameForDisplay(
-                      (selectedDoc.originalName?.trim() || selectedDoc.name).trim()
-                    )}`
+                  ? `Visor: ${sanitizeExpedienteFilenameForDisplay(caseDocumentRawLabel(selectedDoc))}`
                   : 'Constancia de ingreso (cuerpo del correo)'}
               </h3>
               {selectedDoc && (
@@ -1378,24 +1719,47 @@ export default function CaseDetail() {
                     )}
                   </div>
                 </div>
+              ) : isCaseDocumentDocx(selectedDoc) ? (
+                <div className="flex min-h-[600px] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-slate-100 p-3 sm:p-4">
+                  <ExpedienteDocxPreview
+                    key={selectedDoc.id}
+                    storagePath={selectedDoc.storagePath}
+                    filename={sanitizeExpedienteFilenameForDisplay(caseDocumentRawLabel(selectedDoc))}
+                    onBack={() => setSelectedDoc(null)}
+                  />
+                </div>
               ) : (
-                <div className="bg-slate-100 rounded-3xl overflow-hidden min-h-[600px] flex flex-col border border-slate-200">
-                   <PdfViewer
-                     key={selectedDoc.id}
-                     content={selectedDoc.content} 
-                     contentType={selectedDoc.contentType} 
-                     filename={sanitizeExpedienteFilenameForDisplay(
-                       (selectedDoc.originalName?.trim() || selectedDoc.name).trim()
-                     )}
-                     ingestError={selectedDoc.ingestError}
-                     storagePath={selectedDoc.storagePath}
-                     onBack={() => setSelectedDoc(null)}
-                   />
+                <div className="flex min-h-[600px] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-slate-100">
+                  <PdfViewer
+                    key={selectedDoc.id}
+                    content={selectedDoc.content}
+                    contentType={selectedDoc.contentType}
+                    filename={sanitizeExpedienteFilenameForDisplay(caseDocumentRawLabel(selectedDoc))}
+                    ingestError={selectedDoc.ingestError}
+                    storagePath={selectedDoc.storagePath}
+                    onBack={() => setSelectedDoc(null)}
+                  />
                 </div>
               )}
             </div>
           </div>
           </div>
+        </div>
+
+        <div
+          id="panel-documentos-por-revisar"
+          role="tabpanel"
+          aria-labelledby="tab-documentos-por-revisar"
+          className={activeTab === 'revision_word' ? 'block' : 'hidden'}
+        >
+          {id ? (
+            <CaseWordReviewPanel
+              caseId={id}
+              docs={docs}
+              profile={sessionProfile}
+              onRefetchDocs={refetchDocs}
+            />
+          ) : null}
         </div>
 
         <div
@@ -1408,7 +1772,11 @@ export default function CaseDetail() {
             <CaseDespachoDocumentosPanel
               caseItem={caseItem}
               caseId={caseItem.id}
-              onCaseUpdated={() => void refetchCase()}
+              docs={docs}
+              onCaseUpdated={() => {
+                void refetchCase();
+                void refetchDocs();
+              }}
             />
           ) : null}
         </div>
@@ -1425,8 +1793,9 @@ export default function CaseDetail() {
                 <History className="h-4 w-4 text-accent" aria-hidden /> Trazabilidad operativa
               </h3>
               <p className="max-w-xl text-[11px] leading-snug text-slate-500">
-                Línea de tiempo del expediente: ingreso, plazos, piezas y lo que registre el despacho. Use el formulario
-                para anotar traslados, términos para contestar o acuerdos.
+                Actuaciones relevantes del despacho (tabla «case_actions»): traslados, términos, asignaciones que se
+                dejen asentadas aquí, etc. El registro técnico completo de cada cambio en base de datos está en la pestaña
+                «Historial».
               </p>
             </div>
 
@@ -1503,6 +1872,78 @@ export default function CaseDetail() {
                       </div>
                     ) : null}
                   </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div
+          id="panel-historial"
+          role="tabpanel"
+          aria-labelledby="tab-historial"
+          className={activeTab === 'historial' ? 'block' : 'hidden'}
+        >
+          <div className="card-modern flex w-full min-w-0 flex-col p-6 scroll-mt-24 sm:p-8">
+            <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400">
+                <Shield className="h-4 w-4 text-slate-500" aria-hidden />
+                Historial técnico del expediente
+              </h3>
+              <p className="max-w-xl text-[11px] leading-snug text-amber-950/85">
+                Uso exclusivo del despacho y control interno: cada alta, baja o modificación en tablas del expediente
+                (caso, piezas, filas de actuaciones en BD, notificaciones, revisiones Word). No sustituye actuaciones
+                judiciales ni constituye auto; permite ver qué usuario de sesión disparó cada cambio técnico.
+              </p>
+            </div>
+            {auditFetchErr ? (
+              <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                {auditFetchErr}
+              </p>
+            ) : null}
+            {!auditFetchErr && auditLog.length === 0 ? (
+              <p className="text-sm text-slate-500">
+                Aún no hay entradas en el historial técnico de este expediente. Tras aplicar la migración SQL en Supabase,
+                los cambios quedarán registrados aquí de forma automática.
+              </p>
+            ) : null}
+            <div className="scrollbar-thin mt-4 max-h-[min(72vh,720px)] space-y-4 overflow-y-auto pr-1">
+              {auditLog.map((entry) => {
+                const actorLabel =
+                  (entry.actorUserId && auditActorNames[entry.actorUserId]) ||
+                  (entry.actorUserId ? `${entry.actorUserId.slice(0, 8)}…` : '—');
+                const atLabel =
+                  entry.occurredAt && !Number.isNaN(Date.parse(entry.occurredAt))
+                    ? format(new Date(entry.occurredAt), "dd MMM yyyy '·' HH:mm:ss", { locale: es })
+                    : '';
+                return (
+                  <details
+                    key={entry.id}
+                    className="group rounded-2xl border border-slate-200 bg-slate-50/60 p-4 sm:p-5 open:bg-white"
+                  >
+                    <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 space-y-1">
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{atLabel}</p>
+                          <p className="font-mono text-xs font-semibold text-slate-800">
+                            <span className="text-accent">{entry.operation}</span> · {entry.source_table}
+                            {entry.rowId ? (
+                              <span className="text-slate-500"> · id {entry.rowId.slice(0, 8)}…</span>
+                            ) : null}
+                          </p>
+                          <p className="text-[10px] text-slate-500">
+                            Sesión: <span className="font-medium text-slate-700">{actorLabel}</span>
+                          </p>
+                        </div>
+                        <span className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[9px] font-bold uppercase text-slate-500">
+                          Detalle JSON
+                        </span>
+                      </div>
+                    </summary>
+                    <pre className="mt-4 max-h-[320px] overflow-auto rounded-xl border border-slate-100 bg-slate-950/95 p-3 text-[10px] leading-relaxed text-emerald-100/95">
+                      {JSON.stringify(entry.payload, null, 2)}
+                    </pre>
+                  </details>
                 );
               })}
             </div>

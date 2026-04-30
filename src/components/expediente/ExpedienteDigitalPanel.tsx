@@ -19,11 +19,14 @@ import {
   normalizeNotebookCode,
 } from '../../lib/expediente-notebook';
 import { sanitizeExpedienteFilenameForDisplay } from '../../lib/sanitize-expediente-filename';
+import { caseDocumentRawLabel } from '../../lib/case-document-display-name';
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 const ALLOWED_EXT = new Set([
   'pdf',
+  'doc',
+  'docx',
   'jpg',
   'jpeg',
   'tif',
@@ -44,11 +47,9 @@ function formatBytes(n: number | undefined): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Nombre físico tal como vino en el reparto (chip de tipo, lógica técnica). */
+/** Nombre índice del documento (radicación / parseo / carga); base del título sanitizado. */
 function rawFileLabel(doc: Document): string {
-  const o = doc.originalName?.trim();
-  if (o) return o;
-  return (doc.name || '').trim();
+  return caseDocumentRawLabel(doc);
 }
 
 /** Título legible en listado del expediente (sanitizado para pantalla). */
@@ -82,6 +83,7 @@ function typeChipForDoc(doc: Document, displayName: string): string {
 
 function extChipClass(ext: string): string {
   const e = ext.toLowerCase();
+  if (e === 'doc' || e === 'docx') return 'bg-blue-700 text-white';
   if (e === 'pdf') return 'bg-red-600 text-white';
   if (e === 'msg' || e === 'eml') return 'bg-amber-400 text-amber-950';
   if (e === 'jpg' || e === 'jpeg' || e === 'png' || e === 'webp' || e === 'tif' || e === 'tiff')
@@ -94,6 +96,8 @@ function extChipClass(ext: string): string {
 function badgeFor(doc: Document): { text: string; className: string } {
   if (doc.type === 'email_body')
     return { text: 'Constancia ingreso', className: 'bg-slate-100 text-slate-600 border border-slate-200' };
+  if (doc.type === 'informe_ingreso_expediente')
+    return { text: 'Informe ingreso', className: 'bg-emerald-50 text-emerald-900 border border-emerald-100' };
   if (doc.type === 'expediente_upload')
     return { text: 'Carga al expediente', className: 'bg-violet-50 text-violet-800 border border-violet-100' };
   if (doc.ingestError)
@@ -191,7 +195,8 @@ export function ExpedienteDigitalPanel({
   const validateFile = (file: File): string | null => {
     if (file.size > MAX_UPLOAD_BYTES) return 'El archivo supera 50 MB.';
     const ext = file.name.split('.').pop()?.toLowerCase() || '';
-    if (!ALLOWED_EXT.has(ext)) return `Formato no permitido (.${ext}). Use PDF, imagen, TIFF, MP3 o MPEG.`;
+    if (!ALLOWED_EXT.has(ext))
+      return `Formato no permitido (.${ext}). Use PDF, Word (.doc/.docx), imagen, TIFF, MP3 o MPEG.`;
     return null;
   };
 
@@ -348,7 +353,7 @@ export function ExpedienteDigitalPanel({
           <Upload className="h-5 w-5 text-slate-400" />
         )}
         <span className="text-[11px] font-medium text-slate-600">Arrastra archivos a «{nb.label}»</span>
-        <span className="text-[9px] text-slate-400">PDF · JPG · TIFF · MP3 · MPEG — máx. 50 MB</span>
+        <span className="text-[9px] text-slate-400">PDF · Word · JPG · TIFF · MP3 · MPEG — máx. 50 MB</span>
       </button>
     );
   };
@@ -429,7 +434,7 @@ export function ExpedienteDigitalPanel({
   const renderNotebookBlock = (nb: ExpedienteCuadernoExtra) => {
     const list = filterByNotebook(docs, nb.code);
     return (
-      <div className="rounded-lg border border-slate-200 bg-slate-50/40 p-3">
+      <div key={nb.code} className="rounded-lg border border-slate-200 bg-slate-50/40 p-3">
         <h4 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{nb.label}</h4>
         <div className="mt-2 space-y-2">
           {list.length === 0 ? (
@@ -450,7 +455,7 @@ export function ExpedienteDigitalPanel({
         type="file"
         className="hidden"
         multiple
-        accept=".pdf,.jpg,.jpeg,.tif,.tiff,.png,.webp,.mp3,.mpeg,.mpg"
+        accept=".pdf,.doc,.docx,.jpg,.jpeg,.tif,.tiff,.png,.webp,.mp3,.mpeg,.mpg"
         onChange={(e) => void handleFiles(e.target.files)}
       />
 
@@ -460,8 +465,9 @@ export function ExpedienteDigitalPanel({
       </div>
 
       <p className="mb-3 text-[11px] leading-relaxed text-slate-500">
-        En pantalla se muestra un <span className="font-semibold text-slate-600">título sanitizado</span> (legible); el archivo en
-        almacenamiento conserva el nombre y orden del reparto. Los cuadernos de incidente los abre usted con el botón de abajo.
+        En pantalla se muestra un <span className="font-semibold text-slate-600">título sanitizado</span> a partir del nombre
+        índice del documento (el mismo que en radicación o al subir); la ruta en almacenamiento es técnica. Los cuadernos de
+        incidente los abre usted con el botón de abajo.
       </p>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">

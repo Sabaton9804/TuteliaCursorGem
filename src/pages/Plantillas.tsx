@@ -1,25 +1,15 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import {
-  FileStack,
-  Shield,
-  ImagePlus,
-  Trash2,
-  RotateCcw,
-  Plus,
-  Briefcase,
-  Users,
-  Scale,
-  Pencil,
-} from 'lucide-react';
-import { supabase } from '../lib/supabase';
-import { parseUserRole } from '../lib/user-roles';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { FileStack, Trash2, Plus, Briefcase, Users, Scale, Pencil, Tags } from 'lucide-react';
+import { useSessionCourt } from '../contexts/SessionCourtContext';
 import type {
   DocumentTemplate,
   DocumentTemplateCategoria as PlantillaCategoria,
+  DocumentTemplatePageLayout,
   DocumentTemplateTipo as PlantillaTipo,
   DocumentTemplateToggleDef,
   UserRole,
 } from '../types';
+import { mergePageLayout } from '../lib/document-template-page-layout';
 import {
   deleteDocumentTemplate,
   fetchDocumentTemplates,
@@ -31,12 +21,11 @@ import {
   contenidoParaEditorPlantillas,
   cuerpoPredeterminadoPlantilla,
 } from '../lib/plantilla-variables';
-import { TemplateBodyEditor } from '../components/plantillas/TemplateBodyEditor';
 import { PlantillaInlineEditor } from '../components/plantillas/PlantillaInlineEditor';
+import { MembreteBrandingPanel } from '../components/plantillas/MembreteBrandingPanel';
 import {
   defaultPlantillasV2,
   loadPlantillas,
-  readImageFileAsDataUrl,
   savePlantillas,
   type PlantillasStateV2,
 } from '../lib/plantillas-store';
@@ -49,27 +38,194 @@ const TIPO_LABEL: Record<PlantillaTipo, string> = {
   libre: 'Libre / otro',
 };
 
+const OPCIONES_NUEVA_PLANTILLA: { categoria: PlantillaCategoria; tipo: PlantillaTipo }[] = [
+  { categoria: 'secretaria', tipo: 'informe_ingreso' },
+  { categoria: 'secretaria', tipo: 'libre' },
+  { categoria: 'despacho', tipo: 'auto_admisorio' },
+  { categoria: 'despacho', tipo: 'libre' },
+];
+
+function opcionesNuevaPorCategoria(cat: PlantillaCategoria) {
+  return OPCIONES_NUEVA_PLANTILLA.filter((o) => o.categoria === cat);
+}
+
+type CatalogTemplateListItemProps = {
+  p: DocumentTemplate;
+  tipoLabel: string;
+  expandedTemplateId: string | null;
+  metaEditingId: string | null;
+  metaNombre: string;
+  metaDesc: string;
+  templatesBusy: boolean;
+  onMetaNombreChange: (v: string) => void;
+  onMetaDescChange: (v: string) => void;
+  onToggleMetaEdit: (p: DocumentTemplate) => void;
+  onCancelMetaEdit: () => void;
+  onSaveMeta: (id: string) => void | Promise<void>;
+  onAbrirEditor: (p: DocumentTemplate) => void;
+  onQuitar: (id: string) => void;
+  children?: React.ReactNode;
+};
+
+function CatalogTemplateListItem({
+  p,
+  tipoLabel,
+  expandedTemplateId,
+  metaEditingId,
+  metaNombre,
+  metaDesc,
+  templatesBusy,
+  onMetaNombreChange,
+  onMetaDescChange,
+  onToggleMetaEdit,
+  onCancelMetaEdit,
+  onSaveMeta,
+  onAbrirEditor,
+  onQuitar,
+  children,
+}: CatalogTemplateListItemProps) {
+  const editingMeta = metaEditingId === p.id;
+  return (
+    <li
+      className={`rounded-lg border border-slate-100 bg-slate-50/80 ${
+        expandedTemplateId === p.id ? 'ring-1 ring-accent/25' : ''
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2 px-3 py-2.5">
+        <div className="min-w-0 flex-1">
+          {editingMeta ? (
+            <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
+              <label className="block space-y-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Nombre visible</span>
+                <input
+                  value={metaNombre}
+                  onChange={(e) => onMetaNombreChange(e.target.value)}
+                  className="input-modern w-full text-sm"
+                  placeholder="Ej. Informe de ingreso al despacho"
+                  disabled={templatesBusy}
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  Descripción (uso interno)
+                </span>
+                <textarea
+                  value={metaDesc}
+                  onChange={(e) => onMetaDescChange(e.target.value)}
+                  rows={2}
+                  placeholder="Nota para secretaría o despacho"
+                  disabled={templatesBusy}
+                  className="input-modern min-h-[2.75rem] w-full resize-y text-sm"
+                />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={templatesBusy}
+                  onClick={() => void onSaveMeta(p.id)}
+                  className="btn-primary rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wide disabled:opacity-40"
+                >
+                  Guardar datos
+                </button>
+                <button
+                  type="button"
+                  disabled={templatesBusy}
+                  onClick={onCancelMetaEdit}
+                  className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                >
+                  Cancelar
+                </button>
+              </div>
+              <p className="text-[10px] leading-snug text-slate-500">
+                El tipo de plantilla (<strong className="font-semibold text-slate-700">{tipoLabel}</strong>) lo usa el
+                sistema para el flujo del expediente; aquí solo cambia el nombre y la descripción que ve el equipo.
+              </p>
+            </div>
+          ) : (
+            <>
+              <p className="text-sm font-semibold text-slate-800">{p.nombre}</p>
+              <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{tipoLabel}</p>
+              {p.descripcion ? (
+                <p className="mt-1 text-xs text-slate-600">{p.descripcion}</p>
+              ) : (
+                <p className="mt-1 text-[10px] italic text-slate-400">Sin descripción — use «Datos» para añadir una.</p>
+              )}
+              {p.docxStoragePath ? (
+                <p className="mt-1 text-[10px] text-slate-400">Plantilla Word en Storage</p>
+              ) : p.contenidoBase?.trim() ? (
+                <p className="mt-1 text-[10px] font-semibold text-emerald-700">Texto propio del despacho</p>
+              ) : (
+                <p className="mt-1 text-[10px] text-slate-400">
+                  Modelo estándar (pulse el lápiz para revisarlo o cambiarlo y guardar)
+                </p>
+              )}
+            </>
+          )}
+        </div>
+        <div className="flex shrink-0 flex-col gap-1">
+          <button
+            type="button"
+            disabled={templatesBusy}
+            onClick={() => onToggleMetaEdit(p)}
+            className={`rounded-md border p-1.5 disabled:opacity-40 ${
+              editingMeta ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+            }`}
+            title={editingMeta ? 'Cerrar edición de nombre y descripción' : 'Editar nombre y descripción'}
+          >
+            <Tags className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            disabled={templatesBusy}
+            onClick={() => onAbrirEditor(p)}
+            className={`rounded-md border p-1.5 disabled:opacity-40 ${
+              expandedTemplateId === p.id
+                ? 'border-accent/40 bg-accent/10 text-accent'
+                : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+            }`}
+            title={expandedTemplateId === p.id ? 'Cerrar editor' : 'Editar texto del documento'}
+          >
+            <Pencil className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            disabled={templatesBusy}
+            onClick={() => void onQuitar(p.id)}
+            className="rounded-md border border-red-100 bg-red-50 p-1.5 text-red-700 hover:bg-red-100 disabled:opacity-40"
+            title="Quitar del catálogo"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      {children}
+    </li>
+  );
+}
+
 export default function Plantillas() {
+  const { courtId, profile } = useSessionCourt();
+  const role: UserRole | null = profile?.role ?? null;
+  const roleReady = profile != null;
   const [data, setData] = useState<PlantillasStateV2>(() => loadPlantillas());
-  const [role, setRole] = useState<UserRole | null>(null);
-  const [roleReady, setRoleReady] = useState(false);
-  const [imageError, setImageError] = useState<string | null>(null);
-  const [courtId, setCourtId] = useState('court-1');
   const [templates, setTemplates] = useState<DocumentTemplate[]>([]);
   const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [templatesBusy, setTemplatesBusy] = useState(false);
-  const [nuevaCategoria, setNuevaCategoria] = useState<PlantillaCategoria>('secretaria');
-  const [nuevaTipo, setNuevaTipo] = useState<PlantillaTipo>('libre');
-  const [nuevaNombre, setNuevaNombre] = useState('');
-  const [nuevaDesc, setNuevaDesc] = useState('');
-  const [nuevaContenidoBase, setNuevaContenidoBase] = useState('');
   const [brandingError, setBrandingError] = useState<string | null>(null);
+  const [catalogPlusOpen, setCatalogPlusOpen] = useState<'secretaria' | 'despacho' | null>(null);
+  const secretariaCatalogPlusRef = useRef<HTMLDivElement>(null);
+  const despachoCatalogPlusRef = useRef<HTMLDivElement>(null);
   /** Plantilla del catálogo con el acordeón de edición abierto (solo una a la vez). */
   const [expandedTemplateId, setExpandedTemplateId] = useState<string | null>(null);
   const [editorDraft, setEditorDraft] = useState('');
   const [editorToggleDefs, setEditorToggleDefs] = useState<DocumentTemplateToggleDef[]>([]);
+  const [editorPageLayout, setEditorPageLayout] = useState<DocumentTemplatePageLayout>(() => mergePageLayout(null));
   const [editorSaving, setEditorSaving] = useState(false);
   const [editorSuccess, setEditorSuccess] = useState<string | null>(null);
+  /** Edición de nombre y descripción del catálogo (icono etiquetas). */
+  const [metaEditingId, setMetaEditingId] = useState<string | null>(null);
+  const [metaNombre, setMetaNombre] = useState('');
+  const [metaDesc, setMetaDesc] = useState('');
 
   /** Membrete en BD compartido + espejo local para uso offline. */
   const persistMembrete = useCallback((next: PlantillasStateV2) => {
@@ -85,113 +241,94 @@ export default function Plantillas() {
     let cancelled = false;
     void (async () => {
       try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (!user || cancelled) {
-          setRoleReady(true);
-          return;
-        }
-        const { data: row } = await supabase
-          .from('profiles')
-          .select('role, court_id')
-          .eq('id', user.id)
-          .maybeSingle();
-        if (cancelled) return;
-        setRole(parseUserRole((row as { role?: string } | null)?.role));
-        const cid = String((row as { court_id?: string })?.court_id ?? 'court-1');
-        setCourtId(cid);
-        try {
-          const remoteMembrete = await fetchCourtBranding(cid);
-          if (!cancelled) {
-            const pkg: PlantillasStateV2 = { version: 3, membrete: remoteMembrete };
-            setData(pkg);
-            savePlantillas(pkg);
-          }
-        } catch {
-          if (!cancelled) {
-            const local = loadPlantillas();
-            setData(local);
-          }
-        }
-        try {
-          const list = await fetchDocumentTemplates(cid);
-          if (!cancelled) setTemplates(list);
-        } catch (e) {
-          if (!cancelled) {
-            setTemplates([]);
-            setTemplatesError(userFacingSupabaseError(e));
-          }
+        const remoteMembrete = await fetchCourtBranding(courtId);
+        if (!cancelled) {
+          const pkg: PlantillasStateV2 = { version: 3, membrete: remoteMembrete };
+          setData(pkg);
+          savePlantillas(pkg);
         }
       } catch {
-        if (!cancelled) setRole('admin');
-      } finally {
-        if (!cancelled) setRoleReady(true);
+        if (!cancelled) {
+          const local = loadPlantillas();
+          setData(local);
+        }
+      }
+      try {
+        const list = await fetchDocumentTemplates(courtId);
+        if (!cancelled) setTemplates(list);
+      } catch (e) {
+        if (!cancelled) {
+          setTemplates([]);
+          setTemplatesError(userFacingSupabaseError(e));
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [courtId]);
 
   const isAdmin = role === 'admin';
 
-  const handleImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    setImageError(null);
-    try {
-      const dataUrl = await readImageFileAsDataUrl(file);
-      persistMembrete({
-        ...data,
-        membrete: { ...data.membrete, membreteImageDataUrl: dataUrl },
-      });
-    } catch (err) {
-      setImageError(err instanceof Error ? err.message : 'No se pudo cargar la imagen.');
-    }
-  };
-
-  const clearImage = () => {
-    setImageError(null);
-    persistMembrete({ ...data, membrete: { ...data.membrete, membreteImageDataUrl: '' } });
-  };
+  useEffect(() => {
+    if (!catalogPlusOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      const ref =
+        catalogPlusOpen === 'secretaria' ? secretariaCatalogPlusRef : despachoCatalogPlusRef;
+      if (ref.current?.contains(t)) return;
+      setCatalogPlusOpen(null);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [catalogPlusOpen]);
 
   const resetDefaults = () => {
-    setImageError(null);
     const d = defaultPlantillasV2();
     persistMembrete(d);
   };
 
-  const refreshTemplates = useCallback(async () => {
+  const refreshTemplates = useCallback(async (): Promise<DocumentTemplate[]> => {
     try {
       setTemplatesError(null);
       const list = await fetchDocumentTemplates(courtId);
       setTemplates(list);
+      return list;
     } catch (e) {
       setTemplatesError(userFacingSupabaseError(e));
+      return [];
     }
   }, [courtId]);
+
+  const aplicarPlantillaEnEditor = useCallback((p: DocumentTemplate) => {
+    setExpandedTemplateId(p.id);
+    setEditorSuccess(null);
+    setEditorDraft(contenidoParaEditorPlantillas(p.contenidoBase, p.tipo, data));
+    setEditorToggleDefs(defaultToggleDefsForPlantilla(p.tipo, p.toggleDefs));
+    setEditorPageLayout(mergePageLayout(p.pageLayout));
+  }, [data]);
 
   const abrirEditorPlantilla = useCallback(
     (p: DocumentTemplate) => {
       if (expandedTemplateId === p.id) {
         setExpandedTemplateId(null);
         setEditorSuccess(null);
+        setMetaEditingId(null);
         return;
       }
-      setExpandedTemplateId(p.id);
-      setEditorSuccess(null);
-      setEditorDraft(contenidoParaEditorPlantillas(p.contenidoBase, p.tipo, data));
-      setEditorToggleDefs(defaultToggleDefsForPlantilla(p.tipo, p.toggleDefs));
+      if (expandedTemplateId != null && expandedTemplateId !== p.id) {
+        setMetaEditingId(null);
+      }
+      aplicarPlantillaEnEditor(p);
     },
-    [data, expandedTemplateId],
+    [aplicarPlantillaEnEditor, expandedTemplateId],
   );
 
   const cerrarEditorPlantilla = useCallback(() => {
     setExpandedTemplateId(null);
     setEditorSuccess(null);
     setEditorToggleDefs([]);
+    setMetaEditingId(null);
   }, []);
 
   const guardarEditorPlantilla = async (valueFromEditor?: string) => {
@@ -212,6 +349,7 @@ export default function Plantillas() {
       const updated = await updateDocumentTemplate(tpl.id, {
         contenidoBase: payload.trim() ? payload.trim() : null,
         toggleDefs: editorToggleDefs,
+        pageLayout: editorPageLayout,
       });
       if (updated.contenidoBase !== normalizedPayload) {
         throw new Error('Persistencia inconsistente: el valor guardado no coincide con el enviado.');
@@ -236,25 +374,36 @@ export default function Plantillas() {
     }
   };
 
-  const agregarPlantilla = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const nombre = nuevaNombre.trim();
-    if (!nombre) return;
+  const crearPlantillaDesdeOpcion = async (opt: (typeof OPCIONES_NUEVA_PLANTILLA)[number]) => {
+    setCatalogPlusOpen(null);
     setTemplatesBusy(true);
     setTemplatesError(null);
+    setEditorSuccess(null);
     try {
-      await insertDocumentTemplate({
+      const nombreBase =
+        opt.tipo === 'informe_ingreso'
+          ? 'Nueva plantilla · informe de ingreso'
+          : opt.tipo === 'auto_admisorio'
+            ? 'Nueva plantilla · auto admisorio'
+            : `Nueva plantilla · ${opt.categoria === 'secretaria' ? 'secretaría' : 'despacho'}`;
+      const nuevo = await insertDocumentTemplate({
         courtId,
-        categoria: nuevaCategoria,
-        nombre,
-        tipo: nuevaTipo,
-        descripcion: nuevaDesc.trim() || undefined,
-        contenidoBase: nuevaContenidoBase.trim() ? nuevaContenidoBase.trim() : null,
+        categoria: opt.categoria,
+        tipo: opt.tipo,
+        nombre: nombreBase,
+        descripcion: undefined,
+        contenidoBase: null,
       });
-      setNuevaNombre('');
-      setNuevaDesc('');
-      setNuevaContenidoBase('');
-      await refreshTemplates();
+      const list = await refreshTemplates();
+      const fresh = list.find((t) => t.id === nuevo.id) ?? nuevo;
+      if (expandedTemplateId != null && expandedTemplateId !== fresh.id) {
+        setMetaEditingId(null);
+      }
+      aplicarPlantillaEnEditor(fresh);
+      setMetaEditingId(fresh.id);
+      setMetaNombre(fresh.nombre);
+      setMetaDesc(fresh.descripcion ?? '');
+      setEditorSuccess('Plantilla creada: mismo editor que al editar (nombre, cuerpo, márgenes y letra).');
     } catch (err) {
       setTemplatesError(userFacingSupabaseError(err));
     } finally {
@@ -267,7 +416,53 @@ export default function Plantillas() {
     setTemplatesError(null);
     try {
       await deleteDocumentTemplate(id);
+      if (metaEditingId === id) {
+        setMetaEditingId(null);
+      }
       await refreshTemplates();
+    } catch (err) {
+      setTemplatesError(userFacingSupabaseError(err));
+    } finally {
+      setTemplatesBusy(false);
+    }
+  };
+
+  const toggleMetaEdit = (p: DocumentTemplate) => {
+    if (metaEditingId === p.id) {
+      setMetaEditingId(null);
+      return;
+    }
+    setMetaEditingId(p.id);
+    setMetaNombre(p.nombre);
+    setMetaDesc(p.descripcion ?? '');
+  };
+
+  const cancelMetaEdit = () => {
+    setMetaEditingId(null);
+  };
+
+  const guardarMetaPlantilla = async (id: string) => {
+    const tpl = templates.find((t) => t.id === id);
+    if (!tpl || tpl.courtId !== courtId) {
+      setTemplatesError('No se pudo confirmar la plantilla o el despacho no coincide.');
+      return;
+    }
+    const n = metaNombre.trim();
+    if (!n) {
+      setTemplatesError('El nombre visible no puede estar vacío.');
+      return;
+    }
+    setTemplatesBusy(true);
+    setTemplatesError(null);
+    setEditorSuccess(null);
+    try {
+      await updateDocumentTemplate(id, {
+        nombre: n,
+        descripcion: metaDesc.trim(),
+      });
+      await refreshTemplates();
+      setMetaEditingId(null);
+      setEditorSuccess('Nombre y descripción guardados.');
     } catch (err) {
       setTemplatesError(userFacingSupabaseError(err));
     } finally {
@@ -287,8 +482,8 @@ export default function Plantillas() {
           Modelos con variables <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-700">{'{{ }}'}</code>
           . Catálogo dividido en <strong className="font-semibold text-slate-700">secretaría</strong> y{' '}
           <strong className="font-semibold text-slate-700">despacho</strong>. La generación en cada expediente está en la
-          pestaña <strong className="font-semibold text-slate-700">Despacho</strong> del detalle del caso (informe primero,
-          luego auto).
+          pestaña <strong className="font-semibold text-slate-700">Generar documentos</strong> del detalle del caso (informe
+          primero, luego auto).
         </p>
       </header>
 
@@ -316,52 +511,23 @@ export default function Plantillas() {
                 {templates
                   .filter((c) => c.categoria === 'secretaria')
                   .map((p) => (
-                    <li
+                    <CatalogTemplateListItem
                       key={p.id}
-                      className={`rounded-lg border border-slate-100 bg-slate-50/80 ${
-                        expandedTemplateId === p.id ? 'ring-1 ring-accent/25' : ''
-                      }`}
+                      p={p}
+                      tipoLabel={TIPO_LABEL[p.tipo]}
+                      expandedTemplateId={expandedTemplateId}
+                      metaEditingId={metaEditingId}
+                      metaNombre={metaNombre}
+                      metaDesc={metaDesc}
+                      templatesBusy={templatesBusy}
+                      onMetaNombreChange={setMetaNombre}
+                      onMetaDescChange={setMetaDesc}
+                      onToggleMetaEdit={toggleMetaEdit}
+                      onCancelMetaEdit={cancelMetaEdit}
+                      onSaveMeta={guardarMetaPlantilla}
+                      onAbrirEditor={abrirEditorPlantilla}
+                      onQuitar={(id) => void quitarPlantilla(id)}
                     >
-                      <div className="flex items-start justify-between gap-2 px-3 py-2.5">
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-slate-800">{p.nombre}</p>
-                          <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{TIPO_LABEL[p.tipo]}</p>
-                          {p.descripcion ? <p className="mt-1 text-xs text-slate-600">{p.descripcion}</p> : null}
-                          {p.docxStoragePath ? (
-                            <p className="mt-1 text-[10px] text-slate-400">Plantilla Word en Storage</p>
-                          ) : p.contenidoBase?.trim() ? (
-                            <p className="mt-1 text-[10px] font-semibold text-emerald-700">Texto propio del despacho</p>
-                          ) : (
-                            <p className="mt-1 text-[10px] text-slate-400">
-                              Modelo estándar (pulse el lápiz para revisarlo o cambiarlo y guardar)
-                            </p>
-                          )}
-                        </div>
-                        <div className="flex shrink-0 flex-col gap-1">
-                          <button
-                            type="button"
-                            disabled={templatesBusy}
-                            onClick={() => abrirEditorPlantilla(p)}
-                            className={`rounded-md border p-1.5 disabled:opacity-40 ${
-                              expandedTemplateId === p.id
-                                ? 'border-accent/40 bg-accent/10 text-accent'
-                                : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                            }`}
-                            title={expandedTemplateId === p.id ? 'Cerrar editor' : 'Editar texto del documento'}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
-                            disabled={templatesBusy}
-                            onClick={() => void quitarPlantilla(p.id)}
-                            className="rounded-md border border-red-100 bg-red-50 p-1.5 text-red-700 hover:bg-red-100 disabled:opacity-40"
-                            title="Quitar del catálogo"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </div>
                       {expandedTemplateId === p.id && isAdmin ? (
                         <div className="border-t border-slate-100 bg-slate-50/50 p-2">
                           <div className="rounded-lg border border-slate-200/90 bg-white shadow-sm">
@@ -375,22 +541,71 @@ export default function Plantillas() {
                               saving={editorSaving}
                               toggleDefs={editorToggleDefs}
                               onToggleDefsChange={setEditorToggleDefs}
+                              pageLayout={editorPageLayout}
+                              onPageLayoutChange={setEditorPageLayout}
                               onCancel={cerrarEditorPlantilla}
                               onSave={(valueFromEditor) => void guardarEditorPlantilla(valueFromEditor)}
                               showDefaultModelHint={
                                 Boolean(p.tipo && !p.contenidoBase?.trim() && cuerpoPredeterminadoPlantilla(p.tipo, data))
                               }
+                              onAutoDatosExpedienteEditorJsonChange={
+                                p.tipo === 'auto_admisorio'
+                                  ? (json) =>
+                                      persistMembrete({
+                                        version: 3,
+                                        membrete: { ...data.membrete, autoDatosExpedienteEditorJson: json },
+                                      })
+                                  : undefined
+                              }
                             />
                           </div>
                         </div>
                       ) : null}
-                    </li>
+                    </CatalogTemplateListItem>
                   ))}
                 {templates.filter((c) => c.categoria === 'secretaria').length === 0 ? (
                   <p className="text-xs text-slate-400">Ninguna plantilla en secretaría.</p>
                 ) : null}
               </ul>
+              <div ref={secretariaCatalogPlusRef} className="relative flex justify-start pt-2">
+                <button
+                  type="button"
+                  disabled={templatesBusy}
+                  onClick={() => setCatalogPlusOpen((o) => (o === 'secretaria' ? null : 'secretaria'))}
+                  title="Añadir plantilla en secretaría"
+                  className="flex h-11 w-11 items-center justify-center rounded-full border-2 border-white bg-accent text-white shadow-md transition hover:bg-blue-700 disabled:opacity-40"
+                >
+                  <Plus className="h-5 w-5" strokeWidth={2.5} />
+                </button>
+                {catalogPlusOpen === 'secretaria' ? (
+                  <div
+                    className="absolute left-0 top-full z-20 mt-2 w-[min(calc(100vw-2rem),20rem)] rounded-xl border border-slate-200 bg-white py-1 shadow-xl"
+                    role="menu"
+                    aria-label="Nueva plantilla de secretaría"
+                  >
+                    <p className="border-b border-slate-100 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                      Nueva plantilla · Secretaría
+                    </p>
+                    <ul className="max-h-[min(60vh,22rem)] overflow-y-auto py-1">
+                      {opcionesNuevaPorCategoria('secretaria').map((opt) => (
+                        <li key={`${opt.categoria}-${opt.tipo}`}>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            disabled={templatesBusy}
+                            onClick={() => void crearPlantillaDesdeOpcion(opt)}
+                            className="w-full px-3 py-2.5 text-left text-sm text-slate-800 transition hover:bg-slate-50 disabled:opacity-40"
+                          >
+                            {TIPO_LABEL[opt.tipo]}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
             </div>
+
             <div className="space-y-3">
               <p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
                 <Scale className="h-4 w-4 text-slate-500" /> Despacho
@@ -399,52 +614,23 @@ export default function Plantillas() {
                 {templates
                   .filter((c) => c.categoria === 'despacho')
                   .map((p) => (
-                    <li
+                    <CatalogTemplateListItem
                       key={p.id}
-                      className={`rounded-lg border border-slate-100 bg-slate-50/80 ${
-                        expandedTemplateId === p.id ? 'ring-1 ring-accent/25' : ''
-                      }`}
+                      p={p}
+                      tipoLabel={TIPO_LABEL[p.tipo]}
+                      expandedTemplateId={expandedTemplateId}
+                      metaEditingId={metaEditingId}
+                      metaNombre={metaNombre}
+                      metaDesc={metaDesc}
+                      templatesBusy={templatesBusy}
+                      onMetaNombreChange={setMetaNombre}
+                      onMetaDescChange={setMetaDesc}
+                      onToggleMetaEdit={toggleMetaEdit}
+                      onCancelMetaEdit={cancelMetaEdit}
+                      onSaveMeta={guardarMetaPlantilla}
+                      onAbrirEditor={abrirEditorPlantilla}
+                      onQuitar={(id) => void quitarPlantilla(id)}
                     >
-                      <div className="flex items-start justify-between gap-2 px-3 py-2.5">
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-slate-800">{p.nombre}</p>
-                          <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{TIPO_LABEL[p.tipo]}</p>
-                          {p.descripcion ? <p className="mt-1 text-xs text-slate-600">{p.descripcion}</p> : null}
-                          {p.docxStoragePath ? (
-                            <p className="mt-1 text-[10px] text-slate-400">Plantilla Word en Storage</p>
-                          ) : p.contenidoBase?.trim() ? (
-                            <p className="mt-1 text-[10px] font-semibold text-emerald-700">Texto propio del despacho</p>
-                          ) : (
-                            <p className="mt-1 text-[10px] text-slate-400">
-                              Modelo estándar (pulse el lápiz para revisarlo o cambiarlo y guardar)
-                            </p>
-                          )}
-                        </div>
-                        <div className="flex shrink-0 flex-col gap-1">
-                          <button
-                            type="button"
-                            disabled={templatesBusy}
-                            onClick={() => abrirEditorPlantilla(p)}
-                            className={`rounded-md border p-1.5 disabled:opacity-40 ${
-                              expandedTemplateId === p.id
-                                ? 'border-accent/40 bg-accent/10 text-accent'
-                                : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                            }`}
-                            title={expandedTemplateId === p.id ? 'Cerrar editor' : 'Editar texto del documento'}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
-                            disabled={templatesBusy}
-                            onClick={() => void quitarPlantilla(p.id)}
-                            className="rounded-md border border-red-100 bg-red-50 p-1.5 text-red-700 hover:bg-red-100 disabled:opacity-40"
-                            title="Quitar del catálogo"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </div>
                       {expandedTemplateId === p.id && isAdmin ? (
                         <div className="border-t border-slate-100 bg-slate-50/50 p-2">
                           <div className="rounded-lg border border-slate-200/90 bg-white shadow-sm">
@@ -458,21 +644,69 @@ export default function Plantillas() {
                               saving={editorSaving}
                               toggleDefs={editorToggleDefs}
                               onToggleDefsChange={setEditorToggleDefs}
+                              pageLayout={editorPageLayout}
+                              onPageLayoutChange={setEditorPageLayout}
                               onCancel={cerrarEditorPlantilla}
                               onSave={(valueFromEditor) => void guardarEditorPlantilla(valueFromEditor)}
                               showDefaultModelHint={
                                 Boolean(p.tipo && !p.contenidoBase?.trim() && cuerpoPredeterminadoPlantilla(p.tipo, data))
                               }
+                              onAutoDatosExpedienteEditorJsonChange={
+                                p.tipo === 'auto_admisorio'
+                                  ? (json) =>
+                                      persistMembrete({
+                                        version: 3,
+                                        membrete: { ...data.membrete, autoDatosExpedienteEditorJson: json },
+                                      })
+                                  : undefined
+                              }
                             />
                           </div>
                         </div>
                       ) : null}
-                    </li>
+                    </CatalogTemplateListItem>
                   ))}
                 {templates.filter((c) => c.categoria === 'despacho').length === 0 ? (
                   <p className="text-xs text-slate-400">Ninguna plantilla en despacho.</p>
                 ) : null}
               </ul>
+              <div ref={despachoCatalogPlusRef} className="relative flex justify-start pt-2">
+                <button
+                  type="button"
+                  disabled={templatesBusy}
+                  onClick={() => setCatalogPlusOpen((o) => (o === 'despacho' ? null : 'despacho'))}
+                  title="Añadir plantilla en despacho"
+                  className="flex h-11 w-11 items-center justify-center rounded-full border-2 border-white bg-accent text-white shadow-md transition hover:bg-blue-700 disabled:opacity-40"
+                >
+                  <Plus className="h-5 w-5" strokeWidth={2.5} />
+                </button>
+                {catalogPlusOpen === 'despacho' ? (
+                  <div
+                    className="absolute left-0 top-full z-20 mt-2 w-[min(calc(100vw-2rem),20rem)] rounded-xl border border-slate-200 bg-white py-1 shadow-xl"
+                    role="menu"
+                    aria-label="Nueva plantilla de despacho"
+                  >
+                    <p className="border-b border-slate-100 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                      Nueva plantilla · Despacho
+                    </p>
+                    <ul className="max-h-[min(60vh,22rem)] overflow-y-auto py-1">
+                      {opcionesNuevaPorCategoria('despacho').map((opt) => (
+                        <li key={`${opt.categoria}-${opt.tipo}`}>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            disabled={templatesBusy}
+                            onClick={() => void crearPlantillaDesdeOpcion(opt)}
+                            className="w-full px-3 py-2.5 text-left text-sm text-slate-800 transition hover:bg-slate-50 disabled:opacity-40"
+                          >
+                            {TIPO_LABEL[opt.tipo]}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
           {templatesError ? (
@@ -485,219 +719,17 @@ export default function Plantillas() {
               {editorSuccess}
             </div>
           ) : null}
-          <form
-            onSubmit={(e) => void agregarPlantilla(e)}
-            className="border-t border-slate-100 bg-slate-50/40 px-6 py-5"
-          >
-            <p className="mb-3 flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
-              <Plus className="h-4 w-4" /> Nueva entrada en el catálogo
-            </p>
-            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-              <label className="block min-w-[140px] flex-1 space-y-1">
-                <span className="text-[11px] font-semibold text-slate-600">Área</span>
-                <select
-                  value={nuevaCategoria}
-                  onChange={(e) => setNuevaCategoria(e.target.value as PlantillaCategoria)}
-                  className="input-modern text-sm"
-                >
-                  <option value="secretaria">Secretaría</option>
-                  <option value="despacho">Despacho</option>
-                </select>
-              </label>
-              <label className="block min-w-[160px] flex-1 space-y-1">
-                <span className="text-[11px] font-semibold text-slate-600">Tipo</span>
-                <select
-                  value={nuevaTipo}
-                  onChange={(e) => setNuevaTipo(e.target.value as PlantillaTipo)}
-                  className="input-modern text-sm"
-                >
-                  <option value="informe_ingreso">Informe de ingreso</option>
-                  <option value="auto_admisorio">Auto admisorio</option>
-                  <option value="libre">Libre / otro</option>
-                </select>
-              </label>
-              <label className="block min-w-[200px] flex-[2] space-y-1">
-                <span className="text-[11px] font-semibold text-slate-600">Nombre visible</span>
-                <input
-                  value={nuevaNombre}
-                  onChange={(e) => setNuevaNombre(e.target.value)}
-                  placeholder="Ej. Informe de archivo"
-                  className="input-modern text-sm"
-                />
-              </label>
-              <label className="block min-w-[200px] flex-[2] space-y-1">
-                <span className="text-[11px] font-semibold text-slate-600">Descripción (opcional)</span>
-                <input
-                  value={nuevaDesc}
-                  onChange={(e) => setNuevaDesc(e.target.value)}
-                  placeholder="Uso interno"
-                  className="input-modern text-sm"
-                />
-              </label>
-              <div className="w-full sm:col-span-2">
-                <TemplateBodyEditor
-                  templateTipo={nuevaTipo}
-                  label="Texto del documento (opcional)"
-                  placeholder={'Puede escribir párrafos normales y usar el menú superior para insertar datos del expediente.'}
-                  value={nuevaContenidoBase}
-                  onChange={setNuevaContenidoBase}
-                  minRows={8}
-                />
-                <p className="mt-2 text-[10px] text-slate-500">
-                  Si deja el cuerpo vacío, el expediente usará el borrador por defecto del sistema.
-                </p>
-              </div>
-              <button
-                type="submit"
-                disabled={templatesBusy}
-                className="btn-primary shrink-0 px-5 py-3 text-xs uppercase tracking-wider disabled:opacity-40"
-              >
-                {templatesBusy ? 'Guardando…' : 'Agregar'}
-              </button>
-            </div>
-          </form>
         </section>
       ) : null}
 
-      {/* Panel administrador */}
-      {roleReady && isAdmin && (
-        <section className="card-modern overflow-hidden">
-          <div className="flex items-center gap-2 border-b border-slate-200/90 bg-gradient-to-br from-slate-50/95 via-white to-slate-50/40 px-6 py-4">
-            <Shield className="h-5 w-5 text-accent" />
-            <div>
-              <h2 className="text-sm font-bold uppercase tracking-wide text-slate-900">Gestionar membrete y textos fijos</h2>
-              <p className="text-[11px] text-slate-500">
-                Solo administrador. Lo que guarde aquí lo verán secretaría y despacho en todos los equipos; además se guarda una
-                copia en este navegador por si trabaja sin conexión.
-              </p>
-            </div>
-          </div>
-          {brandingError ? (
-            <div className="border-b border-red-100 bg-red-50 px-6 py-3 text-xs font-medium text-red-800">{brandingError}</div>
-          ) : null}
-          <div className="grid gap-8 p-6 md:grid-cols-2">
-            <div className="space-y-4">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Encabezado judicial (tres líneas)</p>
-              {(['line1', 'line2', 'line3'] as const).map((k) => (
-                <label key={k} className="block space-y-1.5">
-                  <span className="text-[11px] font-semibold text-slate-600">
-                    Línea {k === 'line1' ? '1' : k === 'line2' ? '2' : '3'}
-                  </span>
-                  <input
-                    type="text"
-                    value={data.membrete.auto[k]}
-                    onChange={(e) =>
-                      persistMembrete({
-                        ...data,
-                        membrete: {
-                          ...data.membrete,
-                          auto: { ...data.membrete.auto, [k]: e.target.value },
-                        },
-                      })
-                    }
-                    className="input-modern text-sm"
-                  />
-                </label>
-              ))}
-              <div className="space-y-2">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Nombre completo del juzgado (informe)</p>
-                <textarea
-                  value={data.membrete.informe.juzgado}
-                  onChange={(e) =>
-                    persistMembrete({
-                      ...data,
-                      membrete: {
-                        ...data.membrete,
-                        informe: { ...data.membrete.informe, juzgado: e.target.value },
-                      },
-                    })
-                  }
-                  rows={2}
-                  className="input-modern min-h-[3rem] resize-y text-sm"
-                />
-              </div>
-              <div className="space-y-2">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Dirección</p>
-                <textarea
-                  value={data.membrete.informe.direccion}
-                  onChange={(e) =>
-                    persistMembrete({
-                      ...data,
-                      membrete: {
-                        ...data.membrete,
-                        informe: { ...data.membrete.informe, direccion: e.target.value },
-                      },
-                    })
-                  }
-                  rows={2}
-                  className="input-modern min-h-[3rem] resize-y text-sm"
-                />
-              </div>
-              <label className="block space-y-1.5">
-                <span className="text-[11px] font-semibold text-slate-600">Correo institucional</span>
-                <input
-                  type="email"
-                  value={data.membrete.informe.correo}
-                  onChange={(e) =>
-                    persistMembrete({
-                      ...data,
-                      membrete: {
-                        ...data.membrete,
-                        informe: { ...data.membrete.informe, correo: e.target.value },
-                      },
-                    })
-                  }
-                  className="input-modern text-sm"
-                />
-              </label>
-            </div>
-
-            <div className="space-y-4">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Imagen de membrete (logo / escudo)</p>
-              <p className="text-xs text-slate-500">
-                PNG o JPEG, máximo ~1,2 MB. Se muestra en el informe y puede sustituir el ícono genérico en las vistas
-                esquemáticas cuando aplique.
-              </p>
-              <div className="flex flex-wrap items-center gap-3">
-                <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-sm transition hover:border-accent/40 hover:bg-slate-50">
-                  <ImagePlus className="h-4 w-4 text-accent" />
-                  Subir imagen
-                  <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleImage} />
-                </label>
-                {data.membrete.membreteImageDataUrl ? (
-                  <button
-                    type="button"
-                    onClick={clearImage}
-                    className="inline-flex items-center gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    Quitar imagen
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={resetDefaults}
-                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
-                >
-                  <RotateCcw className="h-4 w-4" />
-                  Restaurar textos por defecto
-                </button>
-              </div>
-              {imageError ? <p className="text-xs font-medium text-red-600">{imageError}</p> : null}
-              {data.membrete.membreteImageDataUrl ? (
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="mb-2 text-[10px] font-bold uppercase text-slate-400">Vista previa</p>
-                  <img
-                    src={data.membrete.membreteImageDataUrl}
-                    alt="Vista previa membrete"
-                    className="max-h-32 w-auto max-w-full object-contain"
-                  />
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </section>
-      )}
+      {roleReady && isAdmin ? (
+        <MembreteBrandingPanel
+          data={data}
+          persistMembrete={persistMembrete}
+          onResetDefaults={resetDefaults}
+          brandingError={brandingError}
+        />
+      ) : null}
 
       {roleReady && !isAdmin && (
         <p className="text-center text-xs text-slate-400">
@@ -708,7 +740,7 @@ export default function Plantillas() {
       <footer className="card-modern flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
         <p className="max-w-xl text-xs text-slate-500">
           El membrete y el escudo quedan guardados para todo el despacho. Las plantillas se descargan en Word desde la pestaña
-          Despacho de cada expediente. Una copia de respaldo se guarda también en este navegador.
+          Generar documentos en cada expediente. Una copia de respaldo se guarda también en este navegador.
         </p>
         <span className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-slate-400">
           Servidor + respaldo local

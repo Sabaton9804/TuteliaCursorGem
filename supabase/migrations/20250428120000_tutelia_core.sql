@@ -93,9 +93,9 @@ create index if not exists case_actions_case_created_idx on public.case_actions 
 insert into public.courts (id, name, email, city)
 values (
   'court-1',
-  'Juzgado Civil del Circuito 01 de Bogotá',
-  'j01ccbog@notificaciones.jud.co',
-  'Bogotá'
+  'Juzgado 051 Civil del Circuito de Bogotá',
+  'j051ccbog@notificaciones.jud.co',
+  'Bogotá D.C.'
 )
 on conflict (id) do nothing;
 

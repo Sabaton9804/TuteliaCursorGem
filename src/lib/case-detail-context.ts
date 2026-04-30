@@ -1,6 +1,7 @@
-import type { Action, Case, Document } from '../types';
+import type { Action, Case, Document, SustanciadorAssignmentMode } from '../types';
 import { resolveAssigneeForCase } from './court-staff-assignees';
 import { sanitizeExpedienteFilenameForDisplay } from './sanitize-expediente-filename';
+import { caseDocumentRawLabel } from './case-document-display-name';
 
 export type CaseTimelineEntry = {
   key: string;
@@ -18,15 +19,21 @@ function tsOrFallback(iso: string | undefined, fallback: string): string {
 }
 
 /** Texto auxiliar para el prompt de síntesis IA (plazos, piezas, asignación). */
-export function buildSynthesisContextBlock(caseItem: Case, docs: Document[]): string {
-  const assignee = resolveAssigneeForCase(caseItem.assignedTo, caseItem.id);
+export function buildSynthesisContextBlock(
+  caseItem: Case,
+  docs: Document[],
+  courtAssignmentMode?: SustanciadorAssignmentMode | null
+): string {
+  const assignee = resolveAssigneeForCase(caseItem.assignedTo, caseItem.id, courtAssignmentMode);
   const formal = caseItem.assignedTo?.trim();
   const assignLine = formal
     ? `Sustanciador asignado (campo assigned_to): ${formal} (reparto efectivo mostrado al usuario: ${assignee.name})`
-    : `Sustanciador: reparto por defecto del despacho — ${assignee.name}`;
+    : courtAssignmentMode === 'manual_unassigned'
+      ? 'Sustanciador: sin asignación persistida (modo manual del juzgado).'
+      : `Sustanciador (mostrado en UI): ${assignee.name} — si falta assigned_to, se usa regla por defecto del despacho.`;
 
   const titles = docs.map((d) => {
-    const raw = (d.originalName?.trim() || d.name || '').trim();
+    const raw = caseDocumentRawLabel(d);
     return raw ? sanitizeExpedienteFilenameForDisplay(raw) : 'Sin nombre';
   });
 
@@ -49,7 +56,37 @@ export function buildSynthesisContextBlock(caseItem: Case, docs: Document[]): st
   return lines.join('\n');
 }
 
-/** Combina hitos del caso, piezas del expediente y filas de `case_actions` (trazabilidad útil aunque la tabla esté vacía). */
+/**
+ * Solo actuaciones del despacho (`case_actions`) más el hito de ingreso al sistema.
+ * La trazabilidad técnica completa (cada cambio en BD) vive en `case_audit_log` (pestaña Historial).
+ */
+export function buildCaseActuacionesTimeline(caseItem: Case, actions: Action[]): CaseTimelineEntry[] {
+  const base = tsOrFallback(caseItem.createdAt, new Date().toISOString());
+  const rows: CaseTimelineEntry[] = [
+    {
+      key: 'sys-created',
+      at: base,
+      title: 'Expediente incorporado al sistema',
+      subtitle: `Radicado ${caseItem.radicado}`,
+      kind: 'system',
+    },
+  ];
+
+  for (const a of actions) {
+    rows.push({
+      key: `act-${a.id}`,
+      at: tsOrFallback(a.timestamp, base),
+      title: a.description,
+      actor: a.userName || undefined,
+      kind: 'action',
+    });
+  }
+
+  rows.sort((x, y) => Date.parse(y.at) - Date.parse(x.at));
+  return rows;
+}
+
+/** Línea de tiempo mixta (sistema + piezas + actuaciones); preferir `buildCaseActuacionesTimeline` en UI de actuaciones. */
 export function buildCaseTimeline(caseItem: Case, docs: Document[], actions: Action[]): CaseTimelineEntry[] {
   const base = tsOrFallback(caseItem.createdAt, new Date().toISOString());
   const rows: CaseTimelineEntry[] = [];
@@ -84,7 +121,7 @@ export function buildCaseTimeline(caseItem: Case, docs: Document[], actions: Act
   }
 
   for (const d of docs) {
-    const raw = (d.originalName?.trim() || d.name || '').trim();
+    const raw = caseDocumentRawLabel(d);
     const label = raw ? sanitizeExpedienteFilenameForDisplay(raw) : 'Documento sin nombre';
     rows.push({
       key: `doc-${d.id}`,

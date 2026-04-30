@@ -90,7 +90,7 @@ export const MARCADORES_CATALOGO: MarcadorCatalogoItem[] = [
     clave: 'FECHA_LETRAS_COMPLETA',
     etiqueta: 'Fecha completa en letras',
     grupo: 'fechas',
-    ayuda: 'Para informes (día en dígitos y letras)',
+    ayuda: 'Día en letras + día en dígitos entre paréntesis + mes y año en palabras, p. ej. «Veintinueve (29) de abril de dos mil veintiséis».',
     soloTipo: 'informe_ingreso',
   },
   {
@@ -160,17 +160,27 @@ export const MARCADORES_CATALOGO: MarcadorCatalogoItem[] = [
   },
   {
     clave: 'FUNCIONARIO_FIRMA',
-    etiqueta: 'Quién firma el informe',
+    etiqueta: 'Quién firma (nombre)',
     grupo: 'proceso',
-    ayuda: 'Nombre del secretario o funcionario',
-    soloTipo: 'informe_ingreso',
+    ayuda: 'En informe: secretario(a) del equipo; en auto: juez del equipo (organigrama de la app).',
   },
   {
     clave: 'CARGO_FIRMA',
     etiqueta: 'Cargo de quien firma',
     grupo: 'proceso',
-    ayuda: 'Ej. Secretario judicial',
-    soloTipo: 'informe_ingreso',
+    ayuda: 'En informe: «Secretario(a)»; en auto: «Juez» (etiqueta corta). Combine con {{FUNCIONARIO_FIRMA}}.',
+  },
+  {
+    clave: 'NOMBRE_JUEZ',
+    etiqueta: 'Nombre del juez (equipo)',
+    grupo: 'juzgado',
+    ayuda: 'Nombre del titular según el organigrama configurado.',
+  },
+  {
+    clave: 'NOMBRE_SECRETARIO',
+    etiqueta: 'Nombre del secretario(a) (equipo)',
+    grupo: 'juzgado',
+    ayuda: 'Secretario(a) de la lista de equipo de trabajo.',
   },
   {
     clave: 'NUMERO_SIGUIENTE',

@@ -19,6 +19,16 @@ export interface PlantillasMembrete {
     correo: string;
   };
   membreteImageDataUrl: string;
+  /**
+   * Documento TipTap (JSON stringificado) para el membrete visual libre.
+   * Vacío o ausente: la vista previa se arma desde `auto` / `informe` / imagen clásica.
+   */
+  membreteEditorJson?: string;
+  /**
+   * Bloque editable (TipTap con prefijo `tiptap:`) con fecha, radicación, proceso, partes, etc.
+   * Por despacho; se antepone al cuerpo del auto admisorio al generar el documento.
+   */
+  autoDatosExpedienteEditorJson?: string;
 }
 
 /** Solo membrete en localStorage; el catálogo vive en Supabase. */
@@ -36,6 +46,8 @@ export function defaultPlantillasV2(): PlantillasStateV2 {
       auto: { ...V1_DEFAULT.auto },
       informe: { ...V1_DEFAULT.informe },
       membreteImageDataUrl: '',
+      membreteEditorJson: '',
+      autoDatosExpedienteEditorJson: '',
     },
   };
 }
@@ -58,6 +70,9 @@ function parseMembreteFromUnknown(m: unknown): PlantillasMembrete | null {
       correo: typeof inf.correo === 'string' ? inf.correo : V1_DEFAULT.informe.correo,
     },
     membreteImageDataUrl: typeof x.membreteImageDataUrl === 'string' ? x.membreteImageDataUrl : '',
+    membreteEditorJson: typeof x.membreteEditorJson === 'string' ? x.membreteEditorJson : '',
+    autoDatosExpedienteEditorJson:
+      typeof x.autoDatosExpedienteEditorJson === 'string' ? x.autoDatosExpedienteEditorJson : '',
   };
 }
 
@@ -77,6 +92,8 @@ export function loadPlantillas(): PlantillasStateV2 {
           auto: { ...(v1.auto as PlantillasMembrete['auto']) },
           informe: { ...(v1.informe as PlantillasMembrete['informe']) },
           membreteImageDataUrl: typeof v1.membreteImageDataUrl === 'string' ? v1.membreteImageDataUrl : '',
+          membreteEditorJson: '',
+          autoDatosExpedienteEditorJson: '',
         },
       };
       savePlantillas(next);

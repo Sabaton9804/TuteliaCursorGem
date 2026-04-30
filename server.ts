@@ -478,6 +478,9 @@ async function startServer() {
         return {
           ...att,
           filename: uniqueName,
+          // Tras desempates (p. ej. dos «EscritoDemanda»), solo cambiaba `filename`;
+          // alinear `originalName` evita que radicación/visor sigan mostrando el MIME antiguo.
+          originalName: uniqueName,
           order: idx
         };
       });

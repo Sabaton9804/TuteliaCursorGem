@@ -2,12 +2,15 @@ import { supabase } from './supabase';
 import { DEFAULT_PLANTILLAS as V1_DEFAULT } from './plantillas-store-v1-shim';
 import type { PlantillasMembrete } from './plantillas-store';
 import { ensureSupabaseSessionForWrites } from './supabase-write-auth';
+import { userFacingSupabaseError } from './supabase-user-error';
 
 export function defaultMembrete(): PlantillasMembrete {
   return {
     auto: { ...V1_DEFAULT.auto },
     informe: { ...V1_DEFAULT.informe },
     membreteImageDataUrl: '',
+    membreteEditorJson: '',
+    autoDatosExpedienteEditorJson: '',
   };
 }
 
@@ -31,6 +34,11 @@ export function mergeBrandingJson(raw: unknown): PlantillasMembrete {
     },
     membreteImageDataUrl:
       typeof o.membreteImageDataUrl === 'string' ? o.membreteImageDataUrl : d.membreteImageDataUrl,
+    membreteEditorJson: typeof o.membreteEditorJson === 'string' ? o.membreteEditorJson : d.membreteEditorJson ?? '',
+    autoDatosExpedienteEditorJson:
+      typeof o.autoDatosExpedienteEditorJson === 'string'
+        ? o.autoDatosExpedienteEditorJson
+        : d.autoDatosExpedienteEditorJson ?? '',
   };
 }
 
@@ -42,15 +50,21 @@ export async function fetchCourtBranding(courtId: string): Promise<PlantillasMem
 
 /** Mensaje claro si falla el guardado (migración, permisos, sesión). */
 export function describeBrandingSaveError(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
+  const raw = userFacingSupabaseError(err);
   const t = raw.toLowerCase();
-  if (
-    t.includes('branding') ||
-    t.includes('column') ||
-    t.includes('schema cache') ||
-    /could not find/.test(t)
-  ) {
-    return 'No se pudo guardar el membrete en el servidor: falta aplicar en la base de datos la actualización que crea el campo de membrete del despacho (migración del proyecto). Hasta que el administrador técnico la ejecute, los cambios solo quedan guardados en este navegador.';
+  const code =
+    err && typeof err === 'object' && 'code' in err && typeof (err as { code: unknown }).code === 'string'
+      ? String((err as { code: string }).code)
+      : '';
+
+  const looksLikeMissingBrandingColumn =
+    code === '42703' ||
+    /\bbranding\b.*(does not exist|unknown column|no existe)/i.test(raw) ||
+    /column\s+["']?branding["']?\s+of\s+["']?courts["']?/i.test(raw) ||
+    (t.includes('schema cache') && t.includes('branding'));
+
+  if (looksLikeMissingBrandingColumn) {
+    return 'No se pudo guardar el membrete en el servidor: falta aplicar en la base de datos la migración que añade la columna `branding` en `courts` (p. ej. `20250429140000_courts_branding.sql`). Hasta entonces los cambios solo quedan en este navegador.';
   }
   if (t.includes('permission') || t.includes('policy') || t.includes('row-level') || t.includes('rls')) {
     return 'No tiene permiso para guardar el membrete en el servidor. Inicie sesión con una cuenta autorizada.';

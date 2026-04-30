@@ -125,6 +125,31 @@ export function businessDaysRemainingInTenDayWindow(filingDate: Date, today = ne
   return 11 - used;
 }
 
+/**
+ * Misma semántica que `businessDaysRemainingInTenDayWindow` cuando el día 10 hábil ya está en BD.
+ * Evita recorrer años entre radicación y hoy mientras el expediente sigue dentro del término:
+ * solo cuenta hasta `min(hoy, fin de término)` en ese tramo.
+ * Tras el fin del término usa el día posterior al plazo como origen (equivalente a 11 − hábiles(radicación→hoy)).
+ */
+export function businessDaysRemainingWithStoredDeadline(
+  filingDate: Date,
+  termEndDeadline: Date,
+  today = new Date()
+): number {
+  const f = startOfLocalDay(filingDate);
+  const end = startOfLocalDay(termEndDeadline);
+  const t = startOfLocalDay(today);
+  const dayAfterEnd = new Date(end);
+  dayAfterEnd.setDate(dayAfterEnd.getDate() + 1);
+
+  if (t.getTime() <= end.getTime()) {
+    const used = inclusiveBusinessDaysBetween(f, t);
+    return 11 - used;
+  }
+  const usedAfter = inclusiveBusinessDaysBetween(dayAfterEnd, t);
+  return 1 - usedAfter;
+}
+
 export function addBusinessDays(start: Date, businessDays: number): Date {
   const d = startOfLocalDay(start);
   let added = 0;

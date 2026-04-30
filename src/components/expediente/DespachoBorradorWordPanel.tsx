@@ -1,0 +1,95 @@
+import React, { type ReactNode, useMemo } from 'react';
+import type { DocumentTemplatePageLayout } from '../../types';
+import type { PlantillasMembrete } from '../../lib/plantillas-store';
+import { mergePageLayout } from '../../lib/document-template-page-layout';
+import { MembreteRichPreview } from '../plantillas/MembreteRichSurface';
+
+type Props = {
+  membrete: PlantillasMembrete;
+  draft: string;
+  onDraftChange: (next: string) => void;
+  /** Plantilla Word subida: el .docx no se arma desde este texto; el borrador queda solo referencia. */
+  readOnlyDraft: boolean;
+  readOnlyExplanation: string;
+  pageLayout: DocumentTemplatePageLayout | null | undefined;
+  /** Si existe, sustituye al bloque «Cuerpo del documento» + textarea. */
+  draftBodySlot?: ReactNode;
+};
+
+function mmToCssPx(mm: number): string {
+  return `${(mm * 96) / 25.4}px`;
+}
+
+export function DespachoBorradorWordPanel({
+  membrete,
+  draft,
+  onDraftChange,
+  readOnlyDraft,
+  readOnlyExplanation,
+  pageLayout,
+  draftBodySlot,
+}: Props) {
+  const L = useMemo(() => mergePageLayout(pageLayout), [pageLayout]);
+
+  const pad = useMemo(
+    () => ({
+      paddingTop: mmToCssPx(L.marginMm.top),
+      paddingRight: mmToCssPx(L.marginMm.right),
+      paddingBottom: mmToCssPx(L.marginMm.bottom),
+      paddingLeft: mmToCssPx(L.marginMm.left),
+    }),
+    [L.marginMm.bottom, L.marginMm.left, L.marginMm.right, L.marginMm.top],
+  );
+
+  const fontStyle = useMemo(() => {
+    const name = L.fontFamily.trim();
+    const quoted = name.includes(' ') ? `"${name.replace(/"/g, '')}"` : name;
+    return {
+      fontFamily: `${quoted}, "Times New Roman", Times, serif`,
+      fontSize: `${(L.fontSizePt * 96) / 72}px`,
+      lineHeight: 1.38 as const,
+    };
+  }, [L.fontFamily, L.fontSizePt]);
+
+  const hojaClassName = draftBodySlot
+    ? 'despacho-borrador-hoja mx-auto max-w-[min(100%,210mm)] bg-white font-serif shadow-none ring-0'
+    : 'despacho-borrador-hoja mx-auto max-w-[min(100%,210mm)] bg-white font-serif shadow-md ring-1 ring-slate-300/80';
+
+  return (
+    <div className={draftBodySlot ? 'sm:px-0' : 'rounded-xl border border-slate-200 bg-slate-200/50 p-3 sm:p-5'}>
+      {draftBodySlot ? null : (
+        <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">Borrador (estilo documento)</p>
+      )}
+      <div className={hojaClassName} style={pad}>
+        <MembreteRichPreview membrete={membrete} embedded />
+        {draftBodySlot ? (
+          <div className="mt-1 text-slate-900" style={fontStyle}>
+            {draftBodySlot}
+          </div>
+        ) : (
+          <>
+            <p className="mb-1.5 mt-1 text-[9px] font-bold uppercase tracking-wide text-slate-400">Cuerpo del documento</p>
+            <textarea
+              value={draft}
+              onChange={(e) => onDraftChange(e.target.value)}
+              readOnly={readOnlyDraft}
+              spellCheck={false}
+              className="despacho-borrador-cuerpo min-h-[min(280px,42vh)] w-full resize-y border-0 bg-transparent text-slate-900 outline-none ring-0 focus:ring-0 disabled:cursor-default disabled:opacity-90"
+              style={fontStyle}
+              aria-label="Cuerpo del borrador"
+            />
+          </>
+        )}
+      </div>
+      {readOnlyDraft ? (
+        <p className="mt-2 text-xs leading-snug text-slate-600">{readOnlyExplanation}</p>
+      ) : draftBodySlot ? null : (
+        <p className="mt-2 text-[11px] leading-snug text-slate-500">
+          Edite aquí el texto; al pulsar <strong className="text-slate-700">Descargar Word</strong> se usará este borrador
+          (modo generado por el sistema). Si cambia plantilla, casillas o datos del caso sin tocar el texto, el borrador se
+          actualiza solo si no lo ha modificado usted.
+        </p>
+      )}
+    </div>
+  );
+}

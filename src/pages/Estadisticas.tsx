@@ -23,8 +23,7 @@ import {
   DECISION_TYPES,
   resolveDerechoTuteladoCodeForInforme,
 } from '../lib/sierju-case-codes';
-
-const COURT_ID = 'court-1';
+import { useSessionCourt } from '../contexts/SessionCourtContext';
 
 /**
  * Bloques del Excel «Movimiento de Tutelas» (SIERJU) vs esta pantalla.
@@ -128,6 +127,7 @@ function inRange(iso: string, from: Date, to: Date): boolean {
 }
 
 export default function Estadisticas() {
+  const { courtId } = useSessionCourt();
   const [cases, setCases] = useState<Case[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -143,7 +143,7 @@ export default function Estadisticas() {
       .select(
         'id,created_at,updated_at,status,derecho_tutelado_code,decision_type,legal_derecho_tutelado,radicado,court_id'
       )
-      .eq('court_id', COURT_ID);
+      .eq('court_id', courtId);
     if (fetchError) {
       setError(fetchError.message);
       setCases([]);
@@ -152,7 +152,7 @@ export default function Estadisticas() {
     }
     setCases((data || []).map((r) => rowToCase(r as Record<string, unknown>)));
     setLoading(false);
-  }, []);
+  }, [courtId]);
 
   useEffect(() => {
     void load();

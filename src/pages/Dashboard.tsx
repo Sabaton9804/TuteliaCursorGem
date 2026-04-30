@@ -1,16 +1,18 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { supabase } from '../lib/supabase';
-import { rowToCase } from '../lib/supabase-mappers';
+import { useQuery } from '@tanstack/react-query';
 import { Clock, AlertTriangle, CheckCircle2, Search } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { formatRadicado } from '../lib/formatters';
 import { buildExpedienteViewRow, type ExpedienteViewRow } from '../lib/expedientes-view-model';
-import { CASE_LIST_COLUMNS } from '../lib/case-list-query';
-import type { Case } from '../types';
+import { courtCasesQueryKey, fetchCourtCasesForList, type CourtCasesOrderColumn } from '../lib/court-cases-query';
+import { useInvalidateCourtCasesOnRealtime } from '../hooks/useCourtCasesRealtime';
+import { useSessionCourt } from '../contexts/SessionCourtContext';
+import { supabase } from '../lib/supabase';
+import { parseSustanciadorAssignmentMode } from '../lib/sustanciador-reparto';
 
-const COURT_ID = 'court-1';
+const DASHBOARD_ORDER: CourtCasesOrderColumn = 'updated_at';
 
 function statusLabelEs(status: string): string {
   const m: Record<string, string> = {
@@ -38,49 +40,40 @@ function semaforoFromRow(row: ExpedienteViewRow) {
 }
 
 export default function Dashboard() {
-  const [cases, setCases] = useState<Case[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { courtId } = useSessionCourt();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const navigate = useNavigate();
 
+  const { data: cases = [], isPending, error } = useQuery({
+    queryKey: courtCasesQueryKey(courtId, DASHBOARD_ORDER),
+    queryFn: () => fetchCourtCasesForList(courtId, DASHBOARD_ORDER),
+  });
+
+  const { data: courtAssignmentMode } = useQuery({
+    queryKey: ['court-sustanciador-mode', courtId],
+    queryFn: async () => {
+      const { data, error: courtModeErr } = await supabase
+        .from('courts')
+        .select('sustanciador_assignment_mode')
+        .eq('id', courtId)
+        .maybeSingle();
+      if (courtModeErr) throw courtModeErr;
+      return parseSustanciadorAssignmentMode(data?.sustanciador_assignment_mode);
+    },
+    enabled: Boolean(courtId),
+  });
+
+  useInvalidateCourtCasesOnRealtime(courtId, 'dashboard');
+
   useEffect(() => {
-    let cancelled = false;
+    if (error) console.error('Supabase Error in Dashboard:', error);
+  }, [error]);
 
-    async function loadCases() {
-      const { data, error } = await supabase
-        .from('cases')
-        .select(CASE_LIST_COLUMNS)
-        .eq('court_id', COURT_ID)
-        .order('updated_at', { ascending: false });
-      if (cancelled) return;
-      if (error) {
-        console.error('Supabase Error in Dashboard:', error);
-        setLoading(false);
-        return;
-      }
-      setCases((data || []).map((r) => rowToCase(r as unknown as Record<string, unknown>)));
-      setLoading(false);
-    }
-
-    void loadCases();
-
-    const channel = supabase
-      .channel(`dashboard-cases-${COURT_ID}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'cases', filter: `court_id=eq.${COURT_ID}` },
-        () => void loadCases()
-      )
-      .subscribe();
-
-    return () => {
-      cancelled = true;
-      void supabase.removeChannel(channel);
-    };
-  }, []);
-
-  const expedienteRows = useMemo(() => cases.map(buildExpedienteViewRow), [cases]);
+  const expedienteRows = useMemo(
+    () => cases.map((c) => buildExpedienteViewRow(c, courtAssignmentMode ?? null)),
+    [cases, courtAssignmentMode],
+  );
 
   const metrics = useMemo(() => {
     const active = cases.filter((c) => c.status !== 'archived').length;
@@ -118,7 +111,7 @@ export default function Dashboard() {
           <div className="text-[10px] font-bold text-accent mt-2 uppercase tracking-wider">Abrir módulo expedientes →</div>
         </Link>
         <Link
-          to="/cases?vista=lista"
+          to="/cases"
           className="card-modern p-6 border-b-4 border-b-red-500 block hover:bg-slate-50/50 transition-colors focus:outline-none focus:ring-2 focus:ring-red-200 rounded-xl"
         >
           <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Términos críticos</div>
@@ -185,7 +178,7 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {loading ? (
+              {isPending ? (
                 <tr>
                   <td colSpan={5} className="p-12 text-center text-sm text-slate-400 animate-pulse font-medium">
                     Consultando expedientes…

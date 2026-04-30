@@ -1,3 +1,13 @@
+/** PostgREST: relación inexistente o no expuesta (p. ej. migración no aplicada en el proyecto). */
+export function isPostgrestTableMissingError(err: unknown, table: string): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const o = err as { code?: string; message?: string };
+  const msg = String(o.message || '').toLowerCase();
+  const t = table.toLowerCase();
+  if (o.code === 'PGRST205' && msg.includes(t)) return true;
+  return msg.includes('schema cache') && msg.includes(t);
+}
+
 /** Mensaje legible aunque Supabase/Auth devuelva objetos que no son `instanceof Error`. */
 export function userFacingSupabaseError(err: unknown): string {
   if (err instanceof Error) return enrichHint(err.message, err);

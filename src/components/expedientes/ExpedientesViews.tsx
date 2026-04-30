@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format, startOfMonth, endOfMonth, isSameDay } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { LayoutGrid, List, CalendarDays } from 'lucide-react';
+import { LayoutGrid, List, CalendarDays, ArrowDown, ArrowUp } from 'lucide-react';
 import { formatRadicado } from '../../lib/formatters';
 import {
   BOARD_STAGE_ORDER,
@@ -50,6 +50,20 @@ function urgencyBorder(u: ExpedienteViewRow['urgency']): string {
   }
 }
 
+/** Borde izquierdo más fino para fichas compactas del tablero. */
+function kanbanUrgencyBorder(u: ExpedienteViewRow['urgency']): string {
+  switch (u) {
+    case 'urgent':
+      return 'border-l-2 border-l-red-400';
+    case 'warn':
+      return 'border-l-2 border-l-amber-400';
+    case 'ok':
+      return 'border-l-2 border-l-emerald-400';
+    default:
+      return 'border-l-2 border-l-slate-200';
+  }
+}
+
 function barFillClass(u: ExpedienteViewRow['urgency']): string {
   switch (u) {
     case 'urgent':
@@ -89,6 +103,65 @@ function daysTextClass(r: ExpedienteViewRow): string {
   return 'text-slate-500';
 }
 
+type ListaSortKey =
+  | 'expediente'
+  | 'estado'
+  | 'derecho'
+  | 'sustanciador'
+  | 'termino'
+  | 'radicacion'
+  | 'dias_habiles';
+
+type ListaSortDir = 'asc' | 'desc';
+
+function stageOrderIndex(stage: BoardStage): number {
+  const i = BOARD_STAGE_ORDER.indexOf(stage);
+  return i < 0 ? 999 : i;
+}
+
+function compareListaRows(a: ExpedienteViewRow, b: ExpedienteViewRow, key: ListaSortKey, dir: ListaSortDir): number {
+  const mul = dir === 'asc' ? 1 : -1;
+  let cmp = 0;
+  switch (key) {
+    case 'expediente':
+      cmp = a.case.radicado.localeCompare(b.case.radicado, 'es');
+      if (cmp === 0) {
+        cmp = `${a.case.claimant}\0${a.case.defendant || ''}`.localeCompare(
+          `${b.case.claimant}\0${b.case.defendant || ''}`,
+          'es',
+          { sensitivity: 'base' }
+        );
+      }
+      break;
+    case 'estado':
+      cmp = stageOrderIndex(a.stage) - stageOrderIndex(b.stage);
+      break;
+    case 'derecho':
+      cmp = a.derechoTag.localeCompare(b.derechoTag, 'es', { sensitivity: 'base' });
+      break;
+    case 'sustanciador':
+      cmp = a.assignee.name.localeCompare(b.assignee.name, 'es', { sensitivity: 'base' });
+      break;
+    case 'termino':
+      cmp = a.termProgressPercent - b.termProgressPercent;
+      if (cmp === 0) cmp = a.deadlineDate.getTime() - b.deadlineDate.getTime();
+      break;
+    case 'radicacion':
+      cmp = a.filingDate.getTime() - b.filingDate.getTime();
+      break;
+    case 'dias_habiles':
+      cmp = a.businessDaysRemaining - b.businessDaysRemaining;
+      break;
+    default:
+      break;
+  }
+  if (cmp !== 0) return cmp * mul;
+  return a.case.radicado.localeCompare(b.case.radicado, 'es');
+}
+
+const LISTA_GRID_COLS =
+  'minmax(160px,1.1fr) 110px minmax(120px,1fr) 120px minmax(72px,0.7fr) 72px 52px' as const;
+
 export interface ExpedientesViewsProps {
   rows: ExpedienteViewRow[];
   view: ExpedientesViewMode;
@@ -120,6 +193,8 @@ export default function ExpedientesViews({
 }: ExpedientesViewsProps) {
   const navigate = useNavigate();
   const [month, setMonth] = useState(() => startOfLocalDay(new Date()));
+  const [listaSortKey, setListaSortKey] = useState<ListaSortKey>('dias_habiles');
+  const [listaSortDir, setListaSortDir] = useState<ListaSortDir>('asc');
 
   const byStage = useMemo(() => {
     const m = new Map<BoardStage, ExpedienteViewRow[]>();
@@ -133,14 +208,18 @@ export default function ExpedientesViews({
 
   const sortedListRows = useMemo(() => {
     const copy = [...rows];
-    copy.sort((a, b) => {
-      if (a.businessDaysRemaining !== b.businessDaysRemaining) {
-        return a.businessDaysRemaining - b.businessDaysRemaining;
-      }
-      return a.case.radicado.localeCompare(b.case.radicado);
-    });
+    copy.sort((a, b) => compareListaRows(a, b, listaSortKey, listaSortDir));
     return copy;
-  }, [rows]);
+  }, [rows, listaSortKey, listaSortDir]);
+
+  const onListaHeaderClick = (key: ListaSortKey) => {
+    if (listaSortKey === key) {
+      setListaSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setListaSortKey(key);
+      setListaSortDir('asc');
+    }
+  };
 
   const calCells = useMemo(() => buildCalendarGrid(month), [month]);
   const eventsByDay = useMemo(() => {
@@ -162,8 +241,8 @@ export default function ExpedientesViews({
         <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50/80 p-0.5 shadow-sm">
           {(
             [
-              { id: 'kanban' as const, label: 'Tablero', Icon: LayoutGrid },
               { id: 'lista' as const, label: 'Lista', Icon: List },
+              { id: 'kanban' as const, label: 'Tablero', Icon: LayoutGrid },
               { id: 'calendario' as const, label: 'Calendario', Icon: CalendarDays },
             ] as const
           ).map(({ id, label, Icon }) => (
@@ -258,34 +337,49 @@ export default function ExpedientesViews({
         ) : rows.length === 0 ? (
           <div className="py-20 text-center text-sm text-slate-500">No hay expedientes con estos filtros.</div>
         ) : view === 'kanban' ? (
-          <div className="flex gap-2.5 p-4 overflow-x-auto pb-5">
+          <div className="flex gap-2 p-3 overflow-x-auto pb-4">
             {BOARD_STAGE_ORDER.map((stage) => {
               const list = byStage.get(stage) || [];
               return (
-                <div key={stage} className="min-w-[158px] flex flex-col gap-2 shrink-0">
+                <div key={stage} className="min-w-[128px] max-w-[152px] flex flex-col gap-1.5 shrink-0">
                   <div
                     className={clsx(
-                      'rounded-lg border px-2 py-1.5 mb-0.5',
+                      'rounded-md border px-1.5 py-1 mb-0.5',
                       columnHeadClass(stage)
                     )}
                   >
-                    <div className="text-[11px] font-semibold text-slate-800">{stageLabel(stage)}</div>
-                    <div className="text-[9px] text-slate-400 font-medium">{list.length}</div>
+                    <div className="text-[10px] font-semibold text-slate-800 leading-tight">{stageLabel(stage)}</div>
+                    <div className="text-[8px] text-slate-400 font-medium tabular-nums">{list.length}</div>
                   </div>
                   {list.map((r) => (
                     <button
                       key={r.case.id}
                       type="button"
                       onClick={() => openCase(r.case.id)}
+                      title={`${r.case.claimant} vs ${r.case.defendant || '—'} — ${r.derechoTag}`}
                       className={clsx(
-                        'text-left rounded-lg border border-slate-200 bg-white p-2.5 shadow-sm hover:border-slate-300 hover:shadow transition-all',
-                        urgencyBorder(r.urgency)
+                        'text-left rounded-md border border-slate-200/90 bg-white px-2 py-1.5 shadow-sm hover:border-slate-300 hover:shadow-sm transition-all',
+                        kanbanUrgencyBorder(r.urgency)
                       )}
                     >
-                      <div className="text-[9px] text-slate-400 font-mono truncate mb-0.5">
-                        {formatRadicado(r.case.radicado)}
+                      <div className="flex items-start justify-between gap-1 mb-0.5">
+                        <div className="text-[8px] text-slate-400 font-mono truncate leading-tight min-w-0 flex-1">
+                          {formatRadicado(r.case.radicado)}
+                        </div>
+                        <span
+                          className={clsx(
+                            'inline-flex w-5 h-5 shrink-0 items-center justify-center rounded-full text-[7px] font-bold ring-1',
+                            r.assignee.bg,
+                            r.assignee.text,
+                            r.assignee.ring
+                          )}
+                          title={r.assignee.name}
+                          aria-hidden
+                        >
+                          {r.assignee.initials}
+                        </span>
                       </div>
-                      <div className="text-[11px] font-semibold text-slate-800 leading-snug line-clamp-2 mb-1">
+                      <div className="text-[10px] font-semibold text-slate-800 leading-tight line-clamp-2 mb-0.5">
                         {r.case.claimant}
                         <span className="text-slate-400 font-normal"> vs </span>
                         {r.case.defendant || '—'}
@@ -293,38 +387,27 @@ export default function ExpedientesViews({
                       <span
                         title={derechoTooltip(r)}
                         className={clsx(
-                          'inline-block max-w-full text-[9px] px-1.5 py-0.5 rounded font-medium leading-snug line-clamp-2',
+                          'inline-block max-w-full text-[8px] px-1 py-px rounded font-medium leading-tight line-clamp-1 mb-1',
                           derechoPillClass(r.derechoTag)
                         )}
                       >
                         {r.derechoTag}
                       </span>
-                      <div className="flex items-center gap-1.5 mt-1.5">
-                        <div className="flex-1 h-[3px] bg-slate-100 rounded overflow-hidden">
+                      <div className="flex items-center gap-1">
+                        <div className="flex-1 h-0.5 bg-slate-100 rounded-full overflow-hidden">
                           <div
-                            className={clsx('h-full rounded', barFillClass(r.urgency))}
+                            className={clsx('h-full rounded-full', barFillClass(r.urgency))}
                             style={{ width: `${r.termProgressPercent}%` }}
                           />
                         </div>
-                        <span className={clsx('text-[9px] font-semibold tabular-nums shrink-0', daysTextClass(r))}>
-                          {daysLabel(r)}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between mt-1.5">
                         <span
                           className={clsx(
-                            'inline-flex w-6 h-6 items-center justify-center rounded-full text-[8px] font-bold ring-1',
-                            r.assignee.bg,
-                            r.assignee.text,
-                            r.assignee.ring
+                            'text-[8px] font-semibold tabular-nums shrink-0 min-w-[2.5rem] text-right leading-none',
+                            daysTextClass(r)
                           )}
-                          title={r.assignee.name}
                         >
-                          {r.assignee.initials}
+                          {daysLabel(r)}
                         </span>
-                        {r.urgency === 'urgent' && r.stage !== 'archivado' && r.stage !== 'fallo_notificado' && (
-                          <span className="text-[8px] font-bold text-red-500">Urgente</span>
-                        )}
                       </div>
                     </button>
                   ))}
@@ -335,18 +418,45 @@ export default function ExpedientesViews({
         ) : view === 'lista' ? (
           <div className="p-4 overflow-x-auto">
             <div
-              className="grid gap-2 px-2 py-1.5 text-[9px] font-bold text-slate-400 uppercase tracking-wider min-w-[720px]"
-              style={{
-                gridTemplateColumns: 'minmax(160px,1.1fr) 110px minmax(120px,1fr) 120px minmax(72px,0.7fr) 72px 52px',
-              }}
+              className="grid gap-2 px-2 py-1.5 text-[9px] font-bold text-slate-500 uppercase tracking-wider min-w-[720px] items-center"
+              style={{ gridTemplateColumns: LISTA_GRID_COLS }}
             >
-              <div>Expediente / partes</div>
-              <div>Estado</div>
-              <div>Derecho tutelado</div>
-              <div>Sustanciador</div>
-              <div>Término (10d háb.)</div>
-              <div>Radicación</div>
-              <div>Días háb.</div>
+              {(
+                [
+                  { key: 'expediente' as const, label: 'Expediente / partes' },
+                  { key: 'estado' as const, label: 'Estado' },
+                  { key: 'derecho' as const, label: 'Derecho tutelado' },
+                  { key: 'sustanciador' as const, label: 'Sustanciador' },
+                  { key: 'termino' as const, label: 'Término (10d háb.)' },
+                  { key: 'radicacion' as const, label: 'Radicación' },
+                  { key: 'dias_habiles' as const, label: 'Días háb.' },
+                ] as const
+              ).map(({ key, label }) => {
+                const active = listaSortKey === key;
+                const ariaSort = active ? (listaSortDir === 'asc' ? 'ascending' : 'descending') : 'none';
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => onListaHeaderClick(key)}
+                    className={clsx(
+                      'flex items-center gap-0.5 text-left min-w-0 rounded px-1 py-0.5 -mx-1 transition-colors',
+                      'hover:text-slate-800 hover:bg-slate-100/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40',
+                      active ? 'text-slate-800' : 'text-slate-400'
+                    )}
+                    aria-sort={ariaSort}
+                  >
+                    <span className="truncate">{label}</span>
+                    {active ? (
+                      listaSortDir === 'asc' ? (
+                        <ArrowUp className="w-3 h-3 shrink-0 text-accent" aria-hidden />
+                      ) : (
+                        <ArrowDown className="w-3 h-3 shrink-0 text-accent" aria-hidden />
+                      )
+                    ) : null}
+                  </button>
+                );
+              })}
             </div>
             {sortedListRows.map((r) => (
               <button
@@ -357,9 +467,7 @@ export default function ExpedientesViews({
                   'grid gap-2 px-2 py-2 rounded-lg border border-slate-200 bg-white text-left hover:border-slate-300 transition-colors min-w-[720px] w-full mb-1.5',
                   urgencyBorder(r.urgency)
                 )}
-                style={{
-                  gridTemplateColumns: 'minmax(160px,1.1fr) 110px minmax(120px,1fr) 120px minmax(72px,0.7fr) 72px 52px',
-                }}
+                style={{ gridTemplateColumns: LISTA_GRID_COLS }}
               >
                 <div className="min-w-0">
                   <div className="text-xs font-semibold text-slate-800 truncate">

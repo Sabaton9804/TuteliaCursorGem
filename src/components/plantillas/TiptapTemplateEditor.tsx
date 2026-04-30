@@ -1,10 +1,31 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
+import React, {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
-import Placeholder from '@tiptap/extension-placeholder';
-import { Bold, Italic, List, ListOrdered, Heading3 } from 'lucide-react';
-import { ExpedienteVariable } from '../../lib/tiptap-expediente-variable';
-import { docToStorage, parseStorageToDoc } from '../../lib/tiptap-template-storage';
+import {
+  AlignCenter,
+  AlignJustify,
+  AlignLeft,
+  AlignRight,
+  Bold,
+  Heading3,
+  Italic,
+  List,
+  ListOrdered,
+} from 'lucide-react';
+import { buildPlantillaBodyExtensions } from '../../lib/tiptap-plantilla-editor-extensions';
+import {
+  docToStorage,
+  parseStorageToDoc,
+  type ParseStorageOptions,
+} from '../../lib/tiptap-template-storage';
 
 export type TiptapTemplateEditorHandle = {
   insertVariable: (key: string) => void;
@@ -18,43 +39,90 @@ type Props = {
   placeholder?: string;
   disabled?: boolean;
   minHeightClass?: string;
+  /** Informe de ingreso: justificado por defecto en el párrafo «En la fecha…» si la plantilla no define alineación. */
+  parseInformeBodyDefaults?: boolean;
 };
 
 export const TiptapTemplateEditor = forwardRef<TiptapTemplateEditorHandle, Props>(
   function TiptapTemplateEditorInner(
-    { value, onChange, resolveLabel, placeholder, disabled, minHeightClass = 'min-h-[14rem]' },
+    {
+      value,
+      onChange,
+      resolveLabel,
+      placeholder,
+      disabled,
+      minHeightClass = 'min-h-[14rem]',
+      parseInformeBodyDefaults = false,
+    },
     ref,
   ) {
-    const editor = useEditor({
-      extensions: [
-        StarterKit.configure({
-          heading: { levels: [3, 4] },
-        }),
-        ExpedienteVariable.configure({ resolveLabel }),
-        Placeholder.configure({
+    const valueRef = useRef(value);
+    const onChangeRef = useRef(onChange);
+    valueRef.current = value;
+    onChangeRef.current = onChange;
+
+    const parseOpts = useMemo((): ParseStorageOptions | undefined => {
+      if (!parseInformeBodyDefaults) return undefined;
+      return { informeCuerpoJustifyDefecto: true };
+    }, [parseInformeBodyDefaults]);
+
+    const canonicalDocStorage = useCallback((raw: string) => {
+      try {
+        return docToStorage(parseStorageToDoc(raw, parseOpts));
+      } catch {
+        return raw;
+      }
+    }, [parseOpts]);
+    const canonicalRef = useRef(canonicalDocStorage);
+    canonicalRef.current = canonicalDocStorage;
+
+    const extensions = useMemo(
+      () =>
+        buildPlantillaBodyExtensions(resolveLabel, {
           placeholder: placeholder ?? 'Escriba el documento…',
         }),
-      ],
-      content: parseStorageToDoc(value),
-      editable: !disabled,
-      editorProps: {
-        attributes: {
-          class: `tiptap-template-focus ${minHeightClass} px-3 py-2 text-sm leading-relaxed text-slate-900 outline-none`,
+      [resolveLabel, placeholder],
+    );
+
+    /**
+     * No pasar `content` al crear el editor: el primer `onUpdate` puede dispararse antes de que el padre
+     * haya inyectado el borrador y vaciaba `informeDraft` en expediente (y `informeDraftTouchedRef` quedaba en true).
+     * Sincronizamos con `setContent(..., { emitUpdate: false })` en layout; `onUpdate` solo refleja edición real.
+     * `useEditor` no recrea el callback en cada render: usamos refs para `value` / `onChange`.
+     */
+    const syncReadyRef = useRef(false);
+
+    const editor = useEditor(
+      {
+        extensions,
+        editable: !disabled,
+        immediatelyRender: false,
+        editorProps: {
+          attributes: {
+            class: `tiptap-template-focus ${minHeightClass} px-0 py-1 text-sm leading-relaxed text-slate-900 outline-none`,
+          },
+        },
+        onUpdate: ({ editor: ed }) => {
+          if (!syncReadyRef.current) return;
+          const serialized = docToStorage(ed.getJSON());
+          if (serialized === canonicalRef.current(valueRef.current)) return;
+          onChangeRef.current(serialized);
         },
       },
-      onUpdate: ({ editor: ed }) => {
-        onChange(docToStorage(ed.getJSON()));
-      },
-    });
+      [extensions, disabled, minHeightClass],
+    );
 
-    useEffect(() => {
+    useLayoutEffect(() => {
+      syncReadyRef.current = false;
       if (!editor || editor.isDestroyed) return;
-      const next = parseStorageToDoc(value);
-      const cur = editor.getJSON();
-      if (JSON.stringify(cur) !== JSON.stringify(next)) {
+      const next = parseStorageToDoc(value, parseOpts);
+      const target = canonicalDocStorage(value);
+      const current = docToStorage(editor.getJSON());
+      if (current !== target) {
         editor.commands.setContent(next, { emitUpdate: false });
       }
-    }, [value, editor]);
+      syncReadyRef.current = true;
+    }, [value, editor, parseOpts, canonicalDocStorage]);
 
     useImperativeHandle(
       ref,
@@ -70,9 +138,7 @@ export const TiptapTemplateEditor = forwardRef<TiptapTemplateEditorHandle, Props
     );
 
     return (
-      <div
-        className={`overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm ${disabled ? 'opacity-60' : ''}`}
-      >
+      <div className={`bg-transparent ${disabled ? 'opacity-60' : ''}`}>
         <EditorToolbar editor={editor} disabled={disabled} />
         <EditorContent editor={editor} className={`tiptap-template-editor ${minHeightClass} max-w-none`} />
       </div>
@@ -96,14 +162,14 @@ function EditorToolbar({ editor, disabled }: { editor: Editor | null; disabled?:
   }, [editor]);
 
   if (!editor) {
-    return <div className="h-10 border-b border-slate-100 bg-slate-50" aria-hidden />;
+    return <div className="h-9 border-b border-slate-200/30 bg-transparent" aria-hidden />;
   }
   const btn = (active: boolean) =>
     `rounded-md px-2 py-1.5 text-[11px] font-bold uppercase tracking-wide transition ${
-      active ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+      active ? 'bg-slate-200/50 text-slate-900' : 'text-slate-600 hover:bg-slate-100/60'
     } disabled:opacity-40`;
   return (
-    <div className="flex flex-wrap items-center gap-1 border-b border-slate-200 bg-slate-50/90 px-2 py-1.5">
+    <div className="flex flex-wrap items-center gap-1 border-b border-slate-200/40 bg-transparent px-0 py-1.5">
       <span className="mr-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">Formato</span>
       <button
         type="button"
@@ -123,6 +189,44 @@ function EditorToolbar({ editor, disabled }: { editor: Editor | null; disabled?:
       >
         <Italic className="mx-0.5 h-3.5 w-3.5" />
       </button>
+      <span className="mx-0.5 h-4 w-px shrink-0 self-center bg-slate-200" aria-hidden />
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => editor.chain().focus().setTextAlign('left').run()}
+        className={btn(editor.isActive({ textAlign: 'left' }))}
+        title="Alinear a la izquierda"
+      >
+        <AlignLeft className="mx-0.5 h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => editor.chain().focus().setTextAlign('center').run()}
+        className={btn(editor.isActive({ textAlign: 'center' }))}
+        title="Centrar"
+      >
+        <AlignCenter className="mx-0.5 h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => editor.chain().focus().setTextAlign('right').run()}
+        className={btn(editor.isActive({ textAlign: 'right' }))}
+        title="Alinear a la derecha"
+      >
+        <AlignRight className="mx-0.5 h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => editor.chain().focus().setTextAlign('justify').run()}
+        className={btn(editor.isActive({ textAlign: 'justify' }))}
+        title="Justificar"
+      >
+        <AlignJustify className="mx-0.5 h-3.5 w-3.5" />
+      </button>
+      <span className="mx-0.5 h-4 w-px shrink-0 self-center bg-slate-200" aria-hidden />
       <button
         type="button"
         disabled={disabled}

@@ -15,15 +15,31 @@ export const CASE_DOCUMENTS_BUCKET = 'case-documents';
  */
 export const CASE_DOCUMENT_SIGNED_URL_TTL_SEC = 30 * 60;
 
+/**
+ * Nombre lógico para `case_documents` / Storage: mismo criterio que la ruta del objeto (sin barras, longitud acotada).
+ * Añade `.pdf` si falta. Si tras sanear queda vacío, usa `fallback`.
+ */
+export function sanitizeCaseDocumentLogicalName(raw: string, fallback: string): string {
+  const fb = (fallback || 'documento.pdf').trim() || 'documento.pdf';
+  let t = (raw || '').trim();
+  if (!t) return fb.endsWith('.pdf') ? fb : `${fb.replace(/\.+$/, '')}.pdf`;
+  if (!/\.pdf$/i.test(t)) t = `${t.replace(/\.+$/, '')}.pdf`;
+  const safe = t
+    .replace(/[/\\]+/g, '_')
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '')
+    .slice(0, 120);
+  const out = safe.toLowerCase().endsWith('.pdf') ? safe : `${safe}.pdf`;
+  return out || (fb.toLowerCase().endsWith('.pdf') ? fb : `${fb}.pdf`);
+}
+
 export function buildCaseAttachmentObjectPath(caseId: string, logicalName: string): string {
   const id =
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-  const safe = (logicalName || 'documento')
-    .replace(/[/\\]+/g, '_')
-    .replace(/[^a-zA-Z0-9._-]+/g, '_')
-    .slice(0, 120) || 'documento';
+  const safe = sanitizeCaseDocumentLogicalName(logicalName, 'documento.pdf');
   return `cases/${caseId}/${id}_${safe}`;
 }
 
@@ -94,4 +110,22 @@ export async function insertCaseDocumentRows(
     return supabase.from('case_documents').insert(caseDocumentRowsWithoutNotebookCode(rows));
   }
   return first;
+}
+
+/** Inserta una fila y devuelve su `id` (p. ej. informe de ingreso al expediente). */
+export async function insertCaseDocumentRowReturningId(
+  supabase: SupabaseClient,
+  row: Record<string, unknown>
+): Promise<{ id: string }> {
+  const first = await supabase.from('case_documents').insert([row]).select('id').maybeSingle();
+  if (first.error && isMissingCaseDocumentsNotebookColumnError(first.error)) {
+    const fallbackRows = caseDocumentRowsWithoutNotebookCode([row]);
+    const second = await supabase.from('case_documents').insert(fallbackRows).select('id').maybeSingle();
+    if (second.error) throw second.error;
+    if (!second.data?.id) throw new Error('No se obtuvo id de case_documents tras insertar.');
+    return { id: String(second.data.id) };
+  }
+  if (first.error) throw first.error;
+  if (!first.data?.id) throw new Error('No se obtuvo id de case_documents tras insertar.');
+  return { id: String(first.data.id) };
 }

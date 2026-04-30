@@ -1,10 +1,16 @@
 import { supabase } from './supabase';
 import type {
+  Document,
   DocumentTemplate,
   DocumentTemplateCategoria,
+  DocumentTemplatePageLayout,
   DocumentTemplateTipo,
   DocumentTemplateToggleDef,
 } from '../types';
+import { mergePageLayout } from './document-template-page-layout';
+import { insertCaseDocumentRowReturningId, uploadCaseAttachment } from './case-document-storage';
+import { DEFAULT_NOTEBOOK_CODE } from './expediente-notebook';
+import { nextSortOrderInPrincipalNotebook } from './expediente-document-order';
 import { ensureSupabaseSessionForWrites } from './supabase-write-auth';
 import { userFacingSupabaseError } from './supabase-user-error';
 
@@ -67,6 +73,10 @@ function rowToTemplate(row: Record<string, unknown>): DocumentTemplate {
         ? String(row.docx_storage_path)
         : null,
     docxMapeo,
+    pageLayout:
+      row.page_layout != null && typeof row.page_layout === 'object'
+        ? mergePageLayout(row.page_layout as DocumentTemplatePageLayout)
+        : null,
   };
 }
 
@@ -128,6 +138,7 @@ export async function updateDocumentTemplate(
       | 'docxStoragePath'
       | 'docxMapeo'
       | 'toggleDefs'
+      | 'pageLayout'
     >
   >,
 ): Promise<{ id: string; contenidoBase: string | null }> {
@@ -151,6 +162,9 @@ export async function updateDocumentTemplate(
   }
   if (patch.toggleDefs !== undefined) {
     row.template_toggles = patch.toggleDefs;
+  }
+  if (patch.pageLayout !== undefined) {
+    row.page_layout = patch.pageLayout;
   }
   row.updated_at = new Date().toISOString();
   const { data, error } = await supabase
@@ -182,14 +196,40 @@ export async function updateDocumentTemplate(
   return { id, contenidoBase: persistedNormalized };
 }
 
-export async function updateCaseInformeIngresoRegistrado(caseId: string, registrado: boolean): Promise<void> {
+/** Sube el PDF del informe al expediente (cuaderno principal, al final del orden) y marca el caso. */
+export async function registerCaseInformeIngresoWithExpedientePdf(opts: {
+  caseId: string;
+  pdfBytes: Uint8Array;
+  displayName: string;
+  docs: Document[];
+}): Promise<void> {
   await ensureSupabaseSessionForWrites();
+  const sortOrder = nextSortOrderInPrincipalNotebook(opts.docs);
+  const up = await uploadCaseAttachment(supabase, opts.caseId, opts.displayName, opts.pdfBytes, 'application/pdf');
+  if ('error' in up) throw up.error;
+
+  const row: Record<string, unknown> = {
+    case_id: opts.caseId,
+    name: opts.displayName,
+    original_name: opts.displayName,
+    type: 'informe_ingreso_expediente',
+    content_type: 'application/pdf',
+    size: opts.pdfBytes.byteLength,
+    storage_path: up.path,
+    is_from_link: false,
+    sort_order: sortOrder,
+    notebook_code: DEFAULT_NOTEBOOK_CODE,
+  };
+
+  const { id: documentId } = await insertCaseDocumentRowReturningId(supabase, row);
+  const now = new Date().toISOString();
   const { error } = await supabase
     .from('cases')
     .update({
-      informe_ingreso_registrado_at: registrado ? new Date().toISOString() : null,
-      updated_at: new Date().toISOString(),
+      informe_ingreso_registrado_at: now,
+      informe_ingreso_document_id: documentId,
+      updated_at: now,
     })
-    .eq('id', caseId);
+    .eq('id', opts.caseId);
   if (error) throw error;
 }

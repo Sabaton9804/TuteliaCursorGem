@@ -1,16 +1,22 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Search, PlusCircle, Gavel, Inbox, ArrowUpDown, Filter } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { rowToCase, rowToUserProfile } from '../lib/supabase-mappers';
-import type { Case, CaseStatus, UserProfile } from '../types';
+import { rowToUserProfile } from '../lib/supabase-mappers';
+import type { CaseStatus, UserProfile } from '../types';
 import ExpedientesViews, { type ExpedientesViewMode } from '../components/expedientes/ExpedientesViews';
 import { buildExpedienteViewRow } from '../lib/expedientes-view-model';
 import { assignedToMatchesProfile, SUSTANCIADORES } from '../lib/court-staff-assignees';
 import { intentFreshNewCaseFromMenu } from '../lib/new-case-nav';
-import { CASE_LIST_COLUMNS } from '../lib/case-list-query';
-
-const COURT_ID = 'court-1';
+import {
+  courtCasesQueryKey,
+  fetchCourtCasesForList,
+  casesListSortToOrderColumn,
+} from '../lib/court-cases-query';
+import { useInvalidateCourtCasesOnRealtime } from '../hooks/useCourtCasesRealtime';
+import { useSessionCourt } from '../contexts/SessionCourtContext';
+import { parseSustanciadorAssignmentMode } from '../lib/sustanciador-reparto';
 
 const STATUS_OPTIONS: { value: CaseStatus | 'all'; label: string }[] = [
   { value: 'all', label: 'Todos los estados' },
@@ -43,8 +49,8 @@ function parseSortParam(v: string | null): SortKey {
 }
 
 function parseViewParam(v: string | null): ExpedientesViewMode {
-  if (v === 'lista' || v === 'calendario') return v;
-  return 'kanban';
+  if (v === 'kanban' || v === 'calendario') return v;
+  return 'lista';
 }
 
 const ASSIGNEE_SELECT_OPTIONS = SUSTANCIADORES.map((a) => ({
@@ -53,10 +59,9 @@ const ASSIGNEE_SELECT_OPTIONS = SUSTANCIADORES.map((a) => ({
 }));
 
 export default function CasesList() {
+  const { courtId } = useSessionCourt();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [cases, setCases] = useState<Case[]>([]);
-  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState(() => searchParams.get('q') || '');
   const [statusFilter, setStatusFilter] = useState<CaseStatus | 'all'>(() => parseStatusParam(searchParams.get('status')));
   const [sortBy, setSortBy] = useState<SortKey>(() => parseSortParam(searchParams.get('sort')));
@@ -102,50 +107,36 @@ export default function CasesList() {
     if (searchTerm.trim()) next.set('q', searchTerm.trim());
     if (statusFilter !== 'all') next.set('status', statusFilter);
     if (sortBy !== 'updated') next.set('sort', sortBy);
-    if (view !== 'kanban') next.set('vista', view);
+    if (view !== 'lista') next.set('vista', view);
     setSearchParams(next, { replace: true });
   }, [searchTerm, statusFilter, sortBy, view, setSearchParams]);
 
+  const orderCol = useMemo(() => casesListSortToOrderColumn(sortBy), [sortBy]);
+
+  const { data: cases = [], isPending, error } = useQuery({
+    queryKey: courtCasesQueryKey(courtId, orderCol),
+    queryFn: () => fetchCourtCasesForList(courtId, orderCol),
+  });
+
+  const { data: courtAssignmentMode } = useQuery({
+    queryKey: ['court-sustanciador-mode', courtId],
+    queryFn: async () => {
+      const { data, error: courtModeErr } = await supabase
+        .from('courts')
+        .select('sustanciador_assignment_mode')
+        .eq('id', courtId)
+        .maybeSingle();
+      if (courtModeErr) throw courtModeErr;
+      return parseSustanciadorAssignmentMode(data?.sustanciador_assignment_mode);
+    },
+    enabled: Boolean(courtId),
+  });
+
+  useInvalidateCourtCasesOnRealtime(courtId, 'list');
+
   useEffect(() => {
-    let cancelled = false;
-
-    async function loadCases() {
-      setLoading(true);
-      const col =
-        sortBy === 'created' ? 'created_at' : sortBy === 'radicado' ? 'radicado' : 'updated_at';
-      const { data, error } = await supabase
-        .from('cases')
-        .select(CASE_LIST_COLUMNS)
-        .eq('court_id', COURT_ID)
-        .order(col, { ascending: false });
-
-      if (cancelled) return;
-      if (error) {
-        console.error('CasesList Supabase:', error);
-        setCases([]);
-        setLoading(false);
-        return;
-      }
-      setCases((data || []).map((r) => rowToCase(r as unknown as Record<string, unknown>)));
-      setLoading(false);
-    }
-
-    void loadCases();
-
-    const channel = supabase
-      .channel(`cases-list-${COURT_ID}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'cases', filter: `court_id=eq.${COURT_ID}` },
-        () => void loadCases()
-      )
-      .subscribe();
-
-    return () => {
-      cancelled = true;
-      void supabase.removeChannel(channel);
-    };
-  }, [sortBy]);
+    if (error) console.error('CasesList Supabase:', error);
+  }, [error]);
 
   const filteredCases = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
@@ -163,7 +154,10 @@ export default function CasesList() {
     });
   }, [cases, searchTerm, statusFilter]);
 
-  const enrichedBase = useMemo(() => filteredCases.map(buildExpedienteViewRow), [filteredCases]);
+  const enrichedBase = useMemo(
+    () => filteredCases.map((c) => buildExpedienteViewRow(c, courtAssignmentMode ?? null)),
+    [filteredCases, courtAssignmentMode],
+  );
 
   const derechoOptions = useMemo(
     () => Array.from(new Set(enrichedBase.map((e) => e.derechoTag))).sort(),
@@ -204,8 +198,9 @@ export default function CasesList() {
           <h1 className="text-3xl font-bold tracking-tight text-slate-900">Expedientes</h1>
           <p className="text-sm text-slate-500 mt-2 max-w-xl">
             Tablero, lista y calendario con término de <strong className="text-slate-700">10 días hábiles</strong>{' '}
-            desde radicación (lun–vie). Sustanciador por defecto (Diego / Myriam) si el expediente no tiene{' '}
-            <span className="font-mono text-slate-600">assigned_to</span>; «Mis asignadas» usa ese campo y su perfil.
+            desde radicación (lun–vie). El sustanciador se persiste en{' '}
+            <span className="font-mono text-slate-600">assigned_to</span> según la regla del juzgado (Configuración);
+            «Mis asignadas» usa ese campo y su perfil.
           </p>
         </div>
         <Link
@@ -279,7 +274,7 @@ export default function CasesList() {
         </div>
       </div>
 
-      {filteredCases.length === 0 && !loading ? (
+      {filteredCases.length === 0 && !isPending ? (
         <div className="card-modern p-16 text-center">
           <Inbox className="w-10 h-10 text-slate-200 mx-auto mb-3" />
           <p className="text-sm font-semibold text-slate-600">No hay expedientes que coincidan</p>
@@ -309,7 +304,7 @@ export default function CasesList() {
           onDerechoFilter={setDerechoFilter}
           assigneeOptions={ASSIGNEE_SELECT_OPTIONS}
           derechoOptions={derechoOptions}
-          loading={loading}
+          loading={isPending}
         />
       )}
 
@@ -318,8 +313,8 @@ export default function CasesList() {
         se infiere de <span className="font-mono">status</span> y, si existe,{' '}
         <span className="font-mono">operational_status</span>. El derecho tutelado en vista viene de{' '}
         <span className="font-mono">legal_derecho_tutelado</span>. Asignación:{' '}
-        <span className="font-mono">assigned_to</span> (nombre o correo del despacho); si está vacío, reparto entre los
-        dos sustanciadores (Diego Guarín / Myriam Fonseca).
+        <span className="font-mono">assigned_to</span>. La regla al radicar (hash, par/impar del radicado, una y una o
+        manual) se define en Configuración del sistema por juzgado.
       </p>
     </div>
   );

@@ -1,6 +1,7 @@
-import type { Case, CaseStatus } from '../types';
+import type { Case, CaseStatus, SustanciadorAssignmentMode } from '../types';
 import {
   businessDaysRemainingInTenDayWindow,
+  businessDaysRemainingWithStoredDeadline,
   startOfLocalDay,
   tenthBusinessDayDeadline,
 } from './business-days';
@@ -125,13 +126,22 @@ export interface ExpedienteViewRow {
   termProgressPercent: number;
 }
 
-export function buildExpedienteViewRow(c: Case): ExpedienteViewRow {
+export function buildExpedienteViewRow(
+  c: Case,
+  courtAssignmentMode?: SustanciadorAssignmentMode | null
+): ExpedienteViewRow {
   const filingDate = startOfLocalDay(new Date(c.createdAt));
-  const deadlineDate = tenthBusinessDayDeadline(filingDate);
-  const remaining = businessDaysRemainingInTenDayWindow(filingDate);
+  const storedDeadline =
+    c.deadlineAt?.trim() && !Number.isNaN(Date.parse(c.deadlineAt))
+      ? startOfLocalDay(new Date(c.deadlineAt))
+      : null;
+  const deadlineDate = storedDeadline ?? tenthBusinessDayDeadline(filingDate);
+  const remaining = storedDeadline
+    ? businessDaysRemainingWithStoredDeadline(filingDate, storedDeadline)
+    : businessDaysRemainingInTenDayWindow(filingDate);
   const stage = caseToBoardStage(c);
   const urgency = urgencyFromRemainingBusinessDays(remaining, c.status, stage);
-  const assignee = resolveAssigneeForCase(c.assignedTo, c.id);
+  const assignee = resolveAssigneeForCase(c.assignedTo, c.id, courtAssignmentMode);
   const derechoTag = derechoTuteladoDisplay(c);
 
   let termProgressPercent = Math.min(

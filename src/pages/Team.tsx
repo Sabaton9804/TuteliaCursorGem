@@ -5,8 +5,7 @@ import { DESPACHO_STAFF } from '../lib/court-staff-assignees';
 import { rowToUserProfile } from '../lib/supabase-mappers';
 import { userRoleLabelEs } from '../lib/user-roles';
 import type { UserProfile, UserRole } from '../types';
-
-const DEFAULT_COURT_ID = 'court-1';
+import { useSessionCourt } from '../contexts/SessionCourtContext';
 
 /** Orden de filas: juez → secretario(a) → sustanciador(a) → escribiente → asistente; otros al final. */
 function hierarchyRank(role: UserRole): number {
@@ -79,6 +78,7 @@ function mergeDirectoryAndProfiles(
 }
 
 export default function Team() {
+  const { courtId: sessionCourtId } = useSessionCourt();
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [courtName, setCourtName] = useState<string | null>(null);
   const [dbMembers, setDbMembers] = useState<UserProfile[]>([]);
@@ -101,14 +101,14 @@ export default function Team() {
       if (cancelled) return;
       setAuthUserId(uid);
 
-      let courtId = DEFAULT_COURT_ID;
+      let courtId = sessionCourtId;
       let members: UserProfile[] = [];
 
       if (uid) {
         const { data: meRow, error: meErr } = await supabase.from('profiles').select('*').eq('id', uid).maybeSingle();
         if (cancelled) return;
         if (!meErr && meRow) {
-          courtId = rowToUserProfile(meRow as Record<string, unknown>).courtId;
+          courtId = rowToUserProfile(meRow as Record<string, unknown>).courtId.trim() || sessionCourtId;
         }
         if (meErr) {
           setError(
@@ -148,7 +148,7 @@ export default function Team() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [sessionCourtId]);
 
   return (
     <div className="max-w-5xl mx-auto space-y-8">

@@ -1,4 +1,4 @@
-import type { UserRole } from '../types';
+import type { SustanciadorAssignmentMode, UserRole } from '../types';
 
 /**
  * Personal del despacho (coincide con scripts/seed-court-users.mts).
@@ -169,12 +169,30 @@ export function defaultSustanciadorForCase(caseId: string): ExpedienteAssignee {
   return hashPick(caseId, SUSTANCIADORES);
 }
 
-export function resolveAssigneeForCase(assignedTo: string | undefined, caseId: string): ExpedienteAssignee {
+const UNASSIGNED_PLACEHOLDER: ExpedienteAssignee = {
+  id: 'unassigned',
+  initials: '—',
+  name: 'Sin asignar',
+  ring: 'ring-slate-200',
+  bg: 'bg-slate-50',
+  text: 'text-slate-500',
+};
+
+/**
+ * @param courtAssignmentMode Si el juzgado está en `manual_unassigned` y no hay `assigned_to`,
+ *        se muestra «Sin asignar» en lugar del reparto simulado por hash.
+ */
+export function resolveAssigneeForCase(
+  assignedTo: string | undefined,
+  caseId: string,
+  courtAssignmentMode?: SustanciadorAssignmentMode | null
+): ExpedienteAssignee {
   const raw = assignedTo?.trim();
   if (raw) {
     const hit = findStaffByAssignedValue(raw);
     if (hit) return hit;
     return buildSyntheticAssignee(raw);
   }
+  if (courtAssignmentMode === 'manual_unassigned') return UNASSIGNED_PLACEHOLDER;
   return defaultSustanciadorForCase(caseId);
 }

@@ -46,6 +46,13 @@ export interface DocumentTemplateToggleDef {
   documentMarker: string;
 }
 
+/** Márgenes y tipografía propios de cada plantilla (vista previa + .docx generado en app). */
+export interface DocumentTemplatePageLayout {
+  marginMm: { top: number; right: number; bottom: number; left: number };
+  fontFamily: string;
+  fontSizePt: number;
+}
+
 export interface DocumentTemplate {
   id: string;
   courtId: string;
@@ -62,6 +69,11 @@ export interface DocumentTemplate {
   docxStoragePath: string | null;
   /** Último mapeo IA confirmado (original → marcador). */
   docxMapeo: Array<{ original: string; marcador: string }> | null;
+  /**
+   * Márgenes (mm), familia y tamaño de letra; null = valores por defecto del sistema (Times 12 pt, márgenes 25 mm).
+   * No aplica al .docx subido como archivo (docxStoragePath): ese archivo conserva su propio diseño.
+   */
+  pageLayout: DocumentTemplatePageLayout | null;
 }
 
 export interface Case {
@@ -76,6 +88,8 @@ export interface Case {
   createdAt: string;
   updatedAt: string;
   deadlineAt?: string;
+  /** Motivo o referencia si se ajusta `deadline_at` a mano (suspensión, rectificación, etc.). */
+  deadlineOverrideNote?: string;
   sgdeId?: string;
   sourceChannel?: string;
   summary?: string;
@@ -87,6 +101,8 @@ export interface Case {
   expedienteCuadernosExtra?: Array<{ code: string; label: string }>;
   /** Secretaría marcó informe de ingreso; habilita auto admisorio (columna en Supabase). */
   informeIngresoRegistradoAt?: string;
+  /** Pieza PDF del informe incorporada al expediente digital (referencia; la pieza persiste). */
+  informeIngresoDocumentId?: string;
   // Legal Extraction Fields
   claimantId?: string;
   claimantEmail?: string;
@@ -100,6 +116,26 @@ export interface Case {
   /** Al fallar o archivar: tipo de decisión para estadística. */
   decisionType?: DecisionType;
   legalIdentificaciones?: string;
+}
+
+/** Documentos por revisar (Word) — tabla `case_word_reviews`. */
+export type WordReviewStatus =
+  | 'pendiente_juez'
+  | 'observaciones_juez'
+  | 'aprobado_firma_pendiente'
+  | 'cerrado_con_pdf_firmado';
+
+export interface CaseWordReview {
+  id: string;
+  caseId: string;
+  wordDocumentId: string;
+  status: WordReviewStatus;
+  judgeNotes?: string;
+  sustanciadorReply?: string;
+  signedPdfDocumentId?: string;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Document {
@@ -136,9 +172,34 @@ export interface Action {
   metadata?: Record<string, any>;
 }
 
+/** Historial técnico interno (tabla `case_audit_log`); no es actuación judicial. */
+export interface CaseAuditLogEntry {
+  id: string;
+  caseId: string;
+  occurredAt: string;
+  actorUserId?: string;
+  sourceTable: string;
+  operation: 'INSERT' | 'UPDATE' | 'DELETE';
+  rowId?: string;
+  payload: Record<string, unknown>;
+}
+
+/**
+ * Regla al radicar para persistir `cases.assigned_to` (sustanciador).
+ * Configurable por fila en `public.courts`.
+ */
+export type SustanciadorAssignmentMode =
+  | 'hash_stable'
+  | 'radicado_parity'
+  | 'alternating'
+  | 'manual_unassigned';
+
 export interface Court {
   id: string;
   name: string;
   email: string;
   city: string;
+  sustanciadorAssignmentMode?: SustanciadorAssignmentMode;
+  /** 0 o 1: siguiente índice en modo alternating (una y una). */
+  sustanciadorRrCursor?: number;
 }
