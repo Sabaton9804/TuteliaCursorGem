@@ -51,7 +51,7 @@ export const TiptapTemplateEditor = forwardRef<TiptapTemplateEditorHandle, Props
       resolveLabel,
       placeholder,
       disabled,
-      minHeightClass = 'min-h-[14rem]',
+      minHeightClass = 'min-h-[10rem]',
       parseInformeBodyDefaults = false,
     },
     ref,

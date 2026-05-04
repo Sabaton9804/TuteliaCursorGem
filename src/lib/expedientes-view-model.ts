@@ -69,7 +69,7 @@ export function stageLabel(s: BoardStage): string {
   const m: Record<BoardStage, string> = {
     radicado: 'Radicado',
     admitido: 'Admitido',
-    esp_respuesta: 'Esp. respuesta',
+    esp_respuesta: 'Términos',
     en_analisis: 'En análisis',
     fallo_redactado: 'Fallo redactado',
     fallo_notificado: 'Fallo notificado',

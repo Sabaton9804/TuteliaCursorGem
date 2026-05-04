@@ -125,6 +125,9 @@ export type WordReviewStatus =
   | 'aprobado_firma_pendiente'
   | 'cerrado_con_pdf_firmado';
 
+/** Revisión enriquecida en Tutelia (TipTap); columna `review_markup_json`. */
+export type CaseWordReviewMarkupV1 = { v: 1; doc: Record<string, unknown> };
+
 export interface CaseWordReview {
   id: string;
   caseId: string;
@@ -133,6 +136,8 @@ export interface CaseWordReview {
   judgeNotes?: string;
   sustanciadorReply?: string;
   signedPdfDocumentId?: string;
+  /** Capa editable en la app (subrayado, resaltado, comentarios); no reemplaza el .docx del expediente. */
+  reviewMarkupJson?: CaseWordReviewMarkupV1 | null;
   createdBy?: string;
   createdAt: string;
   updatedAt: string;

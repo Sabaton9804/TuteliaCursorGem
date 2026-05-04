@@ -1,6 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { FileText, Gavel, Loader2, RefreshCw, Send } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FileDown, FileText, Gavel, Loader2, RefreshCw, Send } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { DESPACHO_STAFF } from '../../lib/court-staff-assignees';
+import { downloadCaseDocxFromStoragePath } from '../../lib/download-case-docx';
 import type { CaseWordReview, Document, UserProfile, UserRole, WordReviewStatus } from '../../types';
 import { caseDocumentRawLabel } from '../../lib/case-document-display-name';
 import { sanitizeExpedienteFilenameForDisplay } from '../../lib/sanitize-expediente-filename';
@@ -10,6 +12,13 @@ import {
   fetchCaseWordReviews,
   updateCaseWordReview,
 } from '../../lib/case-word-reviews';
+import { ExpedienteDocxPreview } from './ExpedienteDocxPreview';
+import {
+  WordReviewRichEditor,
+  parseReviewMarkupPayload,
+  type ReviewMarkupPayloadV1,
+  type WordReviewRichSaverApi,
+} from './WordReviewRichEditor';
 
 type Props = {
   caseId: string;
@@ -43,6 +52,15 @@ function docLabel(d: Document): string {
   return sanitizeExpedienteFilenameForDisplay(caseDocumentRawLabel(d));
 }
 
+function hasMeaningfulReviewMarkup(row: CaseWordReview): boolean {
+  const p = parseReviewMarkupPayload(row.reviewMarkupJson);
+  if (!p?.doc) return false;
+  return JSON.stringify(p.doc).length > 100;
+}
+
+const JUEZ_REVISION_ORGANIGRAMA =
+  DESPACHO_STAFF.find((p) => p.courtRole === 'judge')?.name?.trim() || '—';
+
 export function CaseWordReviewPanel({ caseId, docs, profile, onRefetchDocs }: Props) {
   const [rows, setRows] = useState<CaseWordReview[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,6 +71,8 @@ export function CaseWordReviewPanel({ caseId, docs, profile, onRefetchDocs }: Pr
   const [draftReply, setDraftReply] = useState<Record<string, string>>({});
   const [draftNewWord, setDraftNewWord] = useState<Record<string, string>>({});
   const [draftPdf, setDraftPdf] = useState<Record<string, string>>({});
+  const [docxDownloadFor, setDocxDownloadFor] = useState<string | null>(null);
+  const reviewFlushRef = useRef<Record<string, WordReviewRichSaverApi | null>>({});
 
   const role = profile?.role;
   const puedeDespacho = roleCanOpenReview(role);
@@ -118,6 +138,18 @@ export function CaseWordReviewPanel({ caseId, docs, profile, onRefetchDocs }: Pr
     await onRefetchDocs();
   };
 
+  const persistReviewMarkup = useCallback(async (reviewId: string, payload: ReviewMarkupPayloadV1) => {
+    try {
+      await updateCaseWordReview(reviewId, { reviewMarkupJson: payload });
+      setRows((prev) => prev.map((row) => (row.id === reviewId ? { ...row, reviewMarkupJson: payload } : row)));
+      return payload;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'No se pudo guardar la revisión en Tutelia.';
+      setErr(msg);
+      throw e;
+    }
+  }, []);
+
   if (!puedeDespacho) {
     return (
       <div className="card-modern p-6 text-sm text-slate-600">
@@ -157,9 +189,9 @@ export function CaseWordReviewPanel({ caseId, docs, profile, onRefetchDocs }: Pr
               un ciclo aquí.
             </li>
             <li>
-              Quien revise (juez, asistente, etc.) usa la vista previa del expediente, deja{' '}
-              <strong className="text-slate-800">apuntes</strong> y devuelve o aprueba; la edición fina del documento sigue
-              en Word descargado.
+              Quien revise abre el <strong className="text-slate-800">.docx en Microsoft Word</strong> (revisión, comentarios,
+              control de cambios), guarda si aplica y deja <strong className="text-slate-800">apuntes</strong> en esta pantalla
+              para devolver o aprobar. La vista HTML es solo orientativa.
             </li>
             <li>
               Tras observaciones, se sube una <strong className="text-slate-800">nueva versión</strong> del Word al
@@ -256,19 +288,94 @@ export function CaseWordReviewPanel({ caseId, docs, profile, onRefetchDocs }: Pr
                       {wordDoc ? docLabel(wordDoc) : 'Documento Word'}
                     </p>
                     <p className="mt-1 text-xs font-semibold text-indigo-900">{STATUS_LABEL[r.status]}</p>
+                    <p className="mt-1.5 text-[10px] leading-snug text-slate-500">
+                      Revisión judicial de referencia:{' '}
+                      <span className="font-semibold text-slate-700">{JUEZ_REVISION_ORGANIGRAMA}</span>
+                    </p>
                     <p className="mt-1 font-mono text-[10px] text-slate-400">#{r.id.slice(0, 8)}</p>
                   </div>
                 </div>
 
                 <div className="space-y-4 px-5 py-4">
+                  {wordDoc?.storagePath?.trim() ? (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                        Borrador en Word (revisión real)
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={Boolean(docxDownloadFor) || busy}
+                          onClick={() => {
+                            void (async () => {
+                              setDocxDownloadFor(r.id);
+                              setErr(null);
+                              try {
+                                await downloadCaseDocxFromStoragePath(wordDoc.storagePath!, docLabel(wordDoc));
+                              } catch (e) {
+                                setErr(e instanceof Error ? e.message : 'No se pudo descargar el Word.');
+                              } finally {
+                                setDocxDownloadFor(null);
+                              }
+                            })();
+                          }}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-slate-800 disabled:opacity-40"
+                        >
+                          {docxDownloadFor === r.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <FileDown className="h-3.5 w-3.5" />
+                          )}
+                          Descargar y abrir en Word
+                        </button>
+                        <p className="w-full text-[10px] leading-snug text-slate-500">
+                          El enlace directo a Word con URL en la nube suele fallar en Office (comando no reconocido). La
+                          forma fiable es <strong className="font-semibold text-slate-700">descargar el .docx</strong> y
+                          abrirlo con doble clic; así conserva membrete, márgenes y podrá usar comentarios y control de
+                          cambios.
+                        </p>
+                      </div>
+                      <ExpedienteDocxPreview
+                        compact
+                        storagePath={wordDoc.storagePath}
+                        filename={docLabel(wordDoc)}
+                      />
+                      <div className="space-y-2 border-t border-slate-100 pt-4">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-700">
+                          Revisión integral en Tutelia
+                        </p>
+                        <p className="text-[10px] leading-snug text-slate-600">
+                          Edite el texto, use subrayado y resaltado, y añada{' '}
+                          <strong className="font-semibold text-slate-800">comentarios</strong> con el globo al
+                          seleccionar un fragmento. Se guarda automáticamente en la plataforma (no modifica el .docx del
+                          expediente).
+                        </p>
+                        <WordReviewRichEditor
+                          storagePath={wordDoc.storagePath}
+                          savedMarkup={parseReviewMarkupPayload(r.reviewMarkupJson)}
+                          readOnly={r.status !== 'pendiente_juez'}
+                          onDebouncedSave={(payload) => persistReviewMarkup(r.id, payload)}
+                          registerSaverApi={(api) => {
+                            reviewFlushRef.current[r.id] = api;
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ) : wordDoc ? (
+                    <p className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-[11px] text-amber-950">
+                      Este Word no tiene ruta en almacenamiento; no se puede previsualizar ni abrir desde aquí. Revise el
+                      expediente digital o vuelva a cargar el .docx.
+                    </p>
+                  ) : null}
+
                   {r.status === 'pendiente_juez' ? (
                     <div className="space-y-3">
                       <label className="block text-[11px] font-semibold text-slate-700">
-                        Apuntes / observaciones para corrección del borrador
+                        Resumen en texto libre (opcional si ya dejó comentarios en el editor superior)
                         <textarea
                           value={notes}
                           onChange={(e) => setDraftNotes((s) => ({ ...s, [r.id]: e.target.value }))}
-                          rows={5}
+                          rows={4}
                           className="input-modern mt-1 w-full resize-y text-sm"
                           placeholder="Ej.: Ajustar el encabezado; citar jurisprudencia X; corregir el numeral 3…"
                           disabled={busy}
@@ -277,12 +384,21 @@ export function CaseWordReviewPanel({ caseId, docs, profile, onRefetchDocs }: Pr
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
-                          disabled={busy || !notes.trim()}
+                          disabled={busy || (!notes.trim() && !hasMeaningfulReviewMarkup(r))}
                           onClick={async () => {
                             setBusy(true);
+                            setErr(null);
                             try {
+                              const flushed = await reviewFlushRef.current[r.id]?.flush?.();
+                              const rowForRule = flushed ? { ...r, reviewMarkupJson: flushed } : r;
+                              if (!notes.trim() && !hasMeaningfulReviewMarkup(rowForRule)) {
+                                setErr(
+                                  'Indique observaciones: texto libre arriba o comentarios/edición en «Revisión integral en Tutelia» (pulse otra vez si acaba de escribir allí).',
+                                );
+                                return;
+                              }
                               await updateCaseWordReview(r.id, {
-                                judgeNotes: notes.trim(),
+                                judgeNotes: notes.trim() || null,
                                 status: 'observaciones_juez',
                               });
                               await refreshAll();
@@ -323,6 +439,18 @@ export function CaseWordReviewPanel({ caseId, docs, profile, onRefetchDocs }: Pr
 
                   {r.status === 'observaciones_juez' ? (
                     <div className="space-y-3">
+                      {wordDoc?.storagePath?.trim() ? (
+                        <div className="space-y-2">
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                            Revisión en Tutelia (guardada)
+                          </p>
+                          <WordReviewRichEditor
+                            storagePath={wordDoc.storagePath}
+                            savedMarkup={parseReviewMarkupPayload(r.reviewMarkupJson)}
+                            readOnly
+                          />
+                        </div>
+                      ) : null}
                       <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-950">
                         <p className="font-bold text-amber-900">Observaciones registradas</p>
                         <p className="mt-1 whitespace-pre-wrap">{r.judgeNotes?.trim() || '—'}</p>

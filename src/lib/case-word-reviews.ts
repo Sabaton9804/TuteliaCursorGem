@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import type { CaseWordReview, WordReviewStatus } from '../types';
+import type { CaseWordReview, CaseWordReviewMarkupV1, WordReviewStatus } from '../types';
 import { rowToCaseWordReview } from './supabase-mappers';
 import { ensureSupabaseSessionForWrites } from './supabase-write-auth';
 
@@ -42,6 +42,7 @@ export async function updateCaseWordReview(
     judgeNotes: string | null;
     sustanciadorReply: string | null;
     signedPdfDocumentId: string | null;
+    reviewMarkupJson: CaseWordReviewMarkupV1 | null;
   }>,
 ): Promise<void> {
   await ensureSupabaseSessionForWrites();
@@ -51,6 +52,7 @@ export async function updateCaseWordReview(
   if (patch.judgeNotes !== undefined) row.judge_notes = patch.judgeNotes;
   if (patch.sustanciadorReply !== undefined) row.sustanciador_reply = patch.sustanciadorReply;
   if (patch.signedPdfDocumentId !== undefined) row.signed_pdf_document_id = patch.signedPdfDocumentId;
+  if (patch.reviewMarkupJson !== undefined) row.review_markup_json = patch.reviewMarkupJson;
   const { error } = await supabase.from('case_word_reviews').update(row).eq('id', id);
   if (error) throw error;
 }

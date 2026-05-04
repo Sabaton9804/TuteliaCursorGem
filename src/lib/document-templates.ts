@@ -11,6 +11,8 @@ import { mergePageLayout } from './document-template-page-layout';
 import { insertCaseDocumentRowReturningId, uploadCaseAttachment } from './case-document-storage';
 import { DEFAULT_NOTEBOOK_CODE } from './expediente-notebook';
 import { nextSortOrderInPrincipalNotebook } from './expediente-document-order';
+import { createCaseWordReview } from './case-word-reviews';
+import { insertWordReviewJudgeNotifications } from './word-review-notifications';
 import { ensureSupabaseSessionForWrites } from './supabase-write-auth';
 import { userFacingSupabaseError } from './supabase-user-error';
 
@@ -232,4 +234,64 @@ export async function registerCaseInformeIngresoWithExpedientePdf(opts: {
     })
     .eq('id', opts.caseId);
   if (error) throw error;
+}
+
+/**
+ * Sube un .docx generado al cuaderno principal del expediente e inicia un ciclo en «Documentos por revisar».
+ * Los autos del despacho deben usar este flujo (no hay PDF directo al expediente desde generar documentos).
+ */
+export async function uploadGeneratedDocxToExpedienteWithWordReview(opts: {
+  caseId: string;
+  courtId: string;
+  radicado: string;
+  docxBytes: Uint8Array;
+  displayName: string;
+  docs: Document[];
+  /** Valor de `case_documents.type` para distinguir el origen en listados. */
+  documentType: string;
+  /** Texto legible para la notificación al juez (por defecto el nombre del archivo). */
+  documentLabel?: string;
+  actorUserName?: string;
+}): Promise<{ documentId: string; reviewId: string }> {
+  await ensureSupabaseSessionForWrites();
+  const sortOrder = nextSortOrderInPrincipalNotebook(opts.docs);
+  let name = opts.displayName.trim();
+  if (!name.toLowerCase().endsWith('.docx')) {
+    name = `${name.replace(/\.+$/, '')}.docx`;
+  }
+  const up = await uploadCaseAttachment(
+    supabase,
+    opts.caseId,
+    name,
+    opts.docxBytes,
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  );
+  if ('error' in up) throw up.error;
+
+  const row: Record<string, unknown> = {
+    case_id: opts.caseId,
+    name,
+    original_name: name,
+    type: opts.documentType,
+    content_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    size: opts.docxBytes.byteLength,
+    storage_path: up.path,
+    is_from_link: false,
+    sort_order: sortOrder,
+    notebook_code: DEFAULT_NOTEBOOK_CODE,
+  };
+
+  const { id: documentId } = await insertCaseDocumentRowReturningId(supabase, row);
+  const review = await createCaseWordReview(opts.caseId, documentId);
+  const label = (opts.documentLabel ?? name).trim() || name;
+  const actor = (opts.actorUserName ?? 'Usuario').trim() || 'Usuario';
+  await insertWordReviewJudgeNotifications(supabase, {
+    courtId: opts.courtId,
+    caseId: opts.caseId,
+    radicado: opts.radicado.trim() || '—',
+    reviewId: review.id,
+    documentLabel: label,
+    actorUserName: actor,
+  });
+  return { documentId, reviewId: review.id };
 }

@@ -10,7 +10,8 @@ import {
 } from '../lib/supabase-mappers';
 import { Action, Case, CaseAuditLogEntry, Document as CaseDoc, UserProfile } from '../types';
 import type { CaseStatus, SustanciadorAssignmentMode } from '../types';
-import { 
+import { humanizeCaseAuditEntry } from '../lib/audit-log-humanize';
+import {
   FileText, 
   History,
   Sparkles,
@@ -1371,7 +1372,7 @@ export default function CaseDetail() {
             id="tab-historial"
             aria-selected={activeTab === 'historial'}
             aria-controls="panel-historial"
-            title="Historial técnico interno: cada cambio en base de datos del expediente (no es actuación judicial)"
+            title="Actividad del expediente: quién hizo qué (documentos, datos del caso, actuaciones); detalle técnico opcional"
             onClick={() => setActiveTab('historial')}
             className={`shrink-0 border-b-2 px-3 py-3.5 text-[11px] font-bold uppercase tracking-widest transition-colors sm:px-5 ${
               activeTab === 'historial'
@@ -1428,72 +1429,6 @@ export default function CaseDetail() {
                 <p className="hidden sm:block text-[9px] text-slate-500 font-medium normal-case tracking-normal text-right max-w-[240px] leading-snug">
                   Documentos y constancia de ingreso en la pestaña Expediente digital. La IA usa plazos y piezas del expediente al generar la síntesis.
                 </p>
-              </div>
-            </div>
-
-            <div className="border-b border-slate-100 bg-slate-50/90 px-6 py-4 sm:px-8">
-              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Contexto procesal (vista despacho)</p>
-              <ul className="mt-3 space-y-2 text-sm text-slate-700">
-                <li>
-                  <span className="font-semibold text-slate-600">Estado judicial: </span>
-                  {CASE_STATUS_LABEL[caseItem.status] ?? caseItem.status}
-                </li>
-                <li>
-                  <span className="font-semibold text-slate-600">Estado operativo: </span>
-                  {caseItem.operationalStatus?.trim() || 'Sin dato en expediente'}
-                </li>
-                <li>
-                  <span className="font-semibold text-slate-600">Plazo / término en sistema: </span>
-                  {caseItem.deadlineAt && isValid(parseISO(caseItem.deadlineAt))
-                    ? format(parseISO(caseItem.deadlineAt), "EEEE d 'de' MMMM yyyy", { locale: es })
-                    : 'No registrado — complételo abajo o ejecute el backfill de plazos'}
-                  {caseItem.deadlineOverrideNote?.trim() ? (
-                    <span className="block mt-1 text-xs font-normal text-slate-500 normal-case">
-                      Nota al plazo: {caseItem.deadlineOverrideNote.trim()}
-                    </span>
-                  ) : null}
-                </li>
-                <li>
-                  <span className="font-semibold text-slate-600">Piezas en expediente digital: </span>
-                  {docs.length === 0 ? 'Ninguna aún' : `${docs.length} (se envían títulos a la IA al analizar)`}
-                </li>
-              </ul>
-              <div className="mt-4 pt-4 border-t border-slate-200/80 space-y-3">
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
-                  Ajuste del fin de término (10 días háb.)
-                </p>
-                <p className="text-[11px] text-slate-500 leading-snug">
-                  Uso excepcional (suspensión, corrección, etc.). Vacíe la fecha y guarde para quitar el plazo en base de datos.
-                </p>
-                <div className="flex flex-col sm:flex-row gap-3 sm:items-end flex-wrap">
-                  <label className="flex flex-col gap-1 text-[11px] font-medium text-slate-600 min-w-0">
-                    Fecha fin del término
-                    <input
-                      type="date"
-                      className="input-modern py-2 text-sm bg-white max-w-[220px]"
-                      value={deadlineDraft}
-                      onChange={(e) => setDeadlineDraft(e.target.value)}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => void handleSaveDeadline()}
-                    disabled={deadlineSaving}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-[11px] font-bold uppercase tracking-widest text-white hover:bg-slate-800 disabled:opacity-60 shrink-0"
-                  >
-                    {deadlineSaving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-                    Guardar plazo
-                  </button>
-                </div>
-                <label className="flex flex-col gap-1 text-[11px] font-medium text-slate-600">
-                  Nota (motivo o referencia)
-                  <textarea
-                    className="input-modern min-h-[72px] text-sm bg-white resize-y"
-                    value={deadlineNoteDraft}
-                    onChange={(e) => setDeadlineNoteDraft(e.target.value)}
-                    placeholder="Ej. suspensión por acuerdo de partes; oficio CSJ 123…"
-                  />
-                </label>
               </div>
             </div>
 
@@ -1619,6 +1554,78 @@ export default function CaseDetail() {
                 </button>
               </div>
               </div>
+
+              <details className="group border-t border-slate-100 bg-slate-50/50 px-4 py-2 sm:px-6 sm:py-2.5">
+                <summary className="cursor-pointer list-none py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-slate-400 hover:text-slate-600 [&::-webkit-details-marker]:hidden before:mr-1.5 before:inline-block before:text-slate-300 before:transition-transform before:content-['▸'] group-open:before:rotate-90">
+                  Contexto procesal (vista despacho)
+                </summary>
+                <ul className="mt-2 space-y-1.5 border-t border-slate-100/90 pt-2 pb-1 text-[10px] leading-snug text-slate-600">
+                  <li>
+                    <span className="font-semibold text-slate-500">Estado judicial: </span>
+                    {CASE_STATUS_LABEL[caseItem.status] ?? caseItem.status}
+                  </li>
+                  <li>
+                    <span className="font-semibold text-slate-500">Estado operativo: </span>
+                    {caseItem.operationalStatus?.trim() || 'Sin dato en expediente'}
+                  </li>
+                  <li>
+                    <span className="font-semibold text-slate-500">Plazo / término en sistema: </span>
+                    {caseItem.deadlineAt && isValid(parseISO(caseItem.deadlineAt))
+                      ? format(parseISO(caseItem.deadlineAt), "EEEE d 'de' MMMM yyyy", { locale: es })
+                      : 'No registrado — use el desplegable siguiente o el backfill de plazos'}
+                    {caseItem.deadlineOverrideNote?.trim() ? (
+                      <span className="mt-0.5 block font-normal text-slate-500">
+                        Nota al plazo: {caseItem.deadlineOverrideNote.trim()}
+                      </span>
+                    ) : null}
+                  </li>
+                  <li>
+                    <span className="font-semibold text-slate-500">Piezas en expediente digital: </span>
+                    {docs.length === 0 ? 'Ninguna aún' : `${docs.length} (se envían títulos a la IA al analizar)`}
+                  </li>
+                </ul>
+              </details>
+
+              <details className="group border-t border-slate-100 bg-slate-50/50 px-4 py-2 sm:px-6 sm:py-2.5">
+                <summary className="cursor-pointer list-none py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-slate-400 hover:text-slate-600 [&::-webkit-details-marker]:hidden before:mr-1.5 before:inline-block before:text-slate-300 before:transition-transform before:content-['▸'] group-open:before:rotate-90">
+                  Ajuste manual del plazo (10 días háb., excepcional)
+                </summary>
+                <div className="mt-2 space-y-2 border-t border-slate-100/90 pt-2 pb-1 text-[10px] text-slate-500">
+                  <p className="leading-snug">
+                    Suspensión, corrección, etc. Vacíe la fecha y guarde para quitar el plazo en base de datos.
+                  </p>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+                    <label className="flex min-w-0 flex-col gap-0.5 font-medium text-slate-600">
+                      Fecha fin
+                      <input
+                        type="date"
+                        className="input-modern max-w-[200px] bg-white py-1 text-xs"
+                        value={deadlineDraft}
+                        onChange={(e) => setDeadlineDraft(e.target.value)}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveDeadline()}
+                      disabled={deadlineSaving}
+                      className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      {deadlineSaving ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
+                      Guardar
+                    </button>
+                  </div>
+                  <label className="flex flex-col gap-0.5 font-medium text-slate-600">
+                    Nota breve
+                    <textarea
+                      className="input-modern min-h-[48px] resize-y bg-white py-1 text-xs"
+                      rows={2}
+                      value={deadlineNoteDraft}
+                      onChange={(e) => setDeadlineNoteDraft(e.target.value)}
+                      placeholder="Ej. suspensión por acuerdo de partes…"
+                    />
+                  </label>
+                </div>
+              </details>
             </div>
           </div>
         </div>
@@ -1777,6 +1784,12 @@ export default function CaseDetail() {
                 void refetchCase();
                 void refetchDocs();
               }}
+              onAfterEnviarRevision={() => setActiveTab('revision_word')}
+              revisionActorDisplayName={
+                sessionProfile?.name?.trim() ||
+                sessionProfile?.email?.trim() ||
+                undefined
+              }
             />
           ) : null}
         </div>
@@ -1888,12 +1901,12 @@ export default function CaseDetail() {
             <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400">
                 <Shield className="h-4 w-4 text-slate-500" aria-hidden />
-                Historial técnico del expediente
+                Actividad en el expediente
               </h3>
-              <p className="max-w-xl text-[11px] leading-snug text-amber-950/85">
-                Uso exclusivo del despacho y control interno: cada alta, baja o modificación en tablas del expediente
-                (caso, piezas, filas de actuaciones en BD, notificaciones, revisiones Word). No sustituye actuaciones
-                judiciales ni constituye auto; permite ver qué usuario de sesión disparó cada cambio técnico.
+              <p className="max-w-xl text-[11px] leading-snug text-slate-600">
+                Resumen en lenguaje claro de cada cambio guardado (documentos, datos del expediente, actuaciones,
+                revisiones Word, notificaciones). El detalle crudo de base de datos sigue disponible desplegando «Datos
+                técnicos». No reemplaza actuaciones judiciales registradas en autos.
               </p>
             </div>
             {auditFetchErr ? (
@@ -1903,46 +1916,72 @@ export default function CaseDetail() {
             ) : null}
             {!auditFetchErr && auditLog.length === 0 ? (
               <p className="text-sm text-slate-500">
-                Aún no hay entradas en el historial técnico de este expediente. Tras aplicar la migración SQL en Supabase,
-                los cambios quedarán registrados aquí de forma automática.
+                Aún no hay actividad registrada para este expediente. Cuando exista la tabla de auditoría en Supabase,
+                cada cambio aparecerá aquí automáticamente.
               </p>
             ) : null}
-            <div className="scrollbar-thin mt-4 max-h-[min(72vh,720px)] space-y-4 overflow-y-auto pr-1">
+            <div className="scrollbar-thin mt-4 max-h-[min(72vh,720px)] space-y-3 overflow-y-auto pr-1">
               {auditLog.map((entry) => {
                 const actorLabel =
                   (entry.actorUserId && auditActorNames[entry.actorUserId]) ||
-                  (entry.actorUserId ? `${entry.actorUserId.slice(0, 8)}…` : '—');
+                  (entry.actorUserId ? `Usuario ${entry.actorUserId.slice(0, 8)}…` : 'Usuario del sistema');
+                const human = humanizeCaseAuditEntry(entry);
                 const atLabel =
                   entry.occurredAt && !Number.isNaN(Date.parse(entry.occurredAt))
-                    ? format(new Date(entry.occurredAt), "dd MMM yyyy '·' HH:mm:ss", { locale: es })
+                    ? format(new Date(entry.occurredAt), "dd MMM yyyy · HH:mm", { locale: es })
                     : '';
+                const initial = (actorLabel.replace(/^Usuario\s+/i, '').trim().charAt(0) || '?').toUpperCase();
+                const ring =
+                  human.kind === 'add'
+                    ? 'border-emerald-200 bg-emerald-50/80'
+                    : human.kind === 'remove'
+                      ? 'border-rose-200 bg-rose-50/80'
+                      : human.kind === 'edit'
+                        ? 'border-sky-200 bg-sky-50/80'
+                        : 'border-slate-200 bg-slate-50/80';
                 return (
                   <details
                     key={entry.id}
-                    className="group rounded-2xl border border-slate-200 bg-slate-50/60 p-4 sm:p-5 open:bg-white"
+                    className={`group rounded-xl border ${ring} px-3 py-3 sm:px-4 open:bg-white`}
                   >
                     <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0 space-y-1">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{atLabel}</p>
-                          <p className="font-mono text-xs font-semibold text-slate-800">
-                            <span className="text-accent">{entry.operation}</span> · {entry.source_table}
-                            {entry.rowId ? (
-                              <span className="text-slate-500"> · id {entry.rowId.slice(0, 8)}…</span>
-                            ) : null}
+                      <div className="flex gap-3">
+                        <div
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white bg-white text-sm font-bold text-slate-600 shadow-sm"
+                          aria-hidden
+                        >
+                          {initial}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm leading-snug text-slate-800">
+                            <span className="font-semibold text-slate-900">{actorLabel}</span>{' '}
+                            <span className="text-slate-700">{human.action}</span>
                           </p>
-                          <p className="text-[10px] text-slate-500">
-                            Sesión: <span className="font-medium text-slate-700">{actorLabel}</span>
+                          {human.hint ? (
+                            <p className="mt-0.5 text-[10px] text-slate-500">{human.hint}</p>
+                          ) : null}
+                          <p className="mt-1 text-[10px] font-medium uppercase tracking-wide text-slate-400">
+                            {atLabel}
                           </p>
                         </div>
-                        <span className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[9px] font-bold uppercase text-slate-500">
-                          Detalle JSON
+                        <span className="shrink-0 self-start rounded-md border border-slate-200/80 bg-white/90 px-2 py-1 text-[9px] font-semibold uppercase tracking-wide text-slate-500">
+                          Datos técnicos
                         </span>
                       </div>
                     </summary>
-                    <pre className="mt-4 max-h-[320px] overflow-auto rounded-xl border border-slate-100 bg-slate-950/95 p-3 text-[10px] leading-relaxed text-emerald-100/95">
-                      {JSON.stringify(entry.payload, null, 2)}
-                    </pre>
+                    <div className="mt-3 border-t border-slate-200/80 pt-3 text-[10px] text-slate-500">
+                      <p className="font-mono text-slate-600">
+                        <span className="font-semibold text-slate-700">{entry.operation}</span>
+                        {' · '}
+                        {entry.sourceTable}
+                        {entry.rowId ? (
+                          <span className="text-slate-500"> · fila {entry.rowId.slice(0, 8)}…</span>
+                        ) : null}
+                      </p>
+                      <pre className="mt-2 max-h-[280px] overflow-auto rounded-lg border border-slate-100 bg-slate-950/95 p-3 leading-relaxed text-emerald-100/95">
+                        {JSON.stringify(entry.payload, null, 2)}
+                      </pre>
+                    </div>
                   </details>
                 );
               })}

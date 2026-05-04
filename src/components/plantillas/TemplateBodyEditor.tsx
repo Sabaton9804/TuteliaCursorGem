@@ -119,7 +119,8 @@ export function TemplateBodyEditor({
     [onChange, templateTipo],
   );
 
-  const minH = minRows >= 16 ? 'min-h-[18rem]' : 'min-h-[min(20rem,55vh)]';
+  /** Altura mínima modesta: el contenido crece con el texto (sin «ventana» fija a media pantalla). */
+  const minH = minRows >= 16 ? 'min-h-[12rem]' : 'min-h-[10rem]';
 
   return (
     <div className="bg-transparent">
@@ -195,7 +196,7 @@ export function TemplateBodyEditor({
               <div className={`animate-pulse bg-slate-50/40 ${minH}`} aria-hidden />
             }
           >
-            <div className="font-serif text-[15px] leading-relaxed text-slate-900">
+            <div className="font-serif text-[15px] leading-relaxed text-slate-900 [text-align:justify]">
               <TiptapTemplateEditor
                 ref={tipTapRef}
                 value={value}

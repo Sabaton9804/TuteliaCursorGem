@@ -1,4 +1,4 @@
-import React, { type ReactNode, useMemo } from 'react';
+import React, { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import type { DocumentTemplatePageLayout } from '../../types';
 import type { PlantillasMembrete } from '../../lib/plantillas-store';
 import { mergePageLayout } from '../../lib/document-template-page-layout';
@@ -20,6 +20,9 @@ function mmToCssPx(mm: number): string {
   return `${(mm * 96) / 25.4}px`;
 }
 
+/** Altura mínima del cuerpo en px (≈10 renglones); el área crece con el texto para evitar scroll interno. */
+const CUERPO_TEXTAREA_MIN_PX = 168;
+
 export function DespachoBorradorWordPanel({
   membrete,
   draft,
@@ -29,6 +32,8 @@ export function DespachoBorradorWordPanel({
   pageLayout,
   draftBodySlot,
 }: Props) {
+  const cuerpoRef = useRef<HTMLTextAreaElement>(null);
+
   const L = useMemo(() => mergePageLayout(pageLayout), [pageLayout]);
 
   const pad = useMemo(
@@ -55,6 +60,25 @@ export function DespachoBorradorWordPanel({
     ? 'despacho-borrador-hoja mx-auto max-w-[min(100%,210mm)] bg-white font-serif shadow-none ring-0'
     : 'despacho-borrador-hoja mx-auto max-w-[min(100%,210mm)] bg-white font-serif shadow-md ring-1 ring-slate-300/80';
 
+  const syncCuerpoTextareaHeight = useCallback(() => {
+    const el = cuerpoRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.max(el.scrollHeight, CUERPO_TEXTAREA_MIN_PX)}px`;
+  }, []);
+
+  useLayoutEffect(() => {
+    if (draftBodySlot) return;
+    syncCuerpoTextareaHeight();
+  }, [draft, draftBodySlot, readOnlyDraft, L.fontSizePt, L.fontFamily, syncCuerpoTextareaHeight]);
+
+  useEffect(() => {
+    if (draftBodySlot) return;
+    const onResize = () => syncCuerpoTextareaHeight();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [draftBodySlot, draft, syncCuerpoTextareaHeight]);
+
   return (
     <div className={draftBodySlot ? 'sm:px-0' : 'rounded-xl border border-slate-200 bg-slate-200/50 p-3 sm:p-5'}>
       {draftBodySlot ? null : (
@@ -63,18 +87,20 @@ export function DespachoBorradorWordPanel({
       <div className={hojaClassName} style={pad}>
         <MembreteRichPreview membrete={membrete} embedded />
         {draftBodySlot ? (
-          <div className="mt-1 text-slate-900" style={fontStyle}>
+          <div className="mt-1 text-slate-900 [text-align:justify]" style={fontStyle}>
             {draftBodySlot}
           </div>
         ) : (
           <>
             <p className="mb-1.5 mt-1 text-[9px] font-bold uppercase tracking-wide text-slate-400">Cuerpo del documento</p>
             <textarea
+              ref={cuerpoRef}
               value={draft}
               onChange={(e) => onDraftChange(e.target.value)}
               readOnly={readOnlyDraft}
               spellCheck={false}
-              className="despacho-borrador-cuerpo min-h-[min(280px,42vh)] w-full resize-y border-0 bg-transparent text-slate-900 outline-none ring-0 focus:ring-0 disabled:cursor-default disabled:opacity-90"
+              rows={1}
+              className="despacho-borrador-cuerpo box-border min-h-[10.5rem] w-full resize-none overflow-hidden border-0 bg-transparent text-slate-900 [text-align:justify] outline-none ring-0 focus:ring-0 disabled:cursor-default disabled:opacity-90"
               style={fontStyle}
               aria-label="Cuerpo del borrador"
             />
@@ -85,7 +111,7 @@ export function DespachoBorradorWordPanel({
         <p className="mt-2 text-xs leading-snug text-slate-600">{readOnlyExplanation}</p>
       ) : draftBodySlot ? null : (
         <p className="mt-2 text-[11px] leading-snug text-slate-500">
-          Edite aquí el texto; al pulsar <strong className="text-slate-700">Descargar Word</strong> se usará este borrador
+          Edite aquí el texto; al pulsar <strong className="text-slate-700">Generar documento</strong> se usará este borrador
           (modo generado por el sistema). Si cambia plantilla, casillas o datos del caso sin tocar el texto, el borrador se
           actualiza solo si no lo ha modificado usted.
         </p>

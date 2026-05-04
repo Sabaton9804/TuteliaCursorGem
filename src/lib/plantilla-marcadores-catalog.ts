@@ -160,15 +160,16 @@ export const MARCADORES_CATALOGO: MarcadorCatalogoItem[] = [
   },
   {
     clave: 'FUNCIONARIO_FIRMA',
-    etiqueta: 'Quién firma (nombre)',
+    etiqueta: 'Firma — nombre (secretario o juez)',
     grupo: 'proceso',
-    ayuda: 'En informe: secretario(a) del equipo; en auto: juez del equipo (organigrama de la app).',
+    ayuda:
+      'En informe de ingreso sustituye por el secretario(a) del organigrama; en auto admisorio, por el juez. Mismo marcador, distinto cargo según el tipo de plantilla.',
   },
   {
     clave: 'CARGO_FIRMA',
-    etiqueta: 'Cargo de quien firma',
+    etiqueta: 'Firma — cargo (secretario o juez)',
     grupo: 'proceso',
-    ayuda: 'En informe: «Secretario(a)»; en auto: «Juez» (etiqueta corta). Combine con {{FUNCIONARIO_FIRMA}}.',
+    ayuda: 'En informe: etiqueta corta de secretario(a); en auto: de juez. Úselo junto a {{FUNCIONARIO_FIRMA}} al pie del escrito.',
   },
   {
     clave: 'NOMBRE_JUEZ',

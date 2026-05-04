@@ -196,3 +196,53 @@
   object-fit: contain;
   vertical-align: middle;
 }
+
+/* Misma lectura que en Plantillas: cuerpo justificado; los párrafos con alineación explícita siguen mandando (reglas .tiptap-template-editor más abajo). */
+.despacho-borrador-hoja .tiptap-template-editor .ProseMirror {
+  text-align: justify;
+}
+
+/* Vista previa expediente: docx-preview (clase base `tutelia-docxjs` en opciones) */
+.tutelia-docx-preview-host {
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 11pt;
+  line-height: 1.45;
+  color: #0f172a;
+}
+.tutelia-docx-preview-host .tutelia-docxjs-wrapper {
+  background: transparent !important;
+  padding: 0.5rem 0 1rem !important;
+  display: flex !important;
+  flex-flow: column !important;
+  align-items: center !important;
+}
+.tutelia-docx-preview-host .tutelia-docxjs-wrapper > section.tutelia-docxjs {
+  margin-left: auto !important;
+  margin-right: auto !important;
+  max-width: 210mm !important;
+  min-height: auto !important;
+  background: #fff !important;
+  box-shadow: 0 4px 24px rgba(15, 23, 42, 0.12) !important;
+  padding: 18mm 16mm !important;
+  box-sizing: border-box !important;
+}
+
+/* docx-preview no siempre respeta justificado del .docx: alineamos párrafos salvo centrado explícito */
+.tutelia-docx-preview-host .tutelia-docxjs p:not([style*='text-align: center']):not([style*='text-align:center']) {
+  text-align: justify !important;
+}
+
+/* Editor de revisión en Tutelia (TipTap) */
+.word-review-rich-editor.ProseMirror {
+  text-align: justify;
+}
+.word-review-rich-editor.ProseMirror p[style*='text-align: center'],
+.word-review-rich-editor.ProseMirror p[style*='text-align:center'],
+.word-review-rich-editor.ProseMirror h1[style*='text-align: center'],
+.word-review-rich-editor.ProseMirror h1[style*='text-align:center'] {
+  text-align: center !important;
+}
+.review-comment-mark {
+  border-bottom: 2px solid rgb(245 158 11 / 0.95);
+  cursor: help;
+}

@@ -148,6 +148,13 @@ function parseWordReviewStatus(raw: unknown): WordReviewStatus {
   return WORD_REVIEW_STATUSES.has(s as WordReviewStatus) ? (s as WordReviewStatus) : 'pendiente_juez';
 }
 
+function parseReviewMarkupJson(raw: unknown): CaseWordReview['reviewMarkupJson'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  if (o.v !== 1 || !o.doc || typeof o.doc !== 'object') return undefined;
+  return { v: 1, doc: o.doc as Record<string, unknown> };
+}
+
 export function rowToCaseWordReview(row: Record<string, unknown>): CaseWordReview {
   const ts = (v: unknown) => (typeof v === 'string' ? v : v ? String(v) : '');
   return {
@@ -161,6 +168,7 @@ export function rowToCaseWordReview(row: Record<string, unknown>): CaseWordRevie
         ? String(row.sustanciador_reply)
         : undefined,
     signedPdfDocumentId: row.signed_pdf_document_id ? String(row.signed_pdf_document_id) : undefined,
+    reviewMarkupJson: parseReviewMarkupJson(row.review_markup_json),
     createdBy: row.created_by ? String(row.created_by) : undefined,
     createdAt: ts(row.created_at),
     updatedAt: ts(row.updated_at),

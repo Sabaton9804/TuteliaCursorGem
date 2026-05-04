@@ -17,6 +17,8 @@ import {
   tryParseTipTapDocFromContenidoBase,
 } from './tiptap-template-storage';
 import { applyToggleFilterToContenidoBase } from './tiptap-template-toggle-filter';
+import { renumberJudicialDisponeNumerals } from './auto-dispone-numeracion';
+import { stripAutoOptionalNumeralsFromPlainIfNoToggleMarkers } from './auto-optional-plain-strip';
 import { CLASSIC_AUTO_VARIABLES_PLAIN, DEFAULT_AUTO_DATOS_RICH_PLAIN } from './auto-datos-expediente-defaults';
 import { hasMembreteRichContent } from './membrete-rich-doc';
 import { DESPACHO_STAFF } from './court-staff-assignees';
@@ -509,6 +511,8 @@ export function textoAutoAdmisorioBorrador(
   const desdeBd = contenidoBaseToPlainForSubstitution(base ?? undefined);
   const defs = opciones?.toggleDefs;
   const st = opciones?.toggleState;
+  const fin = (s: string) =>
+    renumberJudicialDisponeNumerals(stripAutoOptionalNumeralsFromPlainIfNoToggleMarkers(s, defs, st));
 
   if (!desdeBd?.trim()) {
     let out = plantillaAutoAdmisorioInterna(m);
@@ -517,7 +521,7 @@ export function textoAutoAdmisorioBorrador(
       if (bloque) out = `${bloque}\n\n${out}`;
     }
     out = aplicarMarcadoresToggleEnTexto(out, defs, st);
-    return sustituirMarcadores(out, v);
+    return fin(sustituirMarcadores(out, v));
   }
   const trimmed = desdeBd.trim();
   const line1 = m.membrete.auto.line1.trim();
@@ -531,7 +535,7 @@ export function textoAutoAdmisorioBorrador(
     plantilla = `${prefijoAutoAntesDelCuerpo(m)}\n${trimmed}`;
   }
   plantilla = aplicarMarcadoresToggleEnTexto(plantilla, defs, st);
-  return sustituirMarcadores(plantilla, v);
+  return fin(sustituirMarcadores(plantilla, v));
 }
 
 export function descargarTxt(nombreArchivo: string, contenido: string) {
