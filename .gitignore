@@ -8,3 +8,6 @@ coverage/
 !.env.example
 
 /src/generated/prisma
+
+# Extracto bruto del PDF del protocolo (regenerable; no versionar)
+docs/_protocolo_raw_extract.txt

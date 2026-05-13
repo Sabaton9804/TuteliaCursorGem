@@ -11,8 +11,16 @@ const ALL_ROLES: readonly UserRole[] = [
 ] as const;
 
 export function parseUserRole(raw: unknown): UserRole {
-  const s = String(raw ?? '').trim();
-  return (ALL_ROLES as readonly string[]).includes(s) ? (s as UserRole) : 'admin';
+  const s0 = String(raw ?? '').trim();
+  const s = s0.toLowerCase();
+  /** Valores que a veces vienen en BD o seed manual (no están en `UserRole`). */
+  const alias: Record<string, UserRole> = {
+    magistrado: 'judge',
+    juez: 'judge',
+    'asistente judicial': 'asistente_judicial',
+  };
+  const mapped = alias[s] ?? s;
+  return (ALL_ROLES as readonly string[]).includes(mapped) ? (mapped as UserRole) : 'admin';
 }
 
 /** Etiqueta corta en español para UI (configuración, listados). */

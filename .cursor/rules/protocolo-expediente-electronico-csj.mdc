@@ -1,0 +1,17 @@
+---
+description: Nombres, formatos y expediente según protocolo CENDOJ/Rama Judicial (documentos electrónicos).
+alwaysApply: true
+---
+
+# Protocolo expediente electrónico (CSJ)
+
+Antes de definir **nombres de archivos**, **tipos MIME**, **flujos de radicación** o **piezas en el expediente digital**, lee y aplica el resumen normativo del proyecto:
+
+**`docs/protocolo-gestion-documentos-electronicos-resumen.md`**
+
+Puntos que no deben ignorarse al proponer cambios:
+
+- Texto en expediente: **PDF** (el protocolo sugiere **PDF/A** para archivo largo plazo).
+- Nombres: **sin espacios ni guiones**, **TitleCase** (`InformeIngresoDespacho`, no `informe-ingreso`), caracteres **alfanuméricos** sin tildes ni `/#%&:<>().¿?`, fechas **`AAAAMMDD`**, dígitos únicos con **cero a la izquierda** (`01`, `02`).
+- Longitud recomendada **~40 caracteres** por nombre de archivo. PDF **informe de ingreso** al expediente: **`InformeIngresoDespacho.pdf`** (sin guiones ni CUI/radicado en el nombre; el expediente ya identifica el proceso).
+- **Supabase Storage no comprime** los objetos: no asumir reducción automática de tamaño; la optimización es responsabilidad del **origen del PDF** o de procesos explícitos de optimización **antes** de subir.

@@ -1,17 +1,26 @@
 import Paragraph from '@tiptap/extension-paragraph';
+import type { Editor } from '@tiptap/core';
 
 /** Espacio extra tipo Word «después del párrafo» (~10 pt). */
 export const MEMBRETE_PARAGRAPH_SPACE_PT = 10;
 
 const spaceCss = () => `${MEMBRETE_PARAGRAPH_SPACE_PT}pt`;
 
-declare module '@tiptap/core' {
-  interface Commands<ReturnType> {
-    /** Agrega o quita espacio antes del párrafo (cursor dentro del párrafo). */
-    toggleMembreteSpaceBefore: () => ReturnType;
-    /** Agrega o quita espacio después del párrafo (cursor dentro del párrafo). */
-    toggleMembreteSpaceAfter: () => ReturnType;
-  }
+type MembreteSpacingChain = {
+  toggleMembreteSpaceBefore: () => { run: () => boolean };
+  toggleMembreteSpaceAfter: () => { run: () => boolean };
+};
+
+function asMembreteSpacingChain(editor: Editor): MembreteSpacingChain {
+  return editor.chain().focus() as unknown as MembreteSpacingChain;
+}
+
+export function runMembreteToggleSpaceBefore(editor: Editor): void {
+  asMembreteSpacingChain(editor).toggleMembreteSpaceBefore().run();
+}
+
+export function runMembreteToggleSpaceAfter(editor: Editor): void {
+  asMembreteSpacingChain(editor).toggleMembreteSpaceAfter().run();
 }
 
 /**

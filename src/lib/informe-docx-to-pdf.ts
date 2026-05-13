@@ -74,6 +74,8 @@ export async function buildPdfBlobFromJudicialDocx(
   inner.style.boxShadow = '0 0 0 1px #e2e8f0';
   /** Debe ser opaco: html2canvas a menudo captura transparente si opacity ≈ 0. */
   inner.style.opacity = '1';
+  /** Igual que el host: si no, el lienzo a pantalla completa roba clics mientras corre html2canvas (UI “congelada”). */
+  inner.style.pointerEvents = 'none';
 
   const style = document.createElement('style');
   style.textContent = `
@@ -112,13 +114,17 @@ export async function buildPdfBlobFromJudicialDocx(
       Math.max(8, L.marginMm.left),
     ] as [number, number, number, number];
 
+    /** Documentos altos + scale 2 multiplican píxeles y bloquean el hilo principal varios segundos. */
+    const tallDoc = inner.scrollHeight > 3200;
+    const canvasScale = tallDoc ? 1 : 2;
+
     const rawOut = await html2pdf()
       .set({
         margin: marginMm,
         filename: 'informe-ingreso.pdf',
         image: { type: 'jpeg', quality: 0.94 },
         html2canvas: {
-          scale: 2,
+          scale: canvasScale,
           useCORS: true,
           allowTaint: true,
           logging: false,
@@ -128,6 +134,8 @@ export async function buildPdfBlobFromJudicialDocx(
           windowWidth: inner.scrollWidth,
           windowHeight: inner.scrollHeight,
         },
+        // html2pdf.js admite pagebreak en runtime; los tipos publicados suelen omitirlo.
+        // @ts-expect-error — opción válida para html2pdf.js
         pagebreak: { mode: ['css', 'legacy'] },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
       })

@@ -8,8 +8,10 @@ import {
   FileDown,
   Loader2,
   Send,
+  MessageSquarePlus,
 } from 'lucide-react';
-import type { JSONContent } from '@tiptap/core';
+import type { JSONContent, Editor } from '@tiptap/core';
+import { BubbleMenu } from '@tiptap/react/menus';
 import mammoth from 'mammoth';
 import type { Case, Document, DocumentTemplate } from '../../types';
 import type { PlantillasStateV2 } from '../../lib/plantillas-store';
@@ -35,17 +37,26 @@ import { generarDocxDesdePlantillaAlmacenada } from '../../lib/expediente-docx-f
 import { isTiptapDocJsonInput } from '../../lib/tiptap-to-docx';
 import { tiptapJsonToPlainText } from '../../lib/tiptap-to-plain-text';
 import { formatRadicado } from '../../lib/formatters';
+import { supabase } from '../../lib/supabase';
+import { recordBorradorAutoEnviadoRevision } from '../../lib/case-stages-service';
 import { DESPACHO_STAFF } from '../../lib/court-staff-assignees';
+import { marcadoresParaPlantilla } from '../../lib/plantilla-marcadores-catalog';
 import { defaultToggleDefsForPlantilla } from '../../lib/plantilla-template-default-toggles';
 import {
   defectoJustifyCuerpoInformeEnDoc,
   docToStorage,
+  parseStorageToDoc,
   plainTextToTiptapDoc,
-  tryParseTipTapDocFromContenidoBase,
 } from '../../lib/tiptap-template-storage';
 import { sanitizeCaseDocumentLogicalName } from '../../lib/case-document-storage';
-import { TemplateBodyEditor } from '../plantillas/TemplateBodyEditor';
+import type { CommentThreadsMap } from '../../lib/review-markup-payload';
+import { stripReviewCommentMarksFromTipTapDoc } from '../../lib/tiptap-strip-review-marks';
+import { JudicialDocEditor } from '../shared/JudicialDocEditor';
+import { TiptapDespachoReviewChrome } from '../plantillas/TiptapDespachoReviewChrome';
 import { DespachoBorradorWordPanel } from './DespachoBorradorWordPanel';
+
+/** Protocolo: sin guiones ni radicado (23 dígitos) en el nombre; el expediente identifica el proceso. */
+const DEFAULT_INFORME_INGRESO_PDF_NAME = 'InformeIngresoDespacho.pdf';
 
 type Props = {
   caseItem: Case;
@@ -81,7 +92,12 @@ export function CaseDespachoDocumentosPanel({
   const [informeToggleState, setInformeToggleState] = useState<Record<string, boolean>>({});
   const [autoToggleState, setAutoToggleState] = useState<Record<string, boolean>>({});
   const [informeDraft, setInformeDraft] = useState('');
+  /** Hilos de comentario en borrador informe (no persistidos; no van al .docx). */
+  const [informeCommentThreads, setInformeCommentThreads] = useState<CommentThreadsMap>({});
+  const [informeBodyEditor, setInformeBodyEditor] = useState<Editor | null>(null);
   const [autoDraft, setAutoDraft] = useState('');
+  const [autoBodyEditor, setAutoBodyEditor] = useState<Editor | null>(null);
+  const [autoCommentThreads, setAutoCommentThreads] = useState<CommentThreadsMap>({});
   const informeDraftTouchedRef = useRef(false);
   const autoDraftTouchedRef = useRef(false);
 
@@ -107,12 +123,7 @@ export function CaseDespachoDocumentosPanel({
     onAfterEnviarRevision?.();
   }, [nombreJuezRevision, onCaseUpdated, onAfterEnviarRevision]);
 
-  const defaultInformePdfNombre = useMemo(() => {
-    const safe = radSlug.replace(/[^\w.-]+/g, '_').slice(0, 80) || 'expediente';
-    return `Informe-ingreso-despacho_${safe}.pdf`;
-  }, [radSlug]);
-
-  const [informePdfNombre, setInformePdfNombre] = useState(defaultInformePdfNombre);
+  const [informePdfNombre, setInformePdfNombre] = useState(DEFAULT_INFORME_INGRESO_PDF_NAME);
 
   const refreshTemplates = useCallback(async () => {
     try {
@@ -172,6 +183,27 @@ export function CaseDespachoDocumentosPanel({
     [informeToggleDefsEffective],
   );
 
+  const informeCuerpoParseOpts = useMemo(() => ({ informeCuerpoJustifyDefecto: true } as const), []);
+
+  const informeDocContent = useMemo(
+    () => parseStorageToDoc(informeDraft, informeCuerpoParseOpts),
+    [informeDraft, informeCuerpoParseOpts],
+  );
+
+  const informeMarcadores = useMemo(() => marcadoresParaPlantilla('informe_ingreso'), []);
+
+  const informeResolveLabel = useCallback(
+    (key: string) => informeMarcadores.find((m) => m.clave === key)?.etiqueta ?? key,
+    [informeMarcadores],
+  );
+
+  const focusInformeDespachoCommentBox = useCallback(() => {
+    requestAnimationFrame(() => {
+      document.getElementById('tutelia-despacho-new-comment')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      (document.getElementById('tutelia-despacho-new-comment') as HTMLTextAreaElement | null)?.focus();
+    });
+  }, []);
+
   useEffect(() => {
     const defs = informeToggleDefsEffective;
     setInformeToggleState((prev) => {
@@ -187,8 +219,6 @@ export function CaseDespachoDocumentosPanel({
     () => autoToggleDefsEffective.map((d) => d.id).join('|'),
     [autoToggleDefsEffective],
   );
-
-  const autoPanelKey = `${selectedAutoId}|${autoToggleKey}`;
 
   useEffect(() => {
     const defs = autoToggleDefsEffective;
@@ -210,30 +240,41 @@ export function CaseDespachoDocumentosPanel({
     [caseItem, membreteState, informeTpl?.contenidoBase, informeToggleDefsEffective, informeToggleState],
   );
 
-  const informePlantillaEsTiptap = useMemo(
-    () => tryParseTipTapDocFromContenidoBase(informeTpl?.contenidoBase ?? undefined) != null,
-    [informeTpl?.contenidoBase],
-  );
-
-  const informeDraftRichSeed = useMemo(() => {
-    const doc = textoInformeIngresoBorradorTipTapDoc(caseItem, membreteState, informeTpl?.contenidoBase, {
+  /** Semilla TipTap para el borrador cuando no es plantilla Word-only (texto plano o plantilla rica → mismo editor). */
+  const informeEditorStorageSeed = useMemo(() => {
+    if (!informeTpl || informeTpl.docxStoragePath) return null;
+    const doc = textoInformeIngresoBorradorTipTapDoc(caseItem, membreteState, informeTpl.contenidoBase, {
       toggleDefs: informeToggleDefsEffective,
       toggleState: informeToggleState,
     });
     if (doc) return docToStorage(doc);
-    /** Plantilla en BD es TipTap pero el doc sustituido devolvió null (p. ej. `plainCheck` vacío): el editor necesita `tiptap:` válido, no cadena vacía. */
-    if (tryParseTipTapDocFromContenidoBase(informeTpl?.contenidoBase ?? undefined)) {
-      return docToStorage(defectoJustifyCuerpoInformeEnDoc(plainTextToTiptapDoc(textoInforme)));
-    }
-    return null;
+    return docToStorage(defectoJustifyCuerpoInformeEnDoc(plainTextToTiptapDoc(textoInforme)));
   }, [
+    informeTpl,
     caseItem,
     membreteState,
-    informeTpl?.contenidoBase,
     informeToggleDefsEffective,
     informeToggleState,
     textoInforme,
   ]);
+
+  const stripInformeBodyForExport = useCallback((body: string | JSONContent): string | JSONContent => {
+    if (typeof body === 'string') {
+      if (body.startsWith('tiptap:')) {
+        try {
+          const doc = parseStorageToDoc(body, { informeCuerpoJustifyDefecto: true });
+          return stripReviewCommentMarksFromTipTapDoc(doc);
+        } catch {
+          return body;
+        }
+      }
+      return body;
+    }
+    if (body && typeof body === 'object' && (body as JSONContent).type === 'doc') {
+      return stripReviewCommentMarksFromTipTapDoc(body as JSONContent);
+    }
+    return body;
+  }, []);
 
   const textoAuto = useMemo(
     () =>
@@ -244,14 +285,34 @@ export function CaseDespachoDocumentosPanel({
     [caseItem, membreteState, autoTpl?.contenidoBase, autoToggleDefsEffective, autoToggleState],
   );
 
+  const autoEditorStorageSeed = useMemo(() => {
+    if (!autoTpl || autoTpl.docxStoragePath) return null;
+    const doc = textoAutoAdmisorioBorradorTipTapDoc(caseItem, membreteState, autoTpl.contenidoBase, {
+      toggleDefs: autoToggleDefsEffective,
+      toggleState: autoToggleState,
+    });
+    if (doc) return docToStorage(doc);
+    return docToStorage(plainTextToTiptapDoc(textoAuto));
+  }, [autoTpl, caseItem, membreteState, autoToggleDefsEffective, autoToggleState, textoAuto]);
+
+  const autoDocContent = useMemo(() => parseStorageToDoc(autoDraft), [autoDraft]);
+
+  const autoMarcadores = useMemo(() => marcadoresParaPlantilla('auto_admisorio'), []);
+
+  const autoResolveLabel = useCallback(
+    (key: string) => autoMarcadores.find((m) => m.clave === key)?.etiqueta ?? key,
+    [autoMarcadores],
+  );
+
   const informeToggleSig = useMemo(() => JSON.stringify(informeToggleState), [informeToggleState]);
   const autoToggleSig = useMemo(() => JSON.stringify(autoToggleState), [autoToggleState]);
 
   const informeListo = Boolean(caseItem.informeIngresoRegistradoAt);
 
+  /** Solo al cambiar de expediente: no pisar el nombre si el usuario ya lo personalizó en este caso. */
   useEffect(() => {
-    setInformePdfNombre(defaultInformePdfNombre);
-  }, [caseId, defaultInformePdfNombre]);
+    setInformePdfNombre(DEFAULT_INFORME_INGRESO_PDF_NAME);
+  }, [caseId]);
 
   const nombrePdfEnExpediente = useMemo(() => {
     const id = caseItem.informeIngresoDocumentId;
@@ -262,33 +323,39 @@ export function CaseDespachoDocumentosPanel({
 
   useEffect(() => {
     informeDraftTouchedRef.current = false;
-    setInformeDraft(informePlantillaEsTiptap && informeDraftRichSeed ? informeDraftRichSeed : textoInforme);
-  }, [selectedInformeId, informeToggleKey, informePlantillaEsTiptap, informeDraftRichSeed, textoInforme]);
+    setInformeDraft(informeEditorStorageSeed ?? textoInforme);
+    setInformeCommentThreads({});
+  }, [selectedInformeId, informeToggleKey, informeEditorStorageSeed, textoInforme]);
 
   useEffect(() => {
     if (!informeDraftTouchedRef.current) {
-      setInformeDraft(informePlantillaEsTiptap && informeDraftRichSeed ? informeDraftRichSeed : textoInforme);
+      setInformeDraft(informeEditorStorageSeed ?? textoInforme);
     }
-  }, [textoInforme, informePlantillaEsTiptap, informeDraftRichSeed]);
+  }, [textoInforme, informeEditorStorageSeed]);
 
   useEffect(() => {
     autoDraftTouchedRef.current = false;
-    setAutoDraft(textoAuto);
-  }, [autoPanelKey]);
+    setAutoDraft(autoEditorStorageSeed ?? textoAuto);
+    setAutoCommentThreads({});
+  }, [selectedAutoId, autoToggleKey, autoEditorStorageSeed, textoAuto]);
+
+  useEffect(() => {
+    if (!autoDraftTouchedRef.current) {
+      setAutoDraft(autoEditorStorageSeed ?? textoAuto);
+    }
+  }, [textoAuto, autoEditorStorageSeed]);
 
   useEffect(() => {
     autoDraftTouchedRef.current = false;
-    setAutoDraft(textoAuto);
-  }, [autoToggleSig]);
-
-  useEffect(() => {
-    if (!autoDraftTouchedRef.current) setAutoDraft(textoAuto);
-  }, [textoAuto]);
+    setAutoDraft(autoEditorStorageSeed ?? textoAuto);
+    setAutoCommentThreads({});
+  }, [autoToggleSig, autoEditorStorageSeed, textoAuto]);
 
   useEffect(() => {
     informeDraftTouchedRef.current = false;
-    setInformeDraft(informePlantillaEsTiptap && informeDraftRichSeed ? informeDraftRichSeed : textoInforme);
-  }, [informeToggleSig]);
+    setInformeDraft(informeEditorStorageSeed ?? textoInforme);
+    setInformeCommentThreads({});
+  }, [informeToggleSig, informeEditorStorageSeed, textoInforme]);
 
   /** Cuerpo para Word generado en app: TipTap JSON si la plantilla en BD es rica y el usuario no editó el borrador plano. */
   const resolveInformeBodyForJudicialDocx = useCallback((): string | JSONContent => {
@@ -343,7 +410,7 @@ export function CaseDespachoDocumentosPanel({
         /* Word o mammoth: se usa texto plano sustituido */
       }
     }
-    const body = resolveInformeBodyForJudicialDocx();
+    const body = stripInformeBodyForExport(resolveInformeBodyForJudicialDocx());
     if (typeof body === 'string') return body.trim() || textoInforme.trim();
     if (isTiptapDocJsonInput(body)) {
       const t = tiptapJsonToPlainText(body).trim();
@@ -356,6 +423,7 @@ export function CaseDespachoDocumentosPanel({
     membreteState,
     resolveInformeBodyForJudicialDocx,
     textoInforme,
+    stripInformeBodyForExport,
   ]);
 
   const buildInformeDocxBlob = useCallback(async (): Promise<Blob> => {
@@ -368,7 +436,7 @@ export function CaseDespachoDocumentosPanel({
       );
     }
     return buildJudicialDocxBlob({
-      fullText: resolveInformeBodyForJudicialDocx(),
+      fullText: stripInformeBodyForExport(resolveInformeBodyForJudicialDocx()),
       kind: 'informe',
       imageDataUrl: membreteState.membrete.membreteImageDataUrl || null,
       pageLayout: informeTpl?.pageLayout ?? null,
@@ -382,6 +450,7 @@ export function CaseDespachoDocumentosPanel({
     caseItem,
     membreteState,
     resolveInformeBodyForJudicialDocx,
+    stripInformeBodyForExport,
   ]);
 
   const buildAutoDocxBlob = useCallback(async (): Promise<Blob> => {
@@ -411,25 +480,47 @@ export function CaseDespachoDocumentosPanel({
   ]);
 
   const confirmarInformeListo = async () => {
+    /**
+     * Mammoth + html2canvas + html2pdf en el hilo principal con .docx grandes (p. ej. plantilla Word pesada)
+     * congela la pestaña varios segundos; por encima de este umbral se usa PDF de texto (misma sustancia jurídica).
+     */
+    const DOCX_PDF_MAQUETADO_MAX_BYTES = 1.5 * 1024 * 1024;
+
     setWorkflowBusy(true);
+    setTplError(null);
     try {
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+
       const docxBlob = await buildInformeDocxBlob();
 
       let pdfBlob: Blob;
-      try {
-        pdfBlob = await buildPdfBlobFromJudicialDocx(docxBlob, informeTpl?.pageLayout ?? null);
-      } catch (e) {
-        console.warn('PDF maquetado (mismo Word que descarga) no disponible; se usa texto plano:', e);
+      if (docxBlob.size > DOCX_PDF_MAQUETADO_MAX_BYTES) {
+        console.info(
+          '[informe] DOCX >',
+          Math.round(DOCX_PDF_MAQUETADO_MAX_BYTES / 1024 / 1024),
+          'MB: PDF de texto plano (evita bloqueo del navegador).',
+        );
         const plain = await resolveInformePlainTextForPdf();
         pdfBlob = await buildInformeIngresoPlainTextPdfBlob({
           fullPlainText: plain,
           pageLayout: informeTpl?.pageLayout ?? null,
         });
+      } else {
+        try {
+          pdfBlob = await buildPdfBlobFromJudicialDocx(docxBlob, informeTpl?.pageLayout ?? null);
+        } catch (e) {
+          console.warn('PDF maquetado (mismo Word que descarga) no disponible; se usa texto plano:', e);
+          const plain = await resolveInformePlainTextForPdf();
+          pdfBlob = await buildInformeIngresoPlainTextPdfBlob({
+            fullPlainText: plain,
+            pageLayout: informeTpl?.pageLayout ?? null,
+          });
+        }
       }
 
       const ab = await pdfBlob.arrayBuffer();
       const pdfBytes = new Uint8Array(ab);
-      const displayName = sanitizeCaseDocumentLogicalName(informePdfNombre, defaultInformePdfNombre);
+      const displayName = sanitizeCaseDocumentLogicalName(informePdfNombre, DEFAULT_INFORME_INGRESO_PDF_NAME);
       await registerCaseInformeIngresoWithExpedientePdf({
         caseId,
         pdfBytes,
@@ -437,6 +528,8 @@ export function CaseDespachoDocumentosPanel({
         docs,
       });
       onCaseUpdated?.();
+    } catch (e) {
+      setTplError(e instanceof Error ? e.message : 'No se pudo registrar el PDF del informe en el expediente.');
     } finally {
       setWorkflowBusy(false);
     }
@@ -472,6 +565,9 @@ export function CaseDespachoDocumentosPanel({
       const blob = await buildInformeDocxBlob();
       const bytes = new Uint8Array(await blob.arrayBuffer());
       const displayName = nombreArchivoDocx(radSlug, 'Informe-ingreso');
+      const tipTapContent = informeTpl?.docxStoragePath
+        ? null
+        : (informeBodyEditor?.getJSON() ?? informeDocContent);
       await uploadGeneratedDocxToExpedienteWithWordReview({
         caseId,
         courtId: caseItem.courtId,
@@ -481,6 +577,7 @@ export function CaseDespachoDocumentosPanel({
         docs,
         documentType: 'borrador_informe_revision',
         actorUserName: revisionActorDisplayName,
+        tipTapContent,
       });
       afterEnviarRevisionOk();
     } catch (e) {
@@ -510,6 +607,7 @@ export function CaseDespachoDocumentosPanel({
       const blob = await buildAutoDocxBlob();
       const bytes = new Uint8Array(await blob.arrayBuffer());
       const displayName = nombreArchivoDocx(radSlug, 'Auto-admisorio');
+      const tipTapContent = autoTpl?.docxStoragePath ? null : (autoBodyEditor?.getJSON() ?? autoDocContent);
       await uploadGeneratedDocxToExpedienteWithWordReview({
         caseId,
         courtId: caseItem.courtId,
@@ -519,7 +617,13 @@ export function CaseDespachoDocumentosPanel({
         docs,
         documentType: 'borrador_auto_admisorio_revision',
         actorUserName: revisionActorDisplayName,
+        tipTapContent,
       });
+      try {
+        await recordBorradorAutoEnviadoRevision(supabase, { caseId, documentLabel: displayName });
+      } catch (e) {
+        console.error('REGISTRO_INTERNO_REVISION:', e);
+      }
       afterEnviarRevisionOk();
     } catch (e) {
       setTplError(e instanceof Error ? e.message : 'No se pudo enviar el auto a revisión.');
@@ -719,18 +823,57 @@ export function CaseDespachoDocumentosPanel({
               readOnlyExplanation="Plantilla Word subida: el .docx descargado se arma con marcadores en el archivo, no con el texto de esta caja (sirve de referencia y para copiar). Para cambiar el cuerpo use Word tras descargar o use una plantilla «texto en BD»."
               pageLayout={informeTpl?.pageLayout ?? null}
               draftBodySlot={
-                informePlantillaEsTiptap && !informeTpl?.docxStoragePath ? (
-                  <TemplateBodyEditor
+                !informeTpl?.docxStoragePath ? (
+                  <div
                     key={`informe-rich-${selectedInformeId}-${informeToggleKey}`}
-                    value={informeDraft}
-                    onChange={(next) => {
-                      informeDraftTouchedRef.current = true;
-                      setInformeDraft(next);
-                    }}
-                    templateTipo="informe_ingreso"
-                    label="Cuerpo del informe"
-                    disabled={Boolean(informeTpl?.docxStoragePath)}
-                  />
+                    className="flex w-full min-w-0 flex-col gap-0 lg:min-h-[min(60vh,28rem)] lg:flex-row lg:items-stretch"
+                  >
+                    <div className="flex min-h-0 min-w-0 w-full flex-col border-slate-300/70 lg:w-[70%] lg:flex-shrink-0 lg:border-r">
+                      {informeBodyEditor ? (
+                        <BubbleMenu
+                          editor={informeBodyEditor}
+                          shouldShow={({ editor: ed }) => !ed.state.selection.empty}
+                          options={{ placement: 'bottom-start' }}
+                        >
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={focusInformeDespachoCommentBox}
+                            className="inline-flex items-center gap-1.5 rounded-full border border-violet-300 bg-white px-3 py-1.5 text-xs font-semibold text-violet-900 shadow-md hover:bg-violet-50"
+                          >
+                            <MessageSquarePlus className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                            Comentario en el margen
+                          </button>
+                        </BubbleMenu>
+                      ) : null}
+                      <JudicialDocEditor
+                        unframed
+                        despachoSheetChrome
+                        content={informeDocContent}
+                        onChange={(json) => {
+                          informeDraftTouchedRef.current = true;
+                          setInformeDraft(docToStorage(json));
+                        }}
+                        readOnly={false}
+                        placeholder="Redacta el documento aquí..."
+                        minHeight="600px"
+                        plantillaResolveLabel={informeResolveLabel}
+                        showComments
+                        hideInlineCommentBubble
+                        onEditorReady={setInformeBodyEditor}
+                        className="tiptap-template-focus min-w-0 px-0"
+                      />
+                    </div>
+                    <div className="flex min-h-[min(36vh,16rem)] w-full min-w-0 flex-col lg:min-h-0 lg:w-[30%] lg:flex-shrink-0">
+                      <TiptapDespachoReviewChrome
+                        editor={informeBodyEditor}
+                        disabled={false}
+                        displayName={revisionActorDisplayName ?? null}
+                        threads={informeCommentThreads}
+                        onThreadsChange={setInformeCommentThreads}
+                      />
+                    </div>
+                  </div>
                 ) : undefined
               }
             />
@@ -745,7 +888,7 @@ export function CaseDespachoDocumentosPanel({
                   value={informePdfNombre}
                   onChange={(e) => setInformePdfNombre(e.target.value)}
                   className="input-modern mt-1 w-full max-w-xl font-mono text-sm text-slate-900"
-                  placeholder={defaultInformePdfNombre}
+                  placeholder={DEFAULT_INFORME_INGRESO_PDF_NAME}
                   disabled={workflowBusy}
                   spellCheck={false}
                   autoComplete="off"
@@ -911,6 +1054,60 @@ export function CaseDespachoDocumentosPanel({
               readOnlyDraft={Boolean(autoTpl?.docxStoragePath)}
               readOnlyExplanation="Plantilla Word subida: el .docx descargado se arma con marcadores en el archivo, no con el texto de esta caja (sirve de referencia y para copiar)."
               pageLayout={autoTpl?.pageLayout ?? null}
+              draftBodySlot={
+                !autoTpl?.docxStoragePath ? (
+                  <div
+                    key={`auto-rich-${selectedAutoId}-${autoToggleKey}`}
+                    className="flex w-full min-w-0 flex-col gap-0 lg:min-h-[min(60vh,28rem)] lg:flex-row lg:items-stretch"
+                  >
+                    <div className="flex min-h-0 min-w-0 w-full flex-col border-slate-300/70 lg:w-[70%] lg:flex-shrink-0 lg:border-r">
+                      {autoBodyEditor ? (
+                        <BubbleMenu
+                          editor={autoBodyEditor}
+                          shouldShow={({ editor: ed }) => !ed.state.selection.empty}
+                          options={{ placement: 'bottom-start' }}
+                        >
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={focusInformeDespachoCommentBox}
+                            className="inline-flex items-center gap-1.5 rounded-full border border-violet-300 bg-white px-3 py-1.5 text-xs font-semibold text-violet-900 shadow-md hover:bg-violet-50"
+                          >
+                            <MessageSquarePlus className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                            Comentario en el margen
+                          </button>
+                        </BubbleMenu>
+                      ) : null}
+                      <JudicialDocEditor
+                        unframed
+                        despachoSheetChrome
+                        content={autoDocContent}
+                        onChange={(json) => {
+                          autoDraftTouchedRef.current = true;
+                          setAutoDraft(docToStorage(json));
+                        }}
+                        readOnly={false}
+                        placeholder="Redacta el documento aquí..."
+                        minHeight="600px"
+                        plantillaResolveLabel={autoResolveLabel}
+                        showComments
+                        hideInlineCommentBubble
+                        onEditorReady={setAutoBodyEditor}
+                        className="tiptap-template-focus min-w-0 px-0"
+                      />
+                    </div>
+                    <div className="flex min-h-[min(36vh,16rem)] w-full min-w-0 flex-col lg:min-h-0 lg:w-[30%] lg:flex-shrink-0">
+                      <TiptapDespachoReviewChrome
+                        editor={autoBodyEditor}
+                        disabled={false}
+                        displayName={revisionActorDisplayName ?? null}
+                        threads={autoCommentThreads}
+                        onThreadsChange={setAutoCommentThreads}
+                      />
+                    </div>
+                  </div>
+                ) : undefined
+              }
             />
           ) : null}
         </div>

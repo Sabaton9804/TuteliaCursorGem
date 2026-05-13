@@ -108,7 +108,7 @@ export function AssignmentNotificationBell({ userId }: { userId: string | null |
           void load();
         }}
         className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-        aria-label="Notificaciones de asignación"
+        aria-label="Notificaciones"
       >
         <Bell className="h-5 w-5" aria-hidden />
         {unread > 0 ? (
@@ -120,7 +120,7 @@ export function AssignmentNotificationBell({ userId }: { userId: string | null |
       {open ? (
         <div className="absolute right-0 top-full z-50 mt-2 w-[min(100vw-2rem,22rem)] rounded-xl border border-slate-100 bg-white py-2 shadow-xl">
           <div className="border-b border-slate-50 px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-            Asignaciones
+            Notificaciones
           </div>
           {loading ? (
             <p className="px-4 py-6 text-xs text-slate-500">Cargando…</p>

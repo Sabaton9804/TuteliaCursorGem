@@ -1,5 +1,7 @@
 import { supabase } from './supabase';
+import { ensureSupabaseSessionForWrites } from './supabase-write-auth';
 import type {
+  CaseWordReviewMarkupV1,
   Document,
   DocumentTemplate,
   DocumentTemplateCategoria,
@@ -13,7 +15,8 @@ import { DEFAULT_NOTEBOOK_CODE } from './expediente-notebook';
 import { nextSortOrderInPrincipalNotebook } from './expediente-document-order';
 import { createCaseWordReview } from './case-word-reviews';
 import { insertWordReviewJudgeNotifications } from './word-review-notifications';
-import { ensureSupabaseSessionForWrites } from './supabase-write-auth';
+import type { JSONContent } from '@tiptap/core';
+import { docToStorage } from './tiptap-template-storage';
 import { userFacingSupabaseError } from './supabase-user-error';
 
 function parseToggleDefs(raw: unknown): DocumentTemplateToggleDef[] {
@@ -239,6 +242,8 @@ export async function registerCaseInformeIngresoWithExpedientePdf(opts: {
 /**
  * Sube un .docx generado al cuaderno principal del expediente e inicia un ciclo en «Documentos por revisar».
  * Los autos del despacho deben usar este flujo (no hay PDF directo al expediente desde generar documentos).
+ * Si se envía `tipTapContent`, se guarda en `review_markup_json` como `{ v: 1, storage: "tiptap:…" }` para que el juez
+ * abra el mismo documento en Tutelia sin depender de Mammoth sobre el .docx.
  */
 export async function uploadGeneratedDocxToExpedienteWithWordReview(opts: {
   caseId: string;
@@ -252,6 +257,8 @@ export async function uploadGeneratedDocxToExpedienteWithWordReview(opts: {
   /** Texto legible para la notificación al juez (por defecto el nombre del archivo). */
   documentLabel?: string;
   actorUserName?: string;
+  /** Contenido del editor judicial al enviar a revisión (misma vista que verá el juez en Tutelia). */
+  tipTapContent?: JSONContent | null;
 }): Promise<{ documentId: string; reviewId: string }> {
   await ensureSupabaseSessionForWrites();
   const sortOrder = nextSortOrderInPrincipalNotebook(opts.docs);
@@ -282,7 +289,12 @@ export async function uploadGeneratedDocxToExpedienteWithWordReview(opts: {
   };
 
   const { id: documentId } = await insertCaseDocumentRowReturningId(supabase, row);
-  const review = await createCaseWordReview(opts.caseId, documentId);
+
+  const reviewMarkupJson: CaseWordReviewMarkupV1 | null =
+    opts.tipTapContent != null && opts.tipTapContent.type === 'doc'
+      ? { v: 1, storage: docToStorage(opts.tipTapContent) }
+      : null;
+  const review = await createCaseWordReview(opts.caseId, documentId, reviewMarkupJson);
   const label = (opts.documentLabel ?? name).trim() || name;
   const actor = (opts.actorUserName ?? 'Usuario').trim() || 'Usuario';
   await insertWordReviewJudgeNotifications(supabase, {

@@ -1,9 +1,25 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FileDown, FileText, Gavel, Loader2, RefreshCw, Send } from 'lucide-react';
+import { Copy, FileDown, FileText, Gavel, Loader2, RefreshCw, Send } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { DESPACHO_STAFF } from '../../lib/court-staff-assignees';
 import { downloadCaseDocxFromStoragePath } from '../../lib/download-case-docx';
-import type { CaseWordReview, Document, UserProfile, UserRole, WordReviewStatus } from '../../types';
+import type {
+  Case,
+  CaseWordReview,
+  CaseWordReviewMarkupV1,
+  Document,
+  UserProfile,
+  UserRole,
+  WordReviewStatus,
+} from '../../types';
+import {
+  insertWordReviewSustanciadorNotifications,
+  type WordReviewSustanciadorNotifyCaseContext,
+} from '../../lib/word-review-notifications';
+import { applyStageTransitionJudgeApprovedBorrador } from '../../lib/case-stages-service';
+import { docToStorage, parseStorageToDoc } from '../../lib/tiptap-template-storage';
+import { ensureTipTapDocJSON, isTipTapDocSubstantivelyEmpty } from '../../lib/docx-to-tiptap-review-seed';
+import type { JSONContent } from '@tiptap/core';
 import { caseDocumentRawLabel } from '../../lib/case-document-display-name';
 import { sanitizeExpedienteFilenameForDisplay } from '../../lib/sanitize-expediente-filename';
 import { isCaseDocumentDocx, isCaseDocumentPdf } from '../../lib/expediente-docx';
@@ -12,11 +28,11 @@ import {
   fetchCaseWordReviews,
   updateCaseWordReview,
 } from '../../lib/case-word-reviews';
-import { ExpedienteDocxPreview } from './ExpedienteDocxPreview';
+import { fetchCourtBranding } from '../../lib/court-branding';
+import type { PlantillasStateV2 } from '../../lib/plantillas-store';
+import { loadPlantillas } from '../../lib/plantillas-store';
 import {
   WordReviewRichEditor,
-  parseReviewMarkupPayload,
-  type ReviewMarkupPayloadV1,
   type WordReviewRichSaverApi,
 } from './WordReviewRichEditor';
 
@@ -25,6 +41,12 @@ type Props = {
   docs: Document[];
   profile: UserProfile | null;
   onRefetchDocs: () => void | Promise<void>;
+  /** Tras aprobar borrador: actualizar expediente (p. ej. plazo / etapas). */
+  onRefetchCase?: () => void | Promise<void>;
+  /** Reservados para la vista integrada con expediente y membrete (restaurar desde historial local si faltan). */
+  caseItem?: Case | null;
+  courtId?: string;
+  notifyCaseContext?: WordReviewSustanciadorNotifyCaseContext | null;
 };
 
 /** Perfiles que ven «Documentos por revisar» y pueden avanzar cualquier paso (carga en expediente la hace el mismo conjunto). */
@@ -41,6 +63,12 @@ function roleCanOpenReview(role: UserRole | undefined): boolean {
   );
 }
 
+/** Edición TipTap en «pendiente de juez»: juez, asistente judicial o administrador (pruebas / soporte). */
+function roleCanEditPendingJudgeReview(role: UserRole | undefined): boolean {
+  if (!role) return false;
+  return role === 'judge' || role === 'asistente_judicial' || role === 'admin';
+}
+
 const STATUS_LABEL: Record<WordReviewStatus, string> = {
   pendiente_juez: 'Pendiente de revisión (despacho)',
   observaciones_juez: 'Con observaciones — corrección de borrador',
@@ -52,16 +80,75 @@ function docLabel(d: Document): string {
   return sanitizeExpedienteFilenameForDisplay(caseDocumentRawLabel(d));
 }
 
+function docFromMarkupStorageString(raw: string): JSONContent {
+  const t = raw.trim();
+  if (!t) return { type: 'doc', content: [{ type: 'paragraph' }] };
+  if (t.startsWith('tiptap:')) return parseStorageToDoc(t);
+  if (t.startsWith('{')) {
+    try {
+      const j = JSON.parse(t) as JSONContent;
+      if (j?.type === 'doc') return ensureTipTapDocJSON(j);
+    } catch {
+      /* seguir */
+    }
+  }
+  return parseStorageToDoc(t);
+}
+
+function reviewMarkupRowToStorageString(m: CaseWordReview['reviewMarkupJson']): string {
+  if (!m) return '';
+
+  const fromDoc = (): string => {
+    if (!m.doc) return '';
+    try {
+      return docToStorage(ensureTipTapDocJSON(m.doc as JSONContent));
+    } catch {
+      return '';
+    }
+  };
+
+  const st = m.storage as unknown;
+  if (typeof st === 'string' && st.trim()) {
+    const trimmed = st.trim();
+    const parsed = docFromMarkupStorageString(trimmed);
+    if (!isTipTapDocSubstantivelyEmpty(parsed)) return trimmed;
+    const d = fromDoc();
+    if (d) return d;
+    return trimmed;
+  }
+  if (st && typeof st === 'object' && !Array.isArray(st)) {
+    try {
+      return docToStorage(ensureTipTapDocJSON(st as JSONContent));
+    } catch {
+      return fromDoc();
+    }
+  }
+  return fromDoc();
+}
+
 function hasMeaningfulReviewMarkup(row: CaseWordReview): boolean {
-  const p = parseReviewMarkupPayload(row.reviewMarkupJson);
-  if (!p?.doc) return false;
-  return JSON.stringify(p.doc).length > 100;
+  const s = reviewMarkupRowToStorageString(row.reviewMarkupJson);
+  if (!s.trim()) return false;
+  try {
+    return !isTipTapDocSubstantivelyEmpty(docFromMarkupStorageString(s));
+  } catch {
+    return s.length > 90;
+  }
 }
 
 const JUEZ_REVISION_ORGANIGRAMA =
   DESPACHO_STAFF.find((p) => p.courtRole === 'judge')?.name?.trim() || '—';
 
-export function CaseWordReviewPanel({ caseId, docs, profile, onRefetchDocs }: Props) {
+export function CaseWordReviewPanel({
+  caseId,
+  docs,
+  profile,
+  onRefetchDocs,
+  onRefetchCase,
+  caseItem,
+  courtId = '',
+  notifyCaseContext,
+}: Props) {
   const [rows, setRows] = useState<CaseWordReview[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -73,6 +160,7 @@ export function CaseWordReviewPanel({ caseId, docs, profile, onRefetchDocs }: Pr
   const [draftPdf, setDraftPdf] = useState<Record<string, string>>({});
   const [docxDownloadFor, setDocxDownloadFor] = useState<string | null>(null);
   const reviewFlushRef = useRef<Record<string, WordReviewRichSaverApi | null>>({});
+  const [membreteState, setMembreteState] = useState<PlantillasStateV2>(() => loadPlantillas());
 
   const role = profile?.role;
   const puedeDespacho = roleCanOpenReview(role);
@@ -117,6 +205,26 @@ export function CaseWordReviewPanel({ caseId, docs, profile, onRefetchDocs }: Pr
   }, [load]);
 
   useEffect(() => {
+    const cid = courtId.trim();
+    if (!cid) {
+      setMembreteState(loadPlantillas());
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const m = await fetchCourtBranding(cid);
+        if (!cancelled) setMembreteState({ version: 3, membrete: m });
+      } catch {
+        if (!cancelled) setMembreteState(loadPlantillas());
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [courtId]);
+
+  useEffect(() => {
     if (!caseId) return;
     const ch = supabase
       .channel(`case-word-reviews-${caseId}`)
@@ -138,11 +246,15 @@ export function CaseWordReviewPanel({ caseId, docs, profile, onRefetchDocs }: Pr
     await onRefetchDocs();
   };
 
-  const persistReviewMarkup = useCallback(async (reviewId: string, payload: ReviewMarkupPayloadV1) => {
+  const persistReviewMarkup = useCallback(async (reviewId: string, storage: string) => {
+    const trimmed = storage.trim();
+    const payload: CaseWordReviewMarkupV1 | null = trimmed ? { v: 1, storage: trimmed } : null;
     try {
       await updateCaseWordReview(reviewId, { reviewMarkupJson: payload });
-      setRows((prev) => prev.map((row) => (row.id === reviewId ? { ...row, reviewMarkupJson: payload } : row)));
-      return payload;
+      setRows((prev) =>
+        prev.map((row) => (row.id === reviewId ? { ...row, reviewMarkupJson: payload ?? undefined } : row)),
+      );
+      return payload ?? undefined;
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'No se pudo guardar la revisión en Tutelia.';
       setErr(msg);
@@ -278,6 +390,8 @@ export function CaseWordReviewPanel({ caseId, docs, profile, onRefetchDocs }: Pr
             const reply = draftReply[r.id] ?? r.sustanciadorReply ?? '';
             const newWordPick = draftNewWord[r.id] ?? '';
             const pdfPick = draftPdf[r.id] ?? '';
+            const puedeEditarRevision =
+              r.status === 'pendiente_juez' && roleCanEditPendingJudgeReview(role);
 
             return (
               <article key={r.id} className="card-modern overflow-hidden">
@@ -292,7 +406,19 @@ export function CaseWordReviewPanel({ caseId, docs, profile, onRefetchDocs }: Pr
                       Revisión judicial de referencia:{' '}
                       <span className="font-semibold text-slate-700">{JUEZ_REVISION_ORGANIGRAMA}</span>
                     </p>
-                    <p className="mt-1 font-mono text-[10px] text-slate-400">#{r.id.slice(0, 8)}</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <p className="break-all font-mono text-[10px] text-slate-500" title="UUID de la fila case_word_reviews">
+                        Revisión (SQL): <span className="text-slate-700">{r.id}</span>
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => void navigator.clipboard.writeText(r.id)}
+                        className="inline-flex shrink-0 items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-600 hover:bg-slate-100"
+                      >
+                        <Copy className="h-3 w-3" />
+                        Copiar id
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -329,37 +455,52 @@ export function CaseWordReviewPanel({ caseId, docs, profile, onRefetchDocs }: Pr
                           Descargar y abrir en Word
                         </button>
                         <p className="w-full text-[10px] leading-snug text-slate-500">
-                          El enlace directo a Word con URL en la nube suele fallar en Office (comando no reconocido). La
-                          forma fiable es <strong className="font-semibold text-slate-700">descargar el .docx</strong> y
-                          abrirlo con doble clic; así conserva membrete, márgenes y podrá usar comentarios y control de
-                          cambios.
+                          El formato fiel al Word (membrete, márgenes, impresión) lo obtiene con{' '}
+                          <strong className="font-semibold text-slate-700">Descargar y abrir en Word</strong>. La
+                          revisión en Tutelia es un solo editor sobre el texto convertido desde ese archivo (sin segunda
+                          vista HTML del mismo documento aquí).
                         </p>
                       </div>
-                      <ExpedienteDocxPreview
-                        compact
-                        storagePath={wordDoc.storagePath}
-                        filename={docLabel(wordDoc)}
-                      />
-                      <div className="space-y-2 border-t border-slate-100 pt-4">
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-700">
-                          Revisión integral en Tutelia
-                        </p>
-                        <p className="text-[10px] leading-snug text-slate-600">
-                          Edite el texto, use subrayado y resaltado, y añada{' '}
-                          <strong className="font-semibold text-slate-800">comentarios</strong> con el globo al
-                          seleccionar un fragmento. Se guarda automáticamente en la plataforma (no modifica el .docx del
-                          expediente).
-                        </p>
-                        <WordReviewRichEditor
-                          storagePath={wordDoc.storagePath}
-                          savedMarkup={parseReviewMarkupPayload(r.reviewMarkupJson)}
-                          readOnly={r.status !== 'pendiente_juez'}
-                          onDebouncedSave={(payload) => persistReviewMarkup(r.id, payload)}
-                          registerSaverApi={(api) => {
-                            reviewFlushRef.current[r.id] = api;
-                          }}
-                        />
-                      </div>
+                      {r.status !== 'observaciones_juez' ? (
+                        <div className="space-y-2 border-t border-slate-100 pt-4">
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-700">
+                            {r.status === 'pendiente_juez'
+                              ? 'Revisión integral en Tutelia'
+                              : 'Revisión en Tutelia (referencia)'}
+                          </p>
+                          <p className="text-[10px] leading-snug text-slate-600">
+                            {r.status === 'pendiente_juez' ? (
+                              <>
+                                Edite el texto, use subrayado y resaltado, y añada{' '}
+                                <strong className="font-semibold text-slate-800">comentarios</strong> con el globo al
+                                seleccionar un fragmento. Se guarda automáticamente en la plataforma (no modifica el
+                                .docx del expediente).
+                              </>
+                            ) : (
+                              <>Vista de lo guardado en Tutelia en esta etapa (solo lectura).</>
+                            )}
+                          </p>
+                          <WordReviewRichEditor
+                            key={r.id}
+                            storagePath={wordDoc.storagePath}
+                            reviewMarkup={reviewMarkupRowToStorageString(r.reviewMarkupJson)}
+                            reviewMarkupJsonAbsent={r.reviewMarkupJson == null}
+                            membrete={membreteState.membrete}
+                            reviewActorDisplayName={
+                              profile?.name?.trim() || profile?.email?.trim() || null
+                            }
+                            commentRailDomIdSuffix={r.id}
+                            puedeEditar={puedeEditarRevision}
+                            devAuth={
+                              import.meta.env.DEV ? { role, status: r.status } : undefined
+                            }
+                            onDebouncedSave={(storage) => persistReviewMarkup(r.id, storage)}
+                            registerSaverApi={(api) => {
+                              reviewFlushRef.current[r.id] = api;
+                            }}
+                          />
+                        </div>
+                      ) : null}
                     </div>
                   ) : wordDoc ? (
                     <p className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-[11px] text-amber-950">
@@ -397,11 +538,63 @@ export function CaseWordReviewPanel({ caseId, docs, profile, onRefetchDocs }: Pr
                                 );
                                 return;
                               }
+                              if (import.meta.env.DEV) {
+                                console.log('[Devolver observaciones] inicio', {
+                                  reviewId: r.id,
+                                  notesLen: notes.trim().length,
+                                  hasMarkup: hasMeaningfulReviewMarkup(rowForRule),
+                                });
+                              }
                               await updateCaseWordReview(r.id, {
                                 judgeNotes: notes.trim() || null,
                                 status: 'observaciones_juez',
                               });
+                              if (import.meta.env.DEV) {
+                                console.log('[Devolver observaciones] updateCaseWordReview OK');
+                              }
+                              setRows((prev) =>
+                                prev.map((row) =>
+                                  row.id === r.id
+                                    ? {
+                                        ...row,
+                                        status: 'observaciones_juez',
+                                        judgeNotes: notes.trim() || undefined,
+                                      }
+                                    : row,
+                                ),
+                              );
                               await refreshAll();
+                              if (import.meta.env.DEV) {
+                                console.log('[Devolver observaciones] refreshAll OK');
+                              }
+                              if (notifyCaseContext) {
+                                try {
+                                  await ensureSupabaseSessionForWrites();
+                                  const actor =
+                                    profile?.name?.trim() ||
+                                    profile?.email?.trim() ||
+                                    'Usuario';
+                                  const docLabelText = wordDoc ? docLabel(wordDoc) : 'Documento Word';
+                                  await insertWordReviewSustanciadorNotifications(supabase, {
+                                    caseContext: notifyCaseContext,
+                                    caseId,
+                                    reviewId: r.id,
+                                    documentLabel: docLabelText,
+                                    actorUserName: actor,
+                                    reviewCreatedBy: r.createdBy,
+                                  });
+                                  if (import.meta.env.DEV) {
+                                    console.log('[Devolver observaciones] notificación sustanciador OK');
+                                  }
+                                } catch (ne) {
+                                  console.error('[Devolver observaciones] notificación falló (el estado ya se guardó):', ne);
+                                  setErr(
+                                    ne instanceof Error
+                                      ? `Estado actualizado; aviso al sustanciador falló: ${ne.message}`
+                                      : 'Estado actualizado; no se pudo enviar el aviso al sustanciador.',
+                                  );
+                                }
+                              }
                             } catch (e) {
                               setErr(e instanceof Error ? e.message : 'Error al guardar.');
                             } finally {
@@ -422,6 +615,22 @@ export function CaseWordReviewPanel({ caseId, docs, profile, onRefetchDocs }: Pr
                                 judgeNotes: notes.trim() || null,
                                 status: 'aprobado_firma_pendiente',
                               });
+                              if (courtId && caseItem?.id) {
+                                const wordDoc = docs.find((d) => d.id === r.wordDocumentId);
+                                try {
+                                  await applyStageTransitionJudgeApprovedBorrador(supabase, {
+                                    caseId,
+                                    courtId,
+                                    radicado: caseItem.radicado,
+                                    caseType: caseItem.caseType ?? 'tutela_primera',
+                                    caseAssignedTo: caseItem.assignedTo,
+                                    wordDocumentType: wordDoc?.type,
+                                  });
+                                } catch (se) {
+                                  console.error('Cambio de etapa automático:', se);
+                                }
+                                await onRefetchCase?.();
+                              }
                               await refreshAll();
                             } catch (e) {
                               setErr(e instanceof Error ? e.message : 'Error al aprobar.');
@@ -445,9 +654,19 @@ export function CaseWordReviewPanel({ caseId, docs, profile, onRefetchDocs }: Pr
                             Revisión en Tutelia (guardada)
                           </p>
                           <WordReviewRichEditor
+                            key={`${r.id}-readonly`}
                             storagePath={wordDoc.storagePath}
-                            savedMarkup={parseReviewMarkupPayload(r.reviewMarkupJson)}
-                            readOnly
+                            reviewMarkup={reviewMarkupRowToStorageString(r.reviewMarkupJson)}
+                            reviewMarkupJsonAbsent={r.reviewMarkupJson == null}
+                            membrete={membreteState.membrete}
+                            reviewActorDisplayName={
+                              profile?.name?.trim() || profile?.email?.trim() || null
+                            }
+                            commentRailDomIdSuffix={`${r.id}-readonly`}
+                            puedeEditar={false}
+                            devAuth={
+                              import.meta.env.DEV ? { role, status: r.status } : undefined
+                            }
                           />
                         </div>
                       ) : null}

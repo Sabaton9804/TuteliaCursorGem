@@ -237,15 +237,6 @@ export async function buildJudicialDocxBlob(opts: {
     opts.kind === 'informe' ? paragraphsFromInforme(opts.fullText, style) : paragraphsFromAuto(opts.fullText, style);
   children.push(...bodyParas);
 
-  children.push(emptyParagraph());
-  children.push(
-    textParagraph(
-      'Documento generado desde Tutelia — borrador asistido. Debe revisarse jurídicamente antes de notificar.',
-      AlignmentType.CENTER,
-      style,
-    ),
-  );
-
   const m = L.marginMm;
   const doc = new Document({
     sections: [

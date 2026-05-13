@@ -246,3 +246,12 @@
   border-bottom: 2px solid rgb(245 158 11 / 0.95);
   cursor: help;
 }
+
+/* Borrador despacho (JudicialDocEditor + despachoSheetChrome): listas alineadas a la izquierda sobre cuerpo justificado */
+.judicial-despacho-sheet-editor .ProseMirror ul,
+.judicial-despacho-sheet-editor .ProseMirror ol {
+  text-align: start;
+}
+.judicial-despacho-sheet-editor .ProseMirror li p {
+  text-align: inherit;
+}

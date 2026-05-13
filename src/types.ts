@@ -21,6 +21,15 @@ export interface UserProfile {
 
 export type CaseStatus = 'received' | 'admitted' | 'transfer' | 'judgment' | 'archived';
 
+/** Clasificación al radicar (columna `cases.case_type`). */
+export type CaseType = 'tutela_primera' | 'tutela_segunda' | 'consulta_desacato';
+
+/** Quién impugna en segunda instancia (`cases.appellant`). */
+export type CaseAppellant = 'accionante' | 'accionado';
+
+/** Sentido del fallo de origen (`cases.origin_ruling`, sin tilde por CHECK en BD). */
+export type CaseOriginRuling = 'concedio' | 'nego';
+
 /** Plantillas documentales por despacho (tabla `document_templates`). */
 export type DocumentTemplateCategoria = 'despacho' | 'secretaria';
 
@@ -116,6 +125,13 @@ export interface Case {
   /** Al fallar o archivar: tipo de decisión para estadística. */
   decisionType?: DecisionType;
   legalIdentificaciones?: string;
+  caseType?: CaseType;
+  originCourt?: string;
+  originRadicado?: string;
+  appellant?: CaseAppellant;
+  originRuling?: CaseOriginRuling;
+  /** Consulta de desacato: decisión o acto objeto de consulta. */
+  conductDescription?: string;
 }
 
 /** Documentos por revisar (Word) — tabla `case_word_reviews`. */
@@ -126,7 +142,17 @@ export type WordReviewStatus =
   | 'cerrado_con_pdf_firmado';
 
 /** Revisión enriquecida en Tutelia (TipTap); columna `review_markup_json`. */
-export type CaseWordReviewMarkupV1 = { v: 1; doc: Record<string, unknown> };
+export type CaseWordReviewMarkupV1 = {
+  v: 1;
+  /** Legacy: JSON TipTap. Preferir `storage` (`tiptap:` + JSON) para nuevas escrituras. */
+  doc?: Record<string, unknown>;
+  /** Serialización unificada (`docToStorage` / `parseStorageToDoc`). */
+  storage?: string;
+  /** Contenido al abrir el ciclo (p. ej. semilla Mammoth); para resumen diff post-revisión. */
+  baselineDoc?: Record<string, unknown>;
+  commentThreads?: Record<string, unknown>;
+  previewSketch?: Record<string, unknown>;
+};
 
 export interface CaseWordReview {
   id: string;

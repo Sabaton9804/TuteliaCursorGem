@@ -1,0 +1,149 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { UserRole } from '../types';
+import { isPostgrestTableMissingError } from './supabase-user-error';
+import { fetchProfilesByCourtAndRoles } from './profile-notification-recipients';
+import type { CaseStageCode } from './case-workflow-stages';
+
+const SECRETARIA_NOTIFICATION_ROLES: UserRole[] = ['clerk', 'escribiente', 'official'];
+const ENCARGADO_REMISION_ROLES: UserRole[] = ['official', 'asistente_judicial'];
+
+async function insertNotificationRows(
+  supabase: SupabaseClient,
+  opts: {
+    courtId: string;
+    caseId: string;
+    recipientIds: string[];
+    kind: string;
+    title: string;
+    body: string;
+    metadata: Record<string, unknown>;
+  },
+): Promise<void> {
+  for (const recipient_user_id of opts.recipientIds) {
+    const { error: insErr } = await supabase.from('user_notifications').insert({
+      court_id: opts.courtId,
+      case_id: opts.caseId,
+      recipient_user_id,
+      kind: opts.kind,
+      title: opts.title,
+      body: opts.body,
+      metadata: opts.metadata,
+    });
+    if (insErr && !isPostgrestTableMissingError(insErr, 'user_notifications')) {
+      console.error('user_notifications insert (workflow stage):', insErr);
+    }
+  }
+}
+
+/**
+ * Avisos in-app al **entrar** en una etapa del carril (tras insertar `case_stages`).
+ */
+export async function insertWorkflowStageEntryNotifications(
+  supabase: SupabaseClient,
+  opts: {
+    courtId: string;
+    caseId: string;
+    radicado: string;
+    enteredStage: CaseStageCode;
+  },
+): Promise<void> {
+  const rad = opts.radicado.trim() || '—';
+
+  switch (opts.enteredStage) {
+    case 'NOTIFICACION_AUTO_ADMISORIO': {
+      const profiles = await fetchProfilesByCourtAndRoles(
+        supabase,
+        opts.courtId,
+        SECRETARIA_NOTIFICATION_ROLES,
+      );
+      const title = `Auto admisorio firmado — ${rad} — Generar oficios de notificación`;
+      const body = 'Etapa abierta en el carril del expediente.';
+      await insertNotificationRows(supabase, {
+        courtId: opts.courtId,
+        caseId: opts.caseId,
+        recipientIds: profiles.map((p) => p.id),
+        kind: 'workflow_notificacion_auto_admisorio',
+        title,
+        body,
+        metadata: { radicado: rad, stage_code: opts.enteredStage },
+      });
+      break;
+    }
+    case 'INGRESO_DESPACHO_FALLO': {
+      const profiles = await fetchProfilesByCourtAndRoles(supabase, opts.courtId, ['sustanciador']);
+      const title = `Expediente listo para proyección de fallo — ${rad}`;
+      const body = 'Revise el expediente y las tareas del flujo.';
+      await insertNotificationRows(supabase, {
+        courtId: opts.courtId,
+        caseId: opts.caseId,
+        recipientIds: profiles.map((p) => p.id),
+        kind: 'workflow_ingreso_despacho_fallo',
+        title,
+        body,
+        metadata: { radicado: rad, stage_code: opts.enteredStage },
+      });
+      break;
+    }
+    case 'NOTIFICACION_FALLO': {
+      const profiles = await fetchProfilesByCourtAndRoles(
+        supabase,
+        opts.courtId,
+        SECRETARIA_NOTIFICATION_ROLES,
+      );
+      const title = `Fallo firmado — ${rad} — Generar oficios de notificación del fallo`;
+      const body = 'Etapa abierta en el carril del expediente.';
+      await insertNotificationRows(supabase, {
+        courtId: opts.courtId,
+        caseId: opts.caseId,
+        recipientIds: profiles.map((p) => p.id),
+        kind: 'workflow_notificacion_fallo',
+        title,
+        body,
+        metadata: { radicado: rad, stage_code: opts.enteredStage },
+      });
+      break;
+    }
+    case 'REMISION_CORTE': {
+      const profiles = await fetchProfilesByCourtAndRoles(supabase, opts.courtId, ENCARGADO_REMISION_ROLES);
+      const title = `Pendiente remisión a Corte Constitucional — ${rad} — 10 días hábiles`;
+      const body = 'Revise la remisión y los requisitos de envío.';
+      await insertNotificationRows(supabase, {
+        courtId: opts.courtId,
+        caseId: opts.caseId,
+        recipientIds: profiles.map((p) => p.id),
+        kind: 'workflow_remision_corte',
+        title,
+        body,
+        metadata: { radicado: rad, stage_code: opts.enteredStage },
+      });
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+/** Al iniciar incidente de desacato: avisar a sustanciadores del juzgado. */
+export async function insertIncidenteDesacatoIniciadoNotifications(
+  supabase: SupabaseClient,
+  opts: {
+    courtId: string;
+    caseId: string;
+    radicado: string;
+    incidentId: string;
+  },
+): Promise<void> {
+  const rad = opts.radicado.trim() || '—';
+  const profiles = await fetchProfilesByCourtAndRoles(supabase, opts.courtId, ['sustanciador']);
+  const title = `Incidente de desacato iniciado — ${rad} — Requiere proyección de auto`;
+  const body = 'Revise el expediente y la tarea asociada al incidente.';
+  await insertNotificationRows(supabase, {
+    courtId: opts.courtId,
+    caseId: opts.caseId,
+    recipientIds: profiles.map((p) => p.id),
+    kind: 'incidente_desacato_iniciado',
+    title,
+    body,
+    metadata: { radicado: rad, incident_desacato_id: opts.incidentId },
+  });
+}

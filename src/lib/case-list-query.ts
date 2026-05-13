@@ -20,4 +20,5 @@ export const CASE_LIST_COLUMNS = [
   'legal_derecho_tutelado',
   'derecho_tutelado_code',
   'decision_type',
+  'case_type',
 ].join(',');

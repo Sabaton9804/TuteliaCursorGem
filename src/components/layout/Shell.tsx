@@ -14,6 +14,8 @@ import {
   BarChart3,
   ChevronsLeft,
   ChevronsRight,
+  ListTodo,
+  BookOpen,
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured, assertSupabaseConfigured } from '../../lib/supabase';
 import { getDevAdminEmail, resolveDevAdminPassword } from '../../lib/dev-admin-auth';
@@ -25,6 +27,8 @@ import { userRoleLabelEs } from '../../lib/user-roles';
 import { UserProfile } from '../../types';
 import { SessionCourtProvider } from '../../contexts/SessionCourtContext';
 import { AssignmentNotificationBell } from './AssignmentNotificationBell';
+import { GlobalSearch } from './GlobalSearch';
+import { useUrgentWorkflowTaskCount } from '../../hooks/useUrgentWorkflowTaskCount';
 import { motion, AnimatePresence } from 'motion/react';
 import type { Provider, User } from '@supabase/supabase-js';
 
@@ -65,6 +69,7 @@ export default function Shell({ children }: ShellProps) {
   const [configError, setConfigError] = useState<string | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
+  const { count: urgentWorkflowCount } = useUrgentWorkflowTaskCount(user?.uid, profile?.courtId);
 
   const ensureAnonymousSession = async () => {
     await supabase.auth.getSession();
@@ -441,7 +446,9 @@ export default function Shell({ children }: ShellProps) {
     { name: 'Dashboard', path: '/', icon: LayoutDashboard },
     { name: 'Nueva Tutela', path: '/new', icon: PlusCircle },
     { name: 'Expedientes', path: '/cases', icon: Gavel },
+    { name: 'Centro de trabajo', path: '/tasks', icon: ListTodo },
     { name: 'Estadísticas', path: '/estadisticas', icon: BarChart3 },
+    { name: 'Biblioteca de precedentes', path: '/biblioteca-precedentes', icon: BookOpen },
     { name: 'Plantillas', path: '/plantillas', icon: FileStack },
     { name: 'Equipo de trabajo', path: '/equipo', icon: Users },
     { name: 'Sincronización SGDE', path: '/sgde', icon: Search },
@@ -490,8 +497,15 @@ export default function Shell({ children }: ShellProps) {
 
           <nav className={`space-y-1 flex-1 ${sidebarCollapsed ? 'pb-4' : ''}`}>
             {navItems.map((item) => {
-              const isActive = location.pathname === item.path;
+              const isActive =
+                item.path === '/'
+                  ? location.pathname === '/'
+                  : location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
               const Icon = item.icon;
+              const showUrgent =
+                item.path === '/tasks' && urgentWorkflowCount > 0;
+              const urgentLabel =
+                urgentWorkflowCount > 9 ? '9+' : String(urgentWorkflowCount);
               return (
                 <Link
                   key={item.name}
@@ -502,7 +516,7 @@ export default function Shell({ children }: ShellProps) {
                       ? () => intentFreshNewCaseFromMenu(location.pathname === '/new')
                       : undefined
                   }
-                  className={`flex items-center rounded-xl text-sm font-medium transition-all ${
+                  className={`relative flex items-center rounded-xl text-sm font-medium transition-all ${
                     sidebarCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-4 py-3'
                   } ${
                     isActive
@@ -512,6 +526,16 @@ export default function Shell({ children }: ShellProps) {
                 >
                   <Icon className="w-4 h-4 shrink-0" />
                   {!sidebarCollapsed && item.name}
+                  {showUrgent ? (
+                    <span
+                      className={`absolute flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-black text-white shadow-md ring-2 ring-primary ${
+                        sidebarCollapsed ? 'right-1 top-1' : 'right-2 top-2'
+                      }`}
+                      aria-label={`${urgentWorkflowCount} tareas urgentes pendientes`}
+                    >
+                      {urgentLabel}
+                    </span>
+                  ) : null}
                 </Link>
               );
             })}
@@ -542,6 +566,7 @@ export default function Shell({ children }: ShellProps) {
             </div>
 
             <div className="flex items-center gap-4">
+              <GlobalSearch courtId={profile?.courtId?.trim() || DEFAULT_DEMO_COURT_ID} />
               <AssignmentNotificationBell userId={user?.uid} />
               <div
                 className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-700 rounded-full border border-green-100 text-[11px] font-bold max-w-[min(100%,320px)]"
@@ -632,19 +657,31 @@ export default function Shell({ children }: ShellProps) {
               </div>
               <nav className="flex-1 p-6 space-y-1">
                 {navItems.map((item) => {
-                  const isActive = location.pathname === item.path;
+                  const isActive =
+                    item.path === '/'
+                      ? location.pathname === '/'
+                      : location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
                   const Icon = item.icon;
+                  const showUrgent =
+                    item.path === '/tasks' && urgentWorkflowCount > 0;
+                  const urgentLabel =
+                    urgentWorkflowCount > 9 ? '9+' : String(urgentWorkflowCount);
                   return (
                     <Link
                       key={item.name}
                       to={item.path}
                       onClick={() => setIsSidebarOpen(false)}
-                      className={`flex items-center gap-3 px-4 py-4 font-mono text-base border-b ${
+                      className={`relative flex items-center gap-3 px-4 py-4 font-mono text-base border-b ${
                         isActive ? 'bg-[#141414] text-white border-[#141414]' : 'border-transparent hover:bg-gray-50 transition-colors'
                       }`}
                     >
-                      <Icon className="w-5 h-5" />
+                      <Icon className="w-5 h-5 shrink-0" />
                       {item.name}
+                      {showUrgent ? (
+                        <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-black text-white">
+                          {urgentLabel}
+                        </span>
+                      ) : null}
                     </Link>
                   );
                 })}

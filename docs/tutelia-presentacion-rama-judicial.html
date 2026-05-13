@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="es-CO">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tutelia — Presentación Rama Judicial</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --accent: #0ea5e9;
+      --accent-dim: #0284c7;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --border: #334155;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow: hidden;
+    }
+    .deck {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .slide-wrap {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1.5rem 5rem;
+      overflow: auto;
+    }
+    .slide {
+      display: none;
+      width: min(920px, 100%);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 2.5rem 2.75rem;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.45);
+    }
+    .slide.active { display: block; animation: in 0.35s ease-out; }
+    @keyframes in {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .slide h1 {
+      font-size: clamp(1.75rem, 4vw, 2.35rem);
+      font-weight: 700;
+      line-height: 1.2;
+      margin-bottom: 0.5rem;
+      letter-spacing: -0.02em;
+    }
+    .slide h2 {
+      font-size: clamp(1.35rem, 3vw, 1.65rem);
+      font-weight: 600;
+      margin-bottom: 1.25rem;
+      color: var(--accent);
+    }
+    .slide .subtitle {
+      font-size: 1.05rem;
+      color: var(--muted);
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .slide p, .slide li {
+      font-size: 1.02rem;
+      line-height: 1.65;
+      color: #e2e8f0;
+    }
+    .slide ul { margin: 0.75rem 0 0 1.25rem; }
+    .slide li { margin-bottom: 0.5rem; }
+    .slide .tag {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 0.75rem;
+    }
+    .slide .note {
+      margin-top: 1.25rem;
+      padding: 1rem 1.1rem;
+      background: rgba(14, 165, 233, 0.08);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      font-size: 0.92rem;
+      color: var(--muted);
+    }
+    .bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 1rem 1.5rem;
+      background: rgba(15, 23, 42, 0.92);
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .bar button {
+      font: inherit;
+      cursor: pointer;
+      border: none;
+      border-radius: 10px;
+      padding: 0.65rem 1.25rem;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+    .bar button:hover { background: var(--accent-dim); }
+    .bar button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .bar .ghost {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+    .bar .ghost:hover {
+      color: var(--text);
+      border-color: var(--muted);
+    }
+    .progress {
+      flex: 1;
+      min-width: 120px;
+      height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .progress span {
+      display: block;
+      height: 100%;
+      background: var(--accent);
+      transition: width 0.25s ease;
+    }
+    .counter {
+      font-size: 0.85rem;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .hint {
+      font-size: 0.75rem;
+      color: var(--muted);
+      width: 100%;
+      text-align: center;
+      order: 3;
+    }
+    @media print {
+      body { overflow: auto; background: #fff; color: #000; }
+      .slide-wrap { padding: 0; display: block; }
+      .slide {
+        display: block !important;
+        page-break-after: always;
+        box-shadow: none;
+        border: 1px solid #ccc;
+        margin-bottom: 1rem;
+        color: #000;
+        background: #fff;
+      }
+      .slide p, .slide li { color: #222; }
+      .slide h2 { color: #0369a1; }
+      .bar { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="deck" id="deck">
+    <div class="slide-wrap">
+      <!-- 1 -->
+      <article class="slide active" data-i="0">
+        <p class="tag">Presentación</p>
+        <h1>Tutelia</h1>
+        <p class="subtitle">Gestión inteligente de tutelas de urgencia para despachos judiciales en Colombia. Del papel y el correo disperso al expediente digital coherente con el protocolo de la Rama.</p>
+      </article>
+      <!-- 2 -->
+      <article class="slide" data-i="1">
+        <p class="tag">Contexto</p>
+        <h2>El problema</h2>
+        <ul>
+          <li>Las acciones de tutela exigen <strong>celeridad</strong> (seguimiento del término de <strong>10 días hábiles</strong> desde la radicación, lun–vie).</li>
+          <li>Los despachos manejan alto volumen, <strong>plazos críticos</strong> y documentos en distintos canales (correo, adjuntos, borradores).</li>
+          <li>Sin una capa de trabajo unificada, aumentan retrasos, pérdida de trazabilidad y fricción entre radicación, asignación y elaboración del fallo o informes.</li>
+        </ul>
+      </article>
+      <!-- 3 -->
+      <article class="slide" data-i="2">
+        <p class="tag">Definición</p>
+        <h2>Qué es Tutelia</h2>
+        <p>Plataforma web para <strong>organizar el expediente de tutela en el despacho</strong>: radicado, partes, estados operativos, asignación del sustanciador, calendario y tablero, repositorio de documentos con reglas de acceso, y apoyo cognitivo para síntesis y flujo de trabajo, siempre bajo el control del funcionario judicial.</p>
+      </article>
+      <!-- 4 -->
+      <article class="slide" data-i="3">
+        <p class="tag">Objetivos</p>
+        <h2>Qué quiere lograr</h2>
+        <ul>
+          <li><strong>Cumplimiento procesal visible:</strong> plazos y estados en un solo lugar.</li>
+          <li><strong>Expediente electrónico ordenado:</strong> documentos asociados al caso, con buenas prácticas de nombres y formatos alineadas al protocolo de gestión de documentos electrónicos de la Rama (PDF para texto, convenciones de nombres, C.U.I., cuadernos).</li>
+          <li><strong>Eficiencia del despacho:</strong> menos tiempo buscando piezas y más en decisión jurídica.</li>
+          <li><strong>Gobernanza de datos:</strong> modelo multi-despacho, perfiles por usuario, políticas de acceso (RLS, almacenamiento privado con URLs firmadas de corta duración).</li>
+        </ul>
+      </article>
+      <!-- 5 -->
+      <article class="slide" data-i="4">
+        <p class="tag">Diseño</p>
+        <h2>Cómo está pensado</h2>
+        <ul>
+          <li><strong>Expediente = caso de tutela</strong> con radicado, demandante, demandado, hechos, pretensiones, derecho tutelado, resumen, canal de ingreso y vínculos opcionales con sistemas institucionales.</li>
+          <li><strong>Actuaciones</strong> y <strong>documentos</strong> ligados al caso; trazabilidad tipo bitácora.</li>
+          <li><strong>Configuración por juzgado</strong> (por ejemplo, modo de asignación del sustanciador).</li>
+          <li><strong>IA</strong> orientada a síntesis procesal y apoyo en el flujo, sin sustituir el criterio judicial.</li>
+        </ul>
+      </article>
+      <!-- 6 -->
+      <article class="slide" data-i="5">
+        <p class="tag">Alineación institucional</p>
+        <h2>Coherencia con la Rama Judicial</h2>
+        <p>El proyecto incorpora el protocolo CENDOJ sobre documentos electrónicos:</p>
+        <ul>
+          <li>Texto en <strong>PDF</strong>; visión de <strong>PDF/A</strong> para archivo de largo plazo como mejora futura.</li>
+          <li>Nombres de archivo sin espacios ni guiones, TitleCase, longitud acotada, fechas AAAAMMDD, coherencia con C.U.I. y cuadernos (C01, C02…).</li>
+          <li>Ejemplo de diseño: informe de ingreso como <strong>InformeIngresoDespacho.pdf</strong>, alineado con el protocolo sin redundar el radicado en el nombre del archivo.</li>
+        </ul>
+        <p class="note">No es “otra app más”: es implementación de las mismas reglas que la Rama promueve para interoperabilidad y conservación.</p>
+      </article>
+      <!-- 7 -->
+      <article class="slide" data-i="6">
+        <p class="tag">Visión</p>
+        <h2>El futuro, con sustancia</h2>
+        <ul>
+          <li><strong>Justicia digital</strong> no es solo escanear: es índice, integridad, metadatos, roles y auditoría.</li>
+          <li>Tutelia apunta a ese estándar: expediente como objeto de gestión completo, no como carpeta de archivos sueltos.</li>
+          <li>Escalable hacia mayor integración con radicación institucional y políticas de acceso endurecidas por membresía real de despacho.</li>
+        </ul>
+      </article>
+      <!-- 8 -->
+      <article class="slide" data-i="7">
+        <p class="tag">Marco internacional</p>
+        <h2>Estándares y agendas globales</h2>
+        <p>La línea es coherente con agendas amplias de gobierno digital y Estado de derecho (transparencia, servicios públicos digitales, acceso a la justicia) y con buenas prácticas de archivos electrónicos y preservación (PDF/A, metadatos, integridad).</p>
+        <p class="note">Si participan en programas concretos (UNESCO, PNUD, OEA, CAF, etc.), añádalos aquí solo con nombre oficial y enlace, para no afirmar vínculos no documentados.</p>
+      </article>
+      <!-- 9 -->
+      <article class="slide" data-i="8">
+        <p class="tag">Valor</p>
+        <h2>Beneficios para dirección judicial</h2>
+        <ul>
+          <li>Reducción de estrés operativo por plazos (semáforo / calendario).</li>
+          <li>Un solo lugar para el estado del expediente y quién lo sustancia.</li>
+          <li>Menor riesgo de documentos mal nombrados o fuera del estándar del protocolo.</li>
+          <li>Base técnica para auditoría y mejora continua (actuaciones, documentos en repositorio).</li>
+        </ul>
+      </article>
+      <!-- 10 -->
+      <article class="slide" data-i="9">
+        <p class="tag">Riesgos</p>
+        <h2>Gestión de riesgos</h2>
+        <ul>
+          <li><strong>Confidencialidad:</strong> datos por despacho; URLs firmadas de corta vida para documentos.</li>
+          <li><strong>Integridad:</strong> reglas de negocio (p. ej. inmutabilidad del radicado tras admisión).</li>
+          <li><strong>Escala:</strong> backend relacional adecuado para políticas y consultas por despacho.</li>
+        </ul>
+      </article>
+      <!-- 11 -->
+      <article class="slide" data-i="10">
+        <p class="tag">Hoja de ruta</p>
+        <h2>Próximos pasos sugeridos</h2>
+        <ul>
+          <li>Piloto en un despacho con volumen de tutelas.</li>
+          <li>Validación con secretaría y magistratura sobre flujo y nombres de piezas.</li>
+          <li>Ruta: PDF/A donde el archivo definitivo lo exija; integración con radicación/SGDE si aplica.</li>
+          <li>Capacitación breve y manual de nombres alineado al protocolo.</li>
+        </ul>
+      </article>
+      <!-- 12 -->
+      <article class="slide" data-i="11">
+        <p class="tag">Cierre</p>
+        <h2>Mensaje final</h2>
+        <p><strong>Tutelia</strong> es la apuesta por gestionar la tutela de urgencia con la <strong>misma disciplina documental</strong> que la Rama Judicial exige para el expediente electrónico, más herramientas para cumplir plazos y menos fricción en el día a día del despacho.</p>
+      </article>
+    </div>
+
+    <nav class="bar" aria-label="Navegación de diapositivas">
+      <button type="button" class="ghost" id="prev" aria-label="Anterior">Anterior</button>
+      <div class="progress" aria-hidden="true"><span id="fill" style="width: 8.33%"></span></div>
+      <span class="counter" id="counter">1 / 12</span>
+      <button type="button" id="next" aria-label="Siguiente">Siguiente</button>
+      <span class="hint">Flechas del teclado · Inicio / Fin · Imprimir para PDF</span>
+    </nav>
+  </div>
+
+  <script>
+    (function () {
+      var slides = [].slice.call(document.querySelectorAll(".slide"));
+      var total = slides.length;
+      var i = 0;
+      var prevBtn = document.getElementById("prev");
+      var nextBtn = document.getElementById("next");
+      var fill = document.getElementById("fill");
+      var counter = document.getElementById("counter");
+
+      function show(idx) {
+        i = Math.max(0, Math.min(total - 1, idx));
+        slides.forEach(function (s, j) {
+          s.classList.toggle("active", j === i);
+        });
+        fill.style.width = ((i + 1) / total * 100) + "%";
+        counter.textContent = i + 1 + " / " + total;
+        prevBtn.disabled = i === 0;
+        nextBtn.disabled = i === total - 1;
+      }
+
+      prevBtn.addEventListener("click", function () { show(i - 1); });
+      nextBtn.addEventListener("click", function () { show(i + 1); });
+
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") {
+          e.preventDefault();
+          show(i + 1);
+        } else if (e.key === "ArrowLeft" || e.key === "PageUp") {
+          e.preventDefault();
+          show(i - 1);
+        } else if (e.key === "Home") {
+          e.preventDefault();
+          show(0);
+        } else if (e.key === "End") {
+          e.preventDefault();
+          show(total - 1);
+        }
+      });
+
+      show(0);
+    })();
+  </script>
+</body>
+</html>

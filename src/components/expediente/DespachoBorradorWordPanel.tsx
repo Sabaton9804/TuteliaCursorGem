@@ -46,6 +46,17 @@ export function DespachoBorradorWordPanel({
     [L.marginMm.bottom, L.marginMm.left, L.marginMm.right, L.marginMm.top],
   );
 
+  /** Márgenes tipo Word para el cuerpo TipTap (2,5 cm). */
+  const padRichCuerpo = useMemo(
+    () => ({
+      paddingTop: mmToCssPx(25),
+      paddingRight: mmToCssPx(25),
+      paddingBottom: mmToCssPx(25),
+      paddingLeft: mmToCssPx(25),
+    }),
+    [],
+  );
+
   const fontStyle = useMemo(() => {
     const name = L.fontFamily.trim();
     const quoted = name.includes(' ') ? `"${name.replace(/"/g, '')}"` : name;
@@ -56,8 +67,9 @@ export function DespachoBorradorWordPanel({
     };
   }, [L.fontFamily, L.fontSizePt]);
 
+  /** Con TipTap: una sola «hoja» a ancho completo (sin isla centrada ~A4). */
   const hojaClassName = draftBodySlot
-    ? 'despacho-borrador-hoja mx-auto max-w-[min(100%,210mm)] bg-white font-serif shadow-none ring-0'
+    ? 'despacho-borrador-hoja w-full max-w-none bg-white font-serif shadow-[0_2px_16px_rgba(15,23,42,0.07)] ring-1 ring-slate-300/75'
     : 'despacho-borrador-hoja mx-auto max-w-[min(100%,210mm)] bg-white font-serif shadow-md ring-1 ring-slate-300/80';
 
   const syncCuerpoTextareaHeight = useCallback(() => {
@@ -80,16 +92,20 @@ export function DespachoBorradorWordPanel({
   }, [draftBodySlot, draft, syncCuerpoTextareaHeight]);
 
   return (
-    <div className={draftBodySlot ? 'sm:px-0' : 'rounded-xl border border-slate-200 bg-slate-200/50 p-3 sm:p-5'}>
+    <div
+      className={
+        draftBodySlot
+          ? 'rounded-xl border border-slate-200/95 bg-slate-200/55 p-3 sm:p-5'
+          : 'rounded-xl border border-slate-200 bg-slate-200/50 p-3 sm:p-5'
+      }
+    >
       {draftBodySlot ? null : (
         <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">Borrador (estilo documento)</p>
       )}
-      <div className={hojaClassName} style={pad}>
+      <div className={hojaClassName} style={draftBodySlot ? padRichCuerpo : pad}>
         <MembreteRichPreview membrete={membrete} embedded />
         {draftBodySlot ? (
-          <div className="mt-1 text-slate-900 [text-align:justify]" style={fontStyle}>
-            {draftBodySlot}
-          </div>
+          <div className="mt-0 min-w-0 pt-1 text-slate-900">{draftBodySlot}</div>
         ) : (
           <>
             <p className="mb-1.5 mt-1 text-[9px] font-bold uppercase tracking-wide text-slate-400">Cuerpo del documento</p>

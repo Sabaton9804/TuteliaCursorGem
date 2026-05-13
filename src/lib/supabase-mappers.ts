@@ -1,8 +1,11 @@
 import type {
   Action,
   Case,
+  CaseAppellant,
   CaseAuditLogEntry,
+  CaseOriginRuling,
   CaseStatus,
+  CaseType,
   CaseWordReview,
   Document,
   UserProfile,
@@ -11,6 +14,21 @@ import type {
 import { parseDecisionType, parseDerechoTuteladoCode } from './sierju-case-codes';
 import { parseUserRole } from './user-roles';
 import { DEFAULT_DEMO_COURT_ID } from './default-court';
+
+function parseCaseType(v: unknown): CaseType | undefined {
+  if (v === 'tutela_primera' || v === 'tutela_segunda' || v === 'consulta_desacato') return v;
+  return undefined;
+}
+
+function parseCaseAppellant(v: unknown): CaseAppellant | undefined {
+  if (v === 'accionante' || v === 'accionado') return v;
+  return undefined;
+}
+
+function parseCaseOriginRuling(v: unknown): CaseOriginRuling | undefined {
+  if (v === 'concedio' || v === 'nego') return v;
+  return undefined;
+}
 
 export function rowToCase(row: Record<string, unknown>): Case {
   const ts = (v: unknown) => (typeof v === 'string' ? v : v ? String(v) : '');
@@ -53,6 +71,12 @@ export function rowToCase(row: Record<string, unknown>): Case {
     informeIngresoDocumentId: row.informe_ingreso_document_id
       ? String(row.informe_ingreso_document_id)
       : undefined,
+    caseType: parseCaseType(row.case_type),
+    originCourt: row.origin_court ? String(row.origin_court) : undefined,
+    originRadicado: row.origin_radicado ? String(row.origin_radicado) : undefined,
+    appellant: parseCaseAppellant(row.appellant),
+    originRuling: parseCaseOriginRuling(row.origin_ruling),
+    conductDescription: row.conduct_description ? String(row.conduct_description) : undefined,
   };
 }
 
@@ -144,15 +168,32 @@ const WORD_REVIEW_STATUSES = new Set<WordReviewStatus>([
 ]);
 
 function parseWordReviewStatus(raw: unknown): WordReviewStatus {
-  const s = typeof raw === 'string' ? raw : '';
+  const s = (typeof raw === 'string' ? raw : '').trim();
   return WORD_REVIEW_STATUSES.has(s as WordReviewStatus) ? (s as WordReviewStatus) : 'pendiente_juez';
 }
 
 function parseReviewMarkupJson(raw: unknown): CaseWordReview['reviewMarkupJson'] {
   if (!raw || typeof raw !== 'object') return undefined;
   const o = raw as Record<string, unknown>;
-  if (o.v !== 1 || !o.doc || typeof o.doc !== 'object') return undefined;
-  return { v: 1, doc: o.doc as Record<string, unknown> };
+  if (o.v !== 1) return undefined;
+  const row: CaseWordReview['reviewMarkupJson'] = { v: 1 };
+  if (typeof o.storage === 'string' && o.storage.trim()) {
+    row.storage = o.storage.trim();
+  }
+  if (o.doc != null && typeof o.doc === 'object') {
+    row.doc = o.doc as Record<string, unknown>;
+  }
+  if (!row.doc && !row.storage) return undefined;
+  if (o.baselineDoc != null && typeof o.baselineDoc === 'object') {
+    row.baselineDoc = o.baselineDoc as Record<string, unknown>;
+  }
+  if (o.commentThreads != null && typeof o.commentThreads === 'object') {
+    row.commentThreads = o.commentThreads as Record<string, unknown>;
+  }
+  if (o.previewSketch != null && typeof o.previewSketch === 'object') {
+    row.previewSketch = o.previewSketch as Record<string, unknown>;
+  }
+  return row;
 }
 
 export function rowToCaseWordReview(row: Record<string, unknown>): CaseWordReview {

@@ -15,7 +15,6 @@ import {
   Pencil,
   Plus,
   ListChecks,
-  Table2,
   Trash2,
   Layout,
   Settings,
@@ -26,7 +25,6 @@ import { PAGE_FONT_CHOICES } from '../../lib/page-font-choices';
 import type { PlantillasMembrete } from '../../lib/plantillas-store';
 import { MembreteRichPreview } from './MembreteRichSurface';
 import { ExpedienteVariable } from '../../lib/tiptap-expediente-variable';
-import { buildPlantillaBodyExtensions } from '../../lib/tiptap-plantilla-editor-extensions';
 import { defaultAutoDatosExpedienteDocStorage } from '../../lib/auto-datos-expediente-defaults';
 import {
   docToStorage,
@@ -41,6 +39,10 @@ import {
   type GrupoMarcador,
 } from '../../lib/plantilla-marcadores-catalog';
 import { isBuiltinAutoAdmisorioToggle } from '../../lib/plantilla-template-default-toggles';
+import {
+  JudicialDocEditor,
+  type JudicialDocEditorHandle,
+} from '../shared/JudicialDocEditor';
 
 /** Datos de arrastre desde fichas → editor (drop en posición del puntero). */
 const MIME_PLANTILLA_TOGGLE = 'application/x-tutelia-plantilla-toggle';
@@ -1020,13 +1022,15 @@ export function PlantillaInlineEditor({
     return undefined;
   }, [template.tipo]);
 
-  const extensions = useMemo(() => buildPlantillaBodyExtensions(resolveLabel), [resolveLabel]);
+  const docContent = useMemo(() => parseStorageToDoc(value, parseDocOpts), [value, parseDocOpts]);
 
   const toggleDefsRef = useRef(toggleDefs);
   toggleDefsRef.current = toggleDefs;
   const disabledRef = useRef(disabled);
   disabledRef.current = disabled;
   const editorRef = useRef<Editor | null>(null);
+  const judicialRef = useRef<JudicialDocEditorHandle>(null);
+  const [cuerpoEditor, setCuerpoEditor] = useState<Editor | null>(null);
 
   const plantillaEditorProps = useMemo(
     () => ({
@@ -1073,43 +1077,9 @@ export function PlantillaInlineEditor({
     [],
   );
 
-  const editor = useEditor(
-    {
-      extensions,
-      content: parseStorageToDoc(value, parseDocOpts),
-      editable: !disabled,
-      editorProps: plantillaEditorProps,
-      onUpdate: ({ editor: ed }) => {
-        onChange(docToStorage(ed.getJSON()));
-      },
-    },
-    /** Recrea el editor si cambian extensiones (p. ej. toggles/marcadores) o bloqueo. */
-    [disabled, extensions, plantillaEditorProps, parseDocOpts],
-  );
-
-  editorRef.current = editor;
-
-  useEffect(() => {
-    if (!editor || editor.isDestroyed) return;
-    let serialized = '';
-    try {
-      serialized = docToStorage(editor.getJSON());
-    } catch {
-      return;
-    }
-    let normalizedValue = value;
-    try {
-      normalizedValue = docToStorage(parseStorageToDoc(value, parseDocOpts));
-    } catch {
-      /* mantener value */
-    }
-    if (serialized === normalizedValue) return;
-    editor.commands.setContent(parseStorageToDoc(value, parseDocOpts), { emitUpdate: false });
-  }, [value, editor, parseDocOpts]);
-
   const insertVar = (clave: string) => {
     if (!clave) return;
-    editorRef.current?.chain().focus().insertExpedienteVariable(clave).run();
+    judicialRef.current?.insertVariable(clave);
   };
 
   const tipo = template.tipo;
@@ -1119,7 +1089,7 @@ export function PlantillaInlineEditor({
       {/* Barra de formato y acciones: no hace scroll */}
       <div className="shrink-0">
         <EditorToolbarRow
-          editor={editor}
+          editor={cuerpoEditor}
           disabled={disabled}
           saving={saving}
           porGrupo={porGrupo}
@@ -1183,7 +1153,7 @@ export function PlantillaInlineEditor({
                 onInsertMarker={(toggleId) => {
                   const d = toggleDefs.find((x) => x.id === toggleId);
                   const key = d?.documentMarker?.trim() ? d.documentMarker.trim() : toggleId;
-                  editorRef.current?.chain().focus().insertExpedienteVariable(key).run();
+                  judicialRef.current?.insertVariable(key);
                 }}
               />
 
@@ -1198,8 +1168,20 @@ export function PlantillaInlineEditor({
                 id="plantilla-editor-cuerpo"
                 className="plantilla-inline-editor-wrap tiptap-template-editor scroll-mt-6 text-justify"
               >
-                <EditorContent
-                  editor={editor}
+                <JudicialDocEditor
+                  ref={judicialRef}
+                  unframed
+                  content={docContent}
+                  onChange={(json) => onChange(docToStorage(json))}
+                  readOnly={disabled}
+                  placeholder="Redacta el cuerpo de la plantilla aquí..."
+                  minHeight="500px"
+                  plantillaResolveLabel={resolveLabel}
+                  extraEditorProps={plantillaEditorProps}
+                  onEditorReady={(ed) => {
+                    editorRef.current = ed;
+                    setCuerpoEditor(ed);
+                  }}
                   className="plantilla-inline-editor min-h-[14rem] pt-3 leading-relaxed text-slate-900"
                 />
               </div>
@@ -1422,11 +1404,6 @@ function EditorToolbarRow({
     };
   }, [editor]);
 
-  const tb = (active: boolean) =>
-    `flex h-8 min-w-[2rem] shrink-0 items-center justify-center rounded-md px-2 text-xs font-bold transition ${
-      active ? 'bg-indigo-100 text-indigo-950' : 'text-slate-600 hover:bg-slate-100'
-    } disabled:opacity-40`;
-
   if (!editor) {
     return (
       <div className="flex h-11 items-center gap-2 border-b border-slate-200 bg-white px-3 shadow-sm">
@@ -1438,29 +1415,9 @@ function EditorToolbarRow({
 
   return (
     <div className="flex min-h-[2.75rem] flex-wrap items-center gap-1 border-b border-slate-200 bg-white px-3 py-1.5 shadow-sm">
-      <button type="button" title="Negrita (N)" disabled={disabled} onClick={() => editor.chain().focus().toggleBold().run()} className={tb(editor.isActive('bold'))}>
-        <span className="font-serif font-bold">N</span>
-      </button>
-      <button type="button" title="Cursiva (K)" disabled={disabled} onClick={() => editor.chain().focus().toggleItalic().run()} className={tb(editor.isActive('italic'))}>
-        <span className="font-serif italic">K</span>
-      </button>
-      <button type="button" title="Subrayado (S)" disabled={disabled} onClick={() => editor.chain().focus().toggleUnderline().run()} className={tb(editor.isActive('underline'))}>
-        <span className="font-serif underline decoration-2 underline-offset-2">S</span>
-      </button>
-
-      <span className="mx-0.5 h-5 w-px shrink-0 bg-slate-200" aria-hidden />
-
-      <button type="button" title="Alinear a la izquierda" disabled={disabled} onClick={() => editor.chain().focus().setTextAlign('left').run()} className={tb(editor.isActive({ textAlign: 'left' }))}>
-        <AlignLeft className="h-4 w-4" />
-      </button>
-      <button type="button" title="Centrar" disabled={disabled} onClick={() => editor.chain().focus().setTextAlign('center').run()} className={tb(editor.isActive({ textAlign: 'center' }))}>
-        <AlignCenter className="h-4 w-4" />
-      </button>
-      <button type="button" title="Justificar" disabled={disabled} onClick={() => editor.chain().focus().setTextAlign('justify').run()} className={tb(editor.isActive({ textAlign: 'justify' }))}>
-        <AlignJustify className="h-4 w-4" />
-      </button>
-
-      <span className="mx-0.5 h-5 w-px shrink-0 bg-slate-200" aria-hidden />
+      <span className="mr-1 hidden text-[9px] font-semibold uppercase tracking-wide text-slate-400 sm:inline">
+        Página / datos
+      </span>
 
       <PageTypographyBar layout={pageLayout} onChange={onPageLayoutChange} disabled={disabled} />
 
@@ -1523,27 +1480,6 @@ function EditorToolbarRow({
             </select>
           </div>
         </details>
-      ) : null}
-
-      <button
-        type="button"
-        title="Insertar tabla (3×3 con encabezado)"
-        disabled={disabled}
-        onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}
-        className={tb(false)}
-      >
-        <Table2 className="h-4 w-4" />
-      </button>
-      {editor.isActive('table') ? (
-        <button
-          type="button"
-          title="Eliminar tabla"
-          disabled={disabled}
-          onClick={() => editor.chain().focus().deleteTable().run()}
-          className="flex h-8 min-w-[2rem] shrink-0 items-center justify-center rounded-md px-2 text-rose-600 transition hover:bg-rose-50 disabled:opacity-40"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
       ) : null}
 
       <span className="min-w-2 flex-1" aria-hidden />

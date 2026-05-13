@@ -1,6 +1,7 @@
 import React, { lazy, Suspense, useCallback, useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import type { DocumentTemplateTipo } from '../../types';
+import type { CommentThreadsMap } from '../../lib/review-markup-payload';
 import {
   etiquetaGrupo,
   marcadoresParaPlantilla,
@@ -28,6 +29,12 @@ type Props = {
   disabled?: boolean;
   /** Define qué datos del expediente se ofrecen en el menú (informe, auto o todos). */
   templateTipo?: DocumentTemplateTipo;
+  /** Solo borrador despacho informe: comentarios en panel + marcas (no van al .docx). */
+  despachoReviewComments?: {
+    displayName: string | null;
+    threads: CommentThreadsMap;
+    setThreads: React.Dispatch<React.SetStateAction<CommentThreadsMap>>;
+  } | null;
 };
 
 export function TemplateBodyEditor({
@@ -38,6 +45,7 @@ export function TemplateBodyEditor({
   minRows = 12,
   disabled,
   templateTipo = 'libre',
+  despachoReviewComments = null,
 }: Props) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const tipTapRef = useRef<TiptapTemplateEditorHandle>(null);
@@ -206,6 +214,7 @@ export function TemplateBodyEditor({
                 disabled={disabled}
                 minHeightClass={minH}
                 parseInformeBodyDefaults={templateTipo === 'informe_ingreso'}
+                reviewComments={despachoReviewComments}
               />
             </div>
           </Suspense>

@@ -29,6 +29,10 @@ function enrichHint(message: string, raw: unknown): string {
   if (message.includes('20250429190000')) return message;
 
   const lower = message.toLowerCase();
+
+  if (lower.includes('review_markup_json') && lower.includes('case_word_reviews')) {
+    return `${message}\n\nEn Supabase → SQL Editor, ejecute la migración del proyecto «20250503140000_case_word_review_markup.sql» (añade la columna jsonb review_markup_json a la tabla case_word_reviews). Guarde, espere unos segundos a que se actualice el esquema y recargue esta página.`;
+  }
   const code =
     raw && typeof raw === 'object' && 'code' in raw && typeof (raw as { code: unknown }).code === 'string'
       ? String((raw as { code: string }).code)

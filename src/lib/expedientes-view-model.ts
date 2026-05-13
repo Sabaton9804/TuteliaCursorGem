@@ -5,7 +5,7 @@ import {
   startOfLocalDay,
   tenthBusinessDayDeadline,
 } from './business-days';
-import { DERECHO_TUTELADO_LABELS } from './sierju-case-codes';
+import { DERECHO_TUTELADO_LABELS, resolveDerechoTuteladoCodeForInforme } from './sierju-case-codes';
 import type { ExpedienteAssignee } from './court-staff-assignees';
 import { resolveAssigneeForCase } from './court-staff-assignees';
 
@@ -26,12 +26,13 @@ export type UrgencyLevel = 'urgent' | 'warn' | 'ok' | 'neutral';
 const DERECHO_UI_MAX = 72;
 
 /**
- * Texto del derecho tutelado para listas y tablero: prioriza la clasificación SIERJU si existe;
- * si no, el texto del expediente (`legal_derecho_tutelado`).
+ * Texto del derecho tutelado para listas y tablero: usa `derecho_tutelado_code` si está guardado;
+ * si no, intenta el mismo criterio que los informes (artículo CP o palabras clave en el texto libre)
+ * y muestra la etiqueta SIERJU; solo si no hay clasificación posible, el texto libre truncado.
  */
 export function derechoTuteladoDisplay(c: Case): string {
   const raw = c.legalDerechoTutelado?.replace(/\s+/g, ' ').trim();
-  const code = c.derechoTuteladoCode;
+  const code = c.derechoTuteladoCode ?? resolveDerechoTuteladoCodeForInforme(c);
   if (code) {
     const label = DERECHO_TUTELADO_LABELS[code];
     if (code === 'OTROS' && raw) {

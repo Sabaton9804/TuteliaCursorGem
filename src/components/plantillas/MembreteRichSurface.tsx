@@ -23,7 +23,7 @@ import type { PlantillasMembrete } from '../../lib/plantillas-store';
 import { defaultMembreteDocFromStruct, parseMembreteEditorJson } from '../../lib/membrete-rich-doc';
 import { readImageFileAsDataUrl } from '../../lib/plantillas-store';
 import { PAGE_FONT_CHOICES } from '../../lib/page-font-choices';
-import { MembreteParagraph, MEMBRETE_PARAGRAPH_SPACE_PT } from '../../lib/tiptap-membrete-paragraph-spacing';
+import { MembreteParagraph, MEMBRETE_PARAGRAPH_SPACE_PT, runMembreteToggleSpaceAfter, runMembreteToggleSpaceBefore } from '../../lib/tiptap-membrete-paragraph-spacing';
 
 const MEMBRETE_TOOLBAR_SELECT =
   'h-9 shrink-0 rounded-md border border-slate-200 bg-white px-2.5 font-sans text-sm text-slate-900 shadow-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20 disabled:opacity-40';
@@ -204,7 +204,7 @@ function MembreteParagraphSpacingBar({ editor, disabled }: { editor: Editor; dis
         type="button"
         title={`Agregar o quitar espacio antes del párrafo (${pt} pt)`}
         disabled={disabled || !editor.isActive('paragraph')}
-        onClick={() => editor.chain().focus().toggleMembreteSpaceBefore().run()}
+        onClick={() => runMembreteToggleSpaceBefore(editor)}
         className={tb(beforeOn)}
       >
         <BetweenVerticalStart className="h-4 w-4" aria-hidden />
@@ -213,7 +213,7 @@ function MembreteParagraphSpacingBar({ editor, disabled }: { editor: Editor; dis
         type="button"
         title={`Agregar o quitar espacio después del párrafo (${pt} pt)`}
         disabled={disabled || !editor.isActive('paragraph')}
-        onClick={() => editor.chain().focus().toggleMembreteSpaceAfter().run()}
+        onClick={() => runMembreteToggleSpaceAfter(editor)}
         className={tb(afterOn)}
       >
         <BetweenVerticalEnd className="h-4 w-4" aria-hidden />

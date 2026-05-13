@@ -7,7 +7,9 @@ import CaseDetail from './pages/CaseDetail';
 import CasesList from './pages/CasesList';
 import Settings from './pages/Settings';
 import Team from './pages/Team';
+import Tasks from './pages/Tasks';
 import Estadisticas from './pages/Estadisticas';
+import BibliotecaPrecedentes from './pages/BibliotecaPrecedentes';
 
 const Plantillas = lazy(() => import('./pages/Plantillas'));
 
@@ -19,7 +21,9 @@ export default function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/new" element={<NewCase />} />
           <Route path="/cases" element={<CasesList />} />
+          <Route path="/tasks" element={<Tasks />} />
           <Route path="/estadisticas" element={<Estadisticas />} />
+          <Route path="/biblioteca-precedentes" element={<BibliotecaPrecedentes />} />
           <Route path="/case/:id" element={<CaseDetail />} />
           <Route
             path="/plantillas"

@@ -1,30 +1,18 @@
-import React, { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
-  Upload, 
-  FileText, 
   CheckCircle2, 
   AlertCircle, 
   Loader2, 
   ArrowRight, 
-  ExternalLink, 
-  ChevronLeft, 
-  ChevronRight,
-  ArrowUp,
-  ArrowDown,
-  Edit2,
-  Combine,
-  X,
-  Check,
-  Sparkles,
-  Search
+  ChevronLeft,
+  Search,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { ensureSupabaseSessionForWrites } from '../lib/supabase-write-auth';
 import { getSupabaseAuthErrorMessage } from '../lib/supabase-auth-errors';
 import { handleDataPermissionError } from '../lib/error-handler';
-import { motion, AnimatePresence } from 'motion/react';
-import { Document, Page } from 'react-pdf';
+import { motion } from 'motion/react';
 import { PDFDocument } from 'pdf-lib';
 import { COURT_CONSTANTS, RIGHTS_LIST } from '../constants';
 import { formatRadicado } from '../lib/formatters';
@@ -34,9 +22,7 @@ import {
   removeCaseDocumentObjects,
   uploadCaseAttachment,
 } from '../lib/case-document-storage';
-import { looksLikePdf } from '../lib/pdf-sniff';
 import { DEFAULT_NOTEBOOK_CODE } from '../lib/expediente-notebook';
-import { logPdfViewerDebug } from '../lib/pdf-payload-debug';
 import { fetchParseSessionAttachment, uint8ArrayToBase64 } from '../lib/parse-session-attachment';
 import { NEW_CASE_FRESH_EVENT, NEW_CASE_FRESH_NAV_FLAG } from '../lib/new-case-nav';
 import { guessDerechoTuteladoCodeFromText } from '../lib/sierju-case-codes';
@@ -48,437 +34,18 @@ import {
   SUSTANCIADOR_ASSIGNMENT_MODE_AUDIT,
 } from '../lib/sustanciador-reparto';
 import { insertAssignmentNotificationsForProfiles } from '../lib/assignment-notifications';
+import { openRadicacionStageAfterRadicate } from '../lib/case-stages-service';
 import { deepSanitizeForPostgresInsert } from '../lib/sanitize-for-postgres';
-
-import 'react-pdf/dist/Page/AnnotationLayer.css';
-import 'react-pdf/dist/Page/TextLayer.css';
-
-const PDF_VIEWER_ZOOM_SCALES = [0.5, 0.75, 1.0, 1.25, 1.5] as const;
-type PdfViewerZoom = 'fit' | (typeof PDF_VIEWER_ZOOM_SCALES)[number];
-
-function PdfViewer({
-  content,
-  contentType,
-  filename,
-  parseSessionId,
-  sessionIndex,
-}: {
-  content?: string;
-  contentType?: string;
-  filename: string;
-  parseSessionId?: string | null;
-  sessionIndex?: number | null;
-}) {
-  const [numPages, setNumPages] = useState<number | null>(null);
-  const [pageNumber, setPageNumber] = useState(1);
-  const [zoom, setZoom] = useState<PdfViewerZoom>('fit');
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const [fitWidthPx, setFitWidthPx] = useState(() =>
-    typeof window !== 'undefined' ? Math.max(240, Math.floor(window.innerWidth * 0.42)) : 640
-  );
-  const [pdfBlob, setPdfBlob] = useState<Blob | null>(null);
-  const [pdfJsError, setPdfJsError] = useState<string | null>(null);
-  const [remoteBytes, setRemoteBytes] = useState<Uint8Array | null>(null);
-  const [remoteLoading, setRemoteLoading] = useState(false);
-  const [remoteError, setRemoteError] = useState<string | null>(null);
-  const [downloadUrl, setDownloadUrl] = useState('');
-  const pdfOpenedRef = useRef(false);
-  const pdfDebugOpenTsRef = useRef(0);
-
-  const useSession =
-    Boolean(parseSessionId) && typeof sessionIndex === 'number' && sessionIndex >= 0;
-
-  useEffect(() => {
-    if (!useSession || !parseSessionId) {
-      setRemoteBytes(null);
-      setRemoteError(null);
-      setRemoteLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setRemoteLoading(true);
-    setRemoteError(null);
-    setRemoteBytes(null);
-    void (async () => {
-      try {
-        const u8 = await fetchParseSessionAttachment(parseSessionId, sessionIndex!);
-        if (cancelled) return;
-        setRemoteBytes(u8);
-      } catch (e) {
-        if (cancelled) return;
-        setRemoteError(e instanceof Error ? e.message : String(e));
-      } finally {
-        if (!cancelled) setRemoteLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [useSession, parseSessionId, sessionIndex, filename]);
-
-  const decodedBytes = useMemo(() => {
-    if (useSession) return remoteBytes;
-    if (!content) return null;
-    try {
-      const binary = atob(content);
-      const len = binary.length;
-      const arr = new Uint8Array(len);
-      for (let i = 0; i < len; i++) arr[i] = binary.charCodeAt(i);
-      return arr;
-    } catch {
-      return null;
-    }
-  }, [useSession, remoteBytes, content]);
-
-  useEffect(() => {
-    setPdfJsError(null);
-  }, [content, contentType, parseSessionId, sessionIndex]);
-
-  useEffect(() => {
-    if (!decodedBytes) {
-      setPdfBlob(null);
-      return;
-    }
-    const blob = new Blob([decodedBytes], { type: contentType || 'application/pdf' });
-    setPdfBlob(blob);
-  }, [contentType, decodedBytes]);
-
-  useEffect(() => {
-    if (!decodedBytes) {
-      setDownloadUrl('');
-      return;
-    }
-    if (content) {
-      setDownloadUrl(`data:${contentType || 'application/octet-stream'};base64,${content}`);
-      return;
-    }
-    const b = new Blob([decodedBytes], { type: contentType || 'application/octet-stream' });
-    const u = URL.createObjectURL(b);
-    setDownloadUrl(u);
-    return () => URL.revokeObjectURL(u);
-  }, [content, contentType, decodedBytes]);
-
-  const isImageCt = Boolean(contentType?.startsWith('image/'));
-  const isNonPdfBytes =
-    Boolean(decodedBytes) && !isImageCt && !looksLikePdf(decodedBytes!);
-
-  useLayoutEffect(() => {
-    const el = viewportRef.current;
-    if (!el) return;
-    const measure = () => {
-      const cs = getComputedStyle(el);
-      const pl = parseFloat(cs.paddingLeft) || 0;
-      const pr = parseFloat(cs.paddingRight) || 0;
-      setFitWidthPx(Math.max(240, Math.floor(el.clientWidth - pl - pr)));
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [pdfBlob, pdfJsError, isImageCt, isNonPdfBytes]);
-
-  useEffect(() => {
-    if (import.meta.env.DEV && pdfBlob && !isImageCt && !isNonPdfBytes && decodedBytes) {
-      pdfDebugOpenTsRef.current = performance.now();
-      logPdfViewerDebug({
-        where: 'NewCase.PdfViewer',
-        phase: 'open',
-        filename,
-        contentType,
-        bytes: decodedBytes,
-      });
-    }
-  }, [pdfBlob, isImageCt, isNonPdfBytes, decodedBytes, filename, contentType]);
-
-  useEffect(() => {
-    pdfOpenedRef.current = false;
-    if (!pdfBlob || isImageCt || isNonPdfBytes) return;
-    const t = window.setTimeout(() => {
-      if (!pdfOpenedRef.current) {
-        if (import.meta.env.DEV && decodedBytes) {
-          logPdfViewerDebug({
-            where: 'NewCase.PdfViewer',
-            phase: 'timeout',
-            filename,
-            contentType,
-            bytes: decodedBytes,
-            msSinceOpen: performance.now() - pdfDebugOpenTsRef.current,
-            message: '35s sin onLoadSuccess (PDF.js no terminó de abrir el documento)',
-          });
-        }
-        setPdfJsError(
-          (e) =>
-            e ??
-            'Tiempo de espera (35 s) al renderizar el PDF. Use «Descargar» abajo o abra el archivo en otro visor.'
-        );
-      }
-    }, 35000);
-    return () => window.clearTimeout(t);
-  }, [pdfBlob, isImageCt, isNonPdfBytes, decodedBytes, filename, contentType]);
-
-  function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
-    pdfOpenedRef.current = true;
-    setPdfJsError(null);
-    if (import.meta.env.DEV && decodedBytes) {
-      logPdfViewerDebug({
-        where: 'NewCase.PdfViewer',
-        phase: 'load-ok',
-        filename,
-        contentType,
-        bytes: decodedBytes,
-        msSinceOpen: performance.now() - pdfDebugOpenTsRef.current,
-        message: `numPages=${numPages}`,
-      });
-    }
-    setNumPages(numPages);
-    setPageNumber(1);
-  }
-
-  const legacyNoPayload = !useSession && !content;
-  if (legacyNoPayload) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center p-12 text-center space-y-6">
-        <div className="w-24 h-24 bg-white rounded-3xl shadow-sm flex items-center justify-center">
-          <FileText className="w-12 h-12 text-slate-200" />
-        </div>
-        <div>
-          <h3 className="text-lg font-bold text-slate-700">{filename}</h3>
-          <p className="text-sm text-slate-400 mt-2 max-w-sm mx-auto">
-            Vista previa generada para radicación electrónica. Pulse radicar para procesar el expediente completo.
-          </p>
-        </div>
-        <div className="w-full max-w-md h-64 bg-white/50 border border-slate-200 border-dashed rounded-2xl flex items-center justify-center">
-          <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">
-            Documento Protegido (Vista Cifrada)
-          </span>
-        </div>
-      </div>
-    );
-  }
-
-  if (useSession && remoteLoading) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center p-20 text-slate-400">
-        <Loader2 className="w-8 h-8 animate-spin mb-4" />
-        <p className="text-xs font-bold uppercase tracking-widest">Obteniendo adjunto del servidor…</p>
-        <p className="text-[10px] text-slate-400 mt-2 max-w-xs text-center">{filename}</p>
-      </div>
-    );
-  }
-
-  if (useSession && remoteError) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center p-12 text-center space-y-4">
-        <AlertCircle className="w-10 h-10 text-amber-500" />
-        <p className="text-sm font-bold text-slate-800">No se pudo cargar el adjunto</p>
-        <p className="text-xs text-slate-500">{remoteError}</p>
-        <p className="text-[10px] text-slate-400">Vuelva a cargar el archivo .eml si la sesión expiró (aprox. 1 h).</p>
-      </div>
-    );
-  }
-
-  if (!decodedBytes) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center p-12 text-center space-y-4">
-        <AlertCircle className="w-10 h-10 text-amber-500" />
-        <p className="text-sm font-bold text-slate-700">No se pudo decodificar el adjunto (base64 inválido).</p>
-        <p className="text-xs text-slate-500">{filename}</p>
-      </div>
-    );
-  }
-
-  if (!isImageCt && !looksLikePdf(decodedBytes)) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center p-12 text-center space-y-4 bg-slate-50">
-        <AlertCircle className="w-10 h-10 text-amber-500" />
-        <p className="text-sm font-bold text-slate-800">El contenido no es un PDF</p>
-        <p className="text-xs text-slate-500 max-w-md leading-relaxed">
-          Suele ocurrir cuando el enlace «Archivo» (p. ej. Safelinks de Outlook) devuelve una página web en lugar del PDF.
-          Abra el enlace en el navegador, descargue el PDF y adjúntelo al correo o cargue un .eml tras tener el archivo real.
-        </p>
-        {downloadUrl ? (
-          <a
-            href={downloadUrl}
-            download={filename}
-            className="text-[10px] font-bold text-accent hover:underline flex items-center gap-1 bg-blue-50 px-3 py-1.5 rounded-lg"
-          >
-            <ExternalLink className="w-3 h-3" /> Descargar respuesta y revisar
-          </a>
-        ) : null}
-      </div>
-    );
-  }
-
-  if (pdfJsError) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center p-12 text-center space-y-4">
-        <p className="text-sm font-bold text-slate-800">No se pudo mostrar el PDF</p>
-        <p className="text-xs text-slate-500">{pdfJsError}</p>
-        {downloadUrl ? (
-          <a href={downloadUrl} download={filename} className="text-[10px] font-bold text-accent hover:underline">
-            Descargar y abrir con otro visor
-          </a>
-        ) : null}
-      </div>
-    );
-  }
-
-  if (isImageCt && pdfBlob) {
-    const imageUrl = URL.createObjectURL(pdfBlob);
-    return (
-      <div className="flex-1 overflow-auto bg-slate-200 p-8 flex items-center justify-center">
-        <img
-          src={imageUrl}
-          alt={filename}
-          className="max-w-full shadow-2xl rounded-sm"
-          onLoad={() => URL.revokeObjectURL(imageUrl)}
-        />
-      </div>
-    );
-  }
-
-  const pageWidthProp = zoom === 'fit' && fitWidthPx > 0 ? fitWidthPx : undefined;
-  const pageScaleProp = zoom === 'fit' ? 1 : zoom;
-
-  return (
-    <div className="flex-1 flex flex-col h-full bg-slate-100 overflow-hidden min-w-0">
-      <div
-        ref={viewportRef}
-        className="flex-1 overflow-auto p-4 flex justify-center min-w-0"
-      >
-        {pdfBlob ? (
-          <div className="shadow-2xl max-w-full">
-            <Document
-              file={pdfBlob}
-              onLoadSuccess={onDocumentLoadSuccess}
-              onLoadError={(err) => {
-                console.error('react-pdf onLoadError:', err);
-                if (import.meta.env.DEV && decodedBytes) {
-                  logPdfViewerDebug({
-                    where: 'NewCase.PdfViewer',
-                    phase: 'load-fail',
-                    filename,
-                    contentType,
-                    bytes: decodedBytes,
-                    msSinceOpen: performance.now() - pdfDebugOpenTsRef.current,
-                    message: err?.message || String(err),
-                  });
-                }
-                setPdfJsError(err?.message || 'Error al leer el documento con PDF.js');
-              }}
-              onSourceError={(err) => {
-                console.error('react-pdf onSourceError:', err);
-                if (import.meta.env.DEV && decodedBytes) {
-                  logPdfViewerDebug({
-                    where: 'NewCase.PdfViewer',
-                    phase: 'source-fail',
-                    filename,
-                    contentType,
-                    bytes: decodedBytes,
-                    msSinceOpen: performance.now() - pdfDebugOpenTsRef.current,
-                    message: err?.message || String(err),
-                  });
-                }
-                setPdfJsError(err?.message || 'Error al leer los bytes del PDF');
-              }}
-              loading={
-                <div className="flex flex-col items-center justify-center p-20 text-slate-400">
-                  <Loader2 className="w-8 h-8 animate-spin mb-4" />
-                  <p className="text-xs font-bold uppercase tracking-widest">Renderizando PDF...</p>
-                </div>
-              }
-              error={
-                <div className="p-20 text-center text-red-500">
-                  <p className="text-sm font-bold">Error al cargar el PDF</p>
-                </div>
-              }
-            >
-              <Page
-                pageNumber={pageNumber}
-                width={pageWidthProp}
-                scale={pageScaleProp}
-                renderTextLayer={false}
-                renderAnnotationLayer={false}
-                className="max-w-full"
-              />
-            </Document>
-          </div>
-        ) : (
-          <div className="flex-1 flex items-center justify-center">
-            <Loader2 className="w-8 h-8 animate-spin text-slate-200" />
-          </div>
-        )}
-      </div>
-
-      <div className="p-4 bg-white border-t border-slate-200 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <button
-              disabled={pageNumber <= 1}
-              onClick={() => setPageNumber((prev) => prev - 1)}
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-400 hover:text-accent hover:bg-blue-50 disabled:opacity-30 disabled:hover:bg-transparent"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest w-24 text-center">
-              PÁGINA {pageNumber} / {numPages || '?'}
-            </span>
-            <button
-              disabled={numPages === null || pageNumber >= numPages}
-              onClick={() => setPageNumber((prev) => prev + 1)}
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-400 hover:text-accent hover:bg-blue-50 disabled:opacity-30 disabled:hover:bg-transparent"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div className="h-4 w-px bg-slate-200 mx-2" />
-
-          <select
-            value={zoom === 'fit' ? 'fit' : String(zoom)}
-            onChange={(e) => {
-              const v = e.target.value;
-              setZoom(v === 'fit' ? 'fit' : (Number(v) as PdfViewerZoom));
-            }}
-            className="text-[10px] font-bold text-slate-500 uppercase bg-transparent border-none focus:ring-0 cursor-pointer max-w-[11rem]"
-            title="Ajustar ancho encaja hojas horizontales en el panel"
-          >
-            <option value="fit">Ajustar ancho</option>
-            {PDF_VIEWER_ZOOM_SCALES.map((s) => (
-              <option key={s} value={s}>
-                {Math.round(s * 100)}%
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {downloadUrl ? (
-          <a
-            href={downloadUrl}
-            download={filename}
-            className="text-[10px] font-bold text-accent hover:underline flex items-center gap-1 bg-blue-50 px-3 py-1.5 rounded-lg"
-          >
-            <ExternalLink className="w-3 h-3" /> SI LA VISTA NO CARGA, PULSE AQUÍ PARA DESCARGAR
-          </a>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-interface LegalParty {
-  nombre: string;
-  identificacion: string;
-  email: string;
-}
-
-interface LegalAnalysis {
-  accionantes: LegalParty[];
-  accionados: LegalParty[];
-  derechoTutelado: string;
-  hechos: string;
-  pretensiones: string;
-}
+import type { CaseAppellant, CaseOriginRuling, CaseType } from '../types';
+import type { LegalAnalysis, LegalParty } from '../components/new-case/new-case-types';
+import { CaseRadicacionActions, CaseRadicacionConsecutivePanel } from '../components/new-case/CaseRadicacionActions';
+import { CASE_TYPE_CARD_COPY, validateCaseOriginForRadicate } from '../hooks/useNewCaseForm';
+import { CaseTypeSelector } from '../components/new-case/CaseTypeSelector';
+import { CaseEmailParser } from '../components/new-case/CaseEmailParser';
+import { CaseFormSegundaInstancia } from '../components/new-case/CaseFormSegundaInstancia';
+import { CaseFormConsultaDesacato } from '../components/new-case/CaseFormConsultaDesacato';
+import { CasePdfViewer } from '../components/new-case/CasePdfViewer';
+import { CaseLegalAnalysisPanel } from '../components/new-case/CaseLegalAnalysisPanel';
 
 const NEW_CASE_DRAFT_KEY = 'tutelia_new_case_draft';
 const AI_ANALYSIS_CACHE_KEY = 'tutelia_ai_analysis_cache_v2';
@@ -626,6 +193,58 @@ function getUserFriendlyRadicadoError(err: any): string {
   return err?.message || 'Error desconocido al radicar expediente.';
 }
 
+function NewCaseOriginFlowFields({
+  caseFlowType,
+  originCourt,
+  setOriginCourt,
+  originRadicado,
+  setOriginRadicado,
+  appellantSel,
+  setAppellantSel,
+  originRulingSel,
+  setOriginRulingSel,
+  conductDescription,
+  setConductDescription,
+}: {
+  caseFlowType: CaseType;
+  originCourt: string;
+  setOriginCourt: (v: string) => void;
+  originRadicado: string;
+  setOriginRadicado: (v: string) => void;
+  appellantSel: '' | CaseAppellant;
+  setAppellantSel: (v: '' | CaseAppellant) => void;
+  originRulingSel: '' | CaseOriginRuling;
+  setOriginRulingSel: (v: '' | CaseOriginRuling) => void;
+  conductDescription: string;
+  setConductDescription: (v: string) => void;
+}) {
+  if (caseFlowType === 'tutela_primera') return null;
+  if (caseFlowType === 'tutela_segunda') {
+    return (
+      <CaseFormSegundaInstancia
+        originCourt={originCourt}
+        setOriginCourt={setOriginCourt}
+        originRadicado={originRadicado}
+        setOriginRadicado={setOriginRadicado}
+        appellantSel={appellantSel}
+        setAppellantSel={setAppellantSel}
+        originRulingSel={originRulingSel}
+        setOriginRulingSel={setOriginRulingSel}
+      />
+    );
+  }
+  return (
+    <CaseFormConsultaDesacato
+      originCourt={originCourt}
+      setOriginCourt={setOriginCourt}
+      originRadicado={originRadicado}
+      setOriginRadicado={setOriginRadicado}
+      conductDescription={conductDescription}
+      setConductDescription={setConductDescription}
+    />
+  );
+}
+
 export default function NewCase() {
   const { courtId } = useSessionCourt();
   const [file, setFile] = useState<File | null>(null);
@@ -653,6 +272,12 @@ export default function NewCase() {
     caseId: string;
     radicado: string;
   } | null>(null);
+  const [caseFlowType, setCaseFlowType] = useState<CaseType | null>(null);
+  const [originCourt, setOriginCourt] = useState('');
+  const [originRadicado, setOriginRadicado] = useState('');
+  const [appellantSel, setAppellantSel] = useState<'' | CaseAppellant>('');
+  const [originRulingSel, setOriginRulingSel] = useState<'' | CaseOriginRuling>('');
+  const [conductDescription, setConductDescription] = useState('');
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -676,6 +301,12 @@ export default function NewCase() {
     setConsecutiveLoading(false);
     setRadicadoConflict(null);
     setRadicationResult(null);
+    setCaseFlowType(null);
+    setOriginCourt('');
+    setOriginRadicado('');
+    setAppellantSel('');
+    setOriginRulingSel('');
+    setConductDescription('');
   }, []);
 
   useEffect(() => {
@@ -688,6 +319,21 @@ export default function NewCase() {
       const raw = localStorage.getItem(NEW_CASE_DRAFT_KEY);
       if (!raw) return;
       const draft = JSON.parse(raw);
+      const dType = draft.caseFlowType;
+      if (dType === 'tutela_primera' || dType === 'tutela_segunda' || dType === 'consulta_desacato') {
+        setCaseFlowType(dType);
+      } else if (draft.parsedData) {
+        setCaseFlowType('tutela_primera');
+      }
+      if (typeof draft.originCourt === 'string') setOriginCourt(draft.originCourt);
+      if (typeof draft.originRadicado === 'string') setOriginRadicado(draft.originRadicado);
+      if (draft.appellantSel === 'accionante' || draft.appellantSel === 'accionado') {
+        setAppellantSel(draft.appellantSel);
+      }
+      if (draft.originRulingSel === 'concedio' || draft.originRulingSel === 'nego') {
+        setOriginRulingSel(draft.originRulingSel);
+      }
+      if (typeof draft.conductDescription === 'string') setConductDescription(draft.conductDescription);
       if (draft.parsedData) setParsedData(draft.parsedData);
       if (Array.isArray(draft.attachments)) setAttachments(draft.attachments);
       setParseSessionId(typeof draft.parseSessionId === 'string' ? draft.parseSessionId : null);
@@ -753,6 +399,12 @@ export default function NewCase() {
     if (!parsedData || radicationResult) return;
     try {
       localStorage.setItem(NEW_CASE_DRAFT_KEY, JSON.stringify({
+        caseFlowType: caseFlowType ?? (parsedData ? 'tutela_primera' : null),
+        originCourt,
+        originRadicado,
+        appellantSel,
+        originRulingSel,
+        conductDescription,
         parsedData,
         attachments,
         parseSessionId,
@@ -764,7 +416,7 @@ export default function NewCase() {
     } catch (e) {
       console.error('No se pudo guardar borrador local de radicacion', e);
     }
-  }, [parsedData, radicationResult, attachments, parseSessionId, selectedDocIndex, selectedForMerge, aiAnalysis, consecutive]);
+  }, [parsedData, radicationResult, attachments, parseSessionId, selectedDocIndex, selectedForMerge, aiAnalysis, consecutive, caseFlowType, originCourt, originRadicado, appellantSel, originRulingSel, conductDescription]);
 
   useEffect(() => {
     if (!radicationResult) return;
@@ -790,6 +442,10 @@ export default function NewCase() {
 
   const parseEmail = async () => {
     if (!file) return;
+    if (!caseFlowType) {
+      setError('Seleccione primero el tipo de expediente (tarjeta superior).');
+      return;
+    }
 
     setIsParsing(true);
     setError(null);
@@ -838,7 +494,21 @@ export default function NewCase() {
       setError('Espere el consecutivo sugerido o indique un número válido (1–99999).');
       return;
     }
-    
+
+    const flow: CaseType = caseFlowType ?? 'tutela_primera';
+    const originErr = validateCaseOriginForRadicate(
+      flow,
+      originCourt,
+      originRadicado,
+      appellantSel,
+      originRulingSel,
+      conductDescription,
+    );
+    if (originErr) {
+      setError(originErr);
+      return;
+    }
+
     setRadicadoConflict(null);
     setIsRadicating(true);
     setError(null);
@@ -938,6 +608,27 @@ export default function NewCase() {
       };
       if (assignedTo) caseRow.assigned_to = assignedTo;
 
+      caseRow.case_type = flow;
+      if (flow === 'tutela_primera') {
+        caseRow.origin_court = null;
+        caseRow.origin_radicado = null;
+        caseRow.appellant = null;
+        caseRow.origin_ruling = null;
+        caseRow.conduct_description = null;
+      } else if (flow === 'tutela_segunda') {
+        caseRow.origin_court = originCourt.trim();
+        caseRow.origin_radicado = originRadicado.trim();
+        caseRow.appellant = appellantSel;
+        caseRow.origin_ruling = originRulingSel;
+        caseRow.conduct_description = null;
+      } else {
+        caseRow.origin_court = originCourt.trim();
+        caseRow.origin_radicado = originRadicado.trim();
+        caseRow.appellant = null;
+        caseRow.origin_ruling = null;
+        caseRow.conduct_description = conductDescription.trim();
+      }
+
       const caseRowForDb = deepSanitizeForPostgresInsert(caseRow) as Record<string, unknown>;
 
       try {
@@ -948,6 +639,18 @@ export default function NewCase() {
         throw e;
       }
       console.log('Caso creado con ID:', caseId);
+
+      try {
+        await openRadicacionStageAfterRadicate(supabase, {
+          caseId,
+          courtId,
+          radicado: radicadoFormatted,
+          caseType: flow,
+          caseAssignedTo: assignedTo ?? null,
+        });
+      } catch (e) {
+        console.error('Etapas iniciales (RADICACION):', e);
+      }
 
       const correoOriginalName = file?.name?.trim() || 'Correo de reparto.eml';
       const docRows: Array<Record<string, unknown>> = [
@@ -1288,80 +991,42 @@ export default function NewCase() {
         </div>
       </header>
 
-      {!parsedData ? (
-        <motion.div 
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="card-modern p-12"
-        >
-          <div 
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={onDrop}
-            className="border-2 border-dashed border-slate-200 rounded-2xl p-16 flex flex-col items-center justify-center text-center space-y-6 hover:border-accent hover:bg-blue-50/30 transition-all cursor-pointer group"
-          >
-            <div className="w-20 h-20 bg-slate-50 group-hover:bg-blue-100 rounded-3xl flex items-center justify-center transition-colors">
-              <Upload className="w-10 h-10 text-slate-400 group-hover:text-accent" />
-            </div>
-            <div>
-              <p className="text-lg font-bold text-slate-700">Arrastre el correo electrónico aquí</p>
-              <p className="text-sm text-slate-400 mt-2 font-medium">Soportamos archivos .eml y .msg extraídos de Outlook</p>
-            </div>
-            
-            <input 
-              type="file" 
-              id="file-upload" 
-              className="hidden" 
-              accept=".eml,.msg"
-              onChange={handleFileChange}
+      {!caseFlowType ? (
+        <CaseTypeSelector
+          error={error}
+          onSelectCaseType={setCaseFlowType}
+          onClearError={() => setError(null)}
+        />
+      ) : !parsedData ? (
+        <CaseEmailParser
+          caseFlowType={caseFlowType}
+          onChangeCaseFlowType={() => {
+            setCaseFlowType(null);
+            setFile(null);
+            setError(null);
+          }}
+          originFields={
+            <NewCaseOriginFlowFields
+              caseFlowType={caseFlowType}
+              originCourt={originCourt}
+              setOriginCourt={setOriginCourt}
+              originRadicado={originRadicado}
+              setOriginRadicado={setOriginRadicado}
+              appellantSel={appellantSel}
+              setAppellantSel={setAppellantSel}
+              originRulingSel={originRulingSel}
+              setOriginRulingSel={setOriginRulingSel}
+              conductDescription={conductDescription}
+              setConductDescription={setConductDescription}
             />
-            <label 
-              htmlFor="file-upload"
-              className="px-8 py-3 bg-white border border-slate-200 rounded-xl font-bold text-sm text-slate-600 hover:border-slate-300 hover:bg-slate-50 cursor-pointer transition-all shadow-sm"
-            >
-              BUSCAR EN ESTE EQUIPO
-            </label>
-            
-            {file && (
-              <div className="flex items-center gap-3 mt-4 px-4 py-2 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-100 animate-in fade-in zoom-in duration-300 text-xs font-bold">
-                <FileText className="w-4 h-4" />
-                {file.name}
-              </div>
-            )}
-          </div>
-
-          {file && (
-            <motion.div 
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="pt-10"
-            >
-              <button 
-                onClick={parseEmail}
-                disabled={isParsing}
-                className="btn-primary w-full flex items-center justify-center gap-3 text-lg py-5 shadow-lg shadow-accent/20"
-              >
-                {isParsing ? (
-                  <>
-                    <Loader2 className="w-6 h-6 animate-spin" />
-                    ANALIZANDO CONTENIDO Y ANEXOS...
-                  </>
-                ) : (
-                  <>
-                    PROCESAR E INGESTAR EXPEDIENTE
-                    <ArrowRight className="w-6 h-6" />
-                  </>
-                )}
-              </button>
-            </motion.div>
-          )}
-
-          {error && (
-            <div className="mt-6 p-4 bg-red-50 border border-red-100 rounded-xl text-red-600 flex items-center gap-3 text-sm font-semibold">
-              <AlertCircle className="w-5 h-5 shrink-0" />
-              {error}
-            </div>
-          )}
-        </motion.div>
+          }
+          file={file}
+          onFileInputChange={handleFileChange}
+          onDrop={onDrop}
+          onParseEmail={parseEmail}
+          isParsing={isParsing}
+          error={error}
+        />
       ) : radicationResult ? (
         <motion.div
           initial={{ opacity: 0, y: 16 }}
@@ -1409,409 +1074,74 @@ export default function NewCase() {
               </button>
             </div>
 
-            <div className="rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2.5">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[11px] text-slate-500">
-                <span className="font-medium text-slate-600 flex items-center gap-1">
-                  <Edit2 className="w-3 h-3 text-slate-400 shrink-0" />
-                  Radicado (Ac. 201/1997 CSJ)
-                </span>
-                {consecutiveLoading ? (
-                  <span className="inline-flex items-center gap-1 text-slate-400">
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    Consecutivo…
-                  </span>
-                ) : consecutiveReady ? (
-                  <span className="inline-flex items-center gap-1 text-emerald-600">
-                    <Check className="w-3 h-3 shrink-0" />
-                    Consecutivo listo
-                  </span>
-                ) : null}
-              </div>
-
-              <div className="mt-2 flex flex-wrap items-center gap-x-1 gap-y-1 text-xs font-mono text-slate-700">
-                <span className="tabular-nums">{COURT_CONSTANTS.CITY_CODE}</span>
-                <span className="text-slate-300">·</span>
-                <span className="tabular-nums">{COURT_CONSTANTS.ENTITY_CODE}</span>
-                <span className="text-slate-300">·</span>
-                <span className="tabular-nums">{COURT_CONSTANTS.SPECIALTY_CODE}</span>
-                <span className="text-slate-300">·</span>
-                <span className="tabular-nums">{COURT_CONSTANTS.DESPACHO_CODE}</span>
-                <span className="text-slate-300">·</span>
-                <span className="tabular-nums">{new Date().getFullYear()}</span>
-                <span className="text-slate-300">·</span>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={consecutive}
-                  onChange={(e) => setConsecutive(e.target.value.replace(/\D/g, '').slice(0, 5))}
-                  disabled={consecutiveLoading}
-                  className="w-[4.25rem] rounded border border-slate-300 bg-white px-1.5 py-0.5 text-center text-xs font-semibold text-slate-800 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:opacity-60"
-                  placeholder="—"
-                  title="Consecutivo de proceso (5 dígitos). Se sugiere el siguiente al último radicado en este despacho y año."
-                />
-                <span className="text-slate-300">·</span>
-                <span className="tabular-nums">{COURT_CONSTANTS.INSTANCE_CODE}</span>
-              </div>
-              <p className="mt-1.5 text-[10px] leading-snug text-slate-400">
-                El consecutivo se propone según el último expediente ya radicado en este despacho para el año en curso; puede corregirlo si corresponde.
-              </p>
-
-              {radicadoConflict && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  className="mt-3 p-3 bg-red-50 border border-red-100 rounded-lg flex items-start gap-3 text-red-600 text-[10px] font-bold uppercase tracking-widest"
-                >
-                  <AlertCircle className="w-5 h-5 shrink-0" />
-                  <div className="flex flex-col gap-2 max-w-full">
-                    <span className="text-[11px] font-black">Conflicto de radicación detectado</span>
-                    <p className="font-bold normal-case tracking-normal text-sm text-red-700/90 leading-snug">
-                      El radicado <span className="font-mono">{formatRadicado(radicadoConflict.raw)}</span> ya está en la
-                      tabla <span className="font-mono">cases</span> de Supabase para este despacho.
-                    </p>
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      <Link
-                        to={`/case/${radicadoConflict.existingCaseId}`}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white border border-red-200 text-[11px] font-bold text-red-700 normal-case tracking-normal hover:bg-red-50"
-                      >
-                        Abrir expediente existente
-                      </Link>
-                      <Link
-                        to={`/cases?q=${encodeURIComponent(radicadoConflict.raw)}`}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white border border-red-200 text-[11px] font-bold text-red-700 normal-case tracking-normal hover:bg-red-50"
-                      >
-                        Ver en listado de expedientes
-                      </Link>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
+            <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-xs font-semibold text-slate-700">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">
+                Tipo de expediente
+              </span>
+              <span aria-hidden className="mr-1.5">
+                {CASE_TYPE_CARD_COPY[caseFlowType ?? 'tutela_primera'].emoji}
+              </span>
+              {CASE_TYPE_CARD_COPY[caseFlowType ?? 'tutela_primera'].title} —{' '}
+              {CASE_TYPE_CARD_COPY[caseFlowType ?? 'tutela_primera'].subtitle}
             </div>
+
+            <NewCaseOriginFlowFields
+              caseFlowType={caseFlowType ?? 'tutela_primera'}
+              originCourt={originCourt}
+              setOriginCourt={setOriginCourt}
+              originRadicado={originRadicado}
+              setOriginRadicado={setOriginRadicado}
+              appellantSel={appellantSel}
+              setAppellantSel={setAppellantSel}
+              originRulingSel={originRulingSel}
+              setOriginRulingSel={setOriginRulingSel}
+              conductDescription={conductDescription}
+              setConductDescription={setConductDescription}
+            />
+
+            <CaseRadicacionConsecutivePanel
+              consecutive={consecutive}
+              setConsecutive={setConsecutive}
+              consecutiveLoading={consecutiveLoading}
+              consecutiveReady={consecutiveReady}
+              radicadoConflict={radicadoConflict}
+            />
           </div>
 
           {/* AI Analysis (Full Width) */}
-          <AnimatePresence mode="wait">
-            {aiAnalysis && (
-              <motion.div 
-                key="ai-panel"
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
-                className="lg:col-span-12 overflow-hidden"
-              >
-                <div className="card-modern p-10 space-y-8 border-accent/20 bg-blue-50/10 shadow-2xl shadow-accent/5 backdrop-blur-sm mb-8">
-                  <div className="flex items-center justify-between border-b border-accent/10 pb-6">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-accent rounded-2xl flex items-center justify-center shadow-lg shadow-accent/20">
-                        <Sparkles className="w-6 h-6 text-white" />
-                      </div>
-                      <div>
-                        <h3 className="text-sm font-black uppercase tracking-widest text-slate-900 leading-none">Análisis por Inteligencia Artificial</h3>
-                        <p className="text-[10px] font-bold text-accent uppercase tracking-widest mt-1.5 opacity-70">Extracción automática de datos judiciales bajo C.P.C.</p>
-                      </div>
-                    </div>
-                    <button onClick={() => setAiAnalysis(null)} className="text-slate-300 hover:text-slate-600 p-2 hover:bg-slate-100 rounded-xl transition-all">
-                      <X className="w-5 h-5" />
-                    </button>
-                  </div>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-                    <div className="space-y-6">
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                          Accionantes (Demandantes){aiAnalysis.accionantes.length > 1 ? ` (${aiAnalysis.accionantes.length})` : ''}
-                        </label>
-                        <div className="space-y-3">
-                          {aiAnalysis.accionantes.map((p, i) => (
-                            <div key={`acc-${i}`} className="space-y-1 border-b border-slate-100/80 pb-3 last:border-0 last:pb-0">
-                              <p className="text-sm font-black text-slate-800 leading-tight">{p.nombre || '—'}</p>
-                              <p className="text-[10px] font-mono font-bold text-accent bg-accent/5 px-2 py-0.5 rounded-md inline-block uppercase">
-                                {p.identificacion?.trim() || 'C.C. NO DETECTADA'}
-                              </p>
-                              <p className="text-[10px] text-slate-500 font-medium truncate">{p.email?.trim() || 'Email no detectado'}</p>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                          Accionados (Contraparte){aiAnalysis.accionados.length > 1 ? ` (${aiAnalysis.accionados.length})` : ''}
-                        </label>
-                        <div className="space-y-3">
-                          {aiAnalysis.accionados.map((p, i) => (
-                            <div key={`acd-${i}`} className="space-y-1 border-b border-slate-100/80 pb-3 last:border-0 last:pb-0">
-                              <p className="text-sm font-black text-slate-800 leading-tight">{p.nombre || '—'}</p>
-                              <p className="text-[10px] font-mono font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md inline-block uppercase">
-                                {p.identificacion?.trim() || 'NIT / ID NO DETECTADO'}
-                              </p>
-                              <p className="text-[10px] text-slate-500 font-medium truncate">{p.email?.trim() || 'Email no detectado'}</p>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-6">
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Derecho Tutelado
-                        </label>
-                        <div className="bg-emerald-50 border border-emerald-100 px-4 py-2.5 rounded-2xl text-[11px] font-black text-emerald-700 inline-block uppercase shadow-sm">
-                          {aiAnalysis.derechoTutelado}
-                        </div>
-                      </div>
-                      <div className="p-4 bg-white rounded-2xl border border-slate-100 shadow-sm">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Resumen de Pretensión</label>
-                        <p className="text-[11px] text-slate-600 font-medium leading-relaxed mt-2 italic">
-                          "{aiAnalysis.pretensiones}"
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="md:col-span-2 space-y-2">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Resumen de Hechos Relevantes</label>
-                      <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm h-full flex flex-col justify-center">
-                        <p className="text-[11px] text-slate-600 font-medium leading-loose italic">
-                          "{aiAnalysis.hechos}"
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          <CaseLegalAnalysisPanel
+            section="ai"
+            aiAnalysis={aiAnalysis}
+            onDismissAnalysis={() => setAiAnalysis(null)}
+          />
 
           {/* Main Grid: Actions & Viewer */}
           <div className="lg:col-span-5 flex flex-col gap-6">
-            {!aiAnalysis && (
-              <div className="p-4 bg-amber-50 text-amber-700 rounded-2xl border border-amber-100 text-[10px] font-bold uppercase tracking-widest flex items-center gap-3 animate-pulse">
-                <AlertCircle className="w-4 h-4" /> Se recomienda extraer datos con IA antes de radicar
-              </div>
-            )}
+            <CaseRadicacionActions
+              aiAnalysis={aiAnalysis}
+              isRadicating={isRadicating}
+              consecutiveReady={consecutiveReady}
+              error={error}
+              onRadicate={handleRadicate}
+            />
 
-            {aiAnalysis && (
-              <div className="p-4 bg-emerald-50 text-emerald-700 rounded-2xl border border-emerald-100 text-[10px] font-bold uppercase tracking-widest flex items-center gap-3">
-                <CheckCircle2 className="w-4 h-4" /> Datos extraídos con IA listos para vinculación
-              </div>
-            )}
-
-            {error && (
-              <div className="p-4 bg-red-50 border border-red-100 rounded-2xl text-red-600 flex items-center gap-3 text-xs font-semibold">
-                <AlertCircle className="w-5 h-5 shrink-0" />
-                {error}
-              </div>
-            )}
-
-            <button 
-              onClick={handleRadicate}
-              disabled={isRadicating || !consecutiveReady}
-              className={`w-full py-6 rounded-2xl text-sm font-black uppercase tracking-[0.15em] flex items-center justify-center gap-4 transition-all duration-300 relative overflow-hidden group ${
-                isRadicating 
-                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200' 
-                  : 'bg-accent text-white shadow-2xl shadow-accent/20 hover:shadow-accent/40 active:scale-[0.98] border border-accent/20'
-              }`}
-            >
-              <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/10 to-white/0 -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
-              
-              {isRadicating ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Radicando Proceso...</span>
-                </>
-              ) : (
-                <>
-                  {aiAnalysis && <Sparkles className="w-5 h-5 text-blue-200" />}
-                  <span>Radicar y Vincular Expediente</span>
-                  <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                </>
-              )}
-            </button>
-
-            <div className="card-modern p-8 space-y-6">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold text-slate-900">Metadatos Extraídos</h2>
-                <div className="w-8 h-8 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center">
-                  <CheckCircle2 className="w-5 h-5" />
-                </div>
-              </div>
-
-              <div className="space-y-5">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Asunto del Correo</label>
-                  <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl font-bold text-slate-700 text-sm">
-                    {parsedData.subject || 'SIN TÍTULO DETECTADO'}
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Interviniente (Accionante)</label>
-                  <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl text-slate-600 text-sm font-medium truncate">
-                    {parsedData.from}
-                  </div>
-                </div>
-
-                {parsedData.linkFound && (
-                  <div className="space-y-1.5 pt-2">
-                    <label className="text-[10px] font-bold text-blue-500 uppercase tracking-widest px-1 flex items-center gap-2">
-                      <ExternalLink className="w-3 h-3" /> Link "Archivo" Detectado
-                    </label>
-                    <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl text-blue-700 text-[11px] font-medium break-all flex flex-col gap-2">
-                      <span className="opacity-70">Se detectó y procesó automáticamente el link de descarga mencionado en el cuerpo del correo.</span>
-                      <div className="bg-white/80 p-2 rounded-lg border border-blue-200/50 truncate">
-                        {parsedData.linkUrl}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="pt-4 flex items-center justify-between">
-                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">Documentos Identificados</label>
-                   <button 
-                     onClick={mergeSelected}
-                     disabled={isMerging || selectedForMerge.length <= 1}
-                     className={`text-[9px] font-black tracking-tighter uppercase px-2 py-1 rounded-lg border flex items-center gap-1.5 transition-all ${
-                       selectedForMerge.length > 1 
-                         ? 'bg-accent text-white border-accent hover:bg-accent-dark' 
-                         : 'bg-slate-100 text-slate-400 border-slate-200 opacity-60'
-                     }`}
-                   >
-                     {isMerging ? <Loader2 className="w-3 h-3 animate-spin"/> : <Combine className="w-3 h-3" />}
-                     Unir Seleccionados ({selectedForMerge.length})
-                   </button>
-                </div>
-
-                <div className="space-y-1.5">
-                  <div className="grid grid-cols-1 gap-2.5">
-                    {/* Correo Principal */}
-                    <div 
-                      onClick={() => setSelectedDocIndex(-1)}
-                      className={`flex items-center justify-between p-3.5 border rounded-xl text-[11px] font-bold cursor-pointer transition-all duration-200 group ${
-                        selectedDocIndex === -1 
-                          ? 'border-accent bg-blue-50/50 text-accent ring-2 ring-accent/5 translate-x-1' 
-                          : 'border-slate-100 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50'
-                      }`}
-                    >
-                        <span className="flex items-center gap-2.5">
-                           <div className={`p-1.5 rounded-lg ${selectedDocIndex === -1 ? 'bg-accent text-white' : 'bg-slate-100 text-slate-400 group-hover:bg-slate-200'}`}>
-                              <FileText className="w-3.5 h-3.5" />
-                           </div>
-                           CorreoReparto
-                        </span>
-                        <div className="flex items-center gap-2">
-                           <span className={`text-[8px] px-2 py-0.5 rounded-full font-black tracking-tighter uppercase ${
-                             selectedDocIndex === -1 ? 'bg-accent text-white' : 'bg-slate-100 text-slate-400'
-                           }`}>Principal</span>
-                        </div>
-                    </div>
-
-                    {/* Otros Adjuntos */}
-                    {attachments.map((att: any, idx: number) => (
-                      <div 
-                        key={idx} 
-                        className={`group relative flex items-center justify-between p-3.5 border rounded-xl text-[11px] font-bold transition-all duration-200 ${
-                          selectedDocIndex === idx 
-                            ? 'border-accent bg-blue-50/50 text-accent ring-2 ring-accent/5 translate-x-1' 
-                            : 'border-slate-100 bg-white text-slate-600 hover:border-slate-200 hover:bg-slate-50'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 flex-1 min-w-0">
-                           {att.contentType === 'application/pdf' && (
-                             <input 
-                               type="checkbox"
-                               checked={selectedForMerge.includes(idx)}
-                               onChange={() => toggleSelectForMerge(idx)}
-                               onClick={(e) => e.stopPropagation()}
-                               className="w-4 h-4 rounded border-slate-300 text-accent focus:ring-accent accent-accent cursor-pointer"
-                             />
-                           )}
-                           <div 
-                              onClick={() => setSelectedDocIndex(idx)}
-                              className="flex-1 cursor-pointer flex items-center gap-2.5 min-w-0"
-                           >
-                              <div className={`p-1.5 rounded-lg shrink-0 ${selectedDocIndex === idx ? 'bg-accent text-white' : 'bg-slate-100 text-slate-400 group-hover:bg-slate-200'}`}>
-                                 <FileText className="w-3.5 h-3.5" />
-                              </div>
-                              {editingIndex === idx ? (
-                                <div className="flex items-center gap-1 min-w-0 flex-1 bg-white" onClick={(e) => e.stopPropagation()}>
-                                  <input 
-                                    type="text" 
-                                    value={editingName} 
-                                    onChange={(e) => setEditingName(e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') handleRename(idx);
-                                      if (e.key === 'Escape') setEditingIndex(null);
-                                    }}
-                                    className="flex-1 bg-slate-50 border border-accent/30 rounded px-2 py-1 text-[11px] font-bold focus:ring-2 focus:ring-accent/20 outline-none min-w-0 shadow-inner"
-                                    autoFocus
-                                  />
-                                  <div className="flex items-center gap-0.5 shrink-0 ml-1">
-                                    <button 
-                                      onClick={() => handleRename(idx)} 
-                                      className="text-white bg-emerald-500 p-1 hover:bg-emerald-600 rounded transition-colors shadow-sm"
-                                      title="Confirmar (Enter)"
-                                    >
-                                      <Check className="w-3.5 h-3.5"/>
-                                    </button>
-                                    <button 
-                                      onClick={() => setEditingIndex(null)} 
-                                      className="text-slate-400 bg-slate-100 p-1 hover:bg-slate-200 rounded transition-colors"
-                                      title="Cancelar (Esc)"
-                                    >
-                                      <X className="w-3.5 h-3.5"/>
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <span className="truncate">{att.filename}</span>
-                              )}
-                           </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 ml-2">
-                           {!editingIndex && (
-                             <div className="hidden group-hover:flex items-center gap-1 pr-1 border-r border-slate-100 mr-1">
-                               <button 
-                                 onClick={(e) => { e.stopPropagation(); setEditingIndex(idx); setEditingName(att.filename); }}
-                                 className="p-1 text-slate-400 hover:text-accent hover:bg-white rounded transition-colors"
-                                 title="Renombrar"
-                               >
-                                 <Edit2 className="w-3 h-3" />
-                               </button>
-                               <div className="flex flex-col">
-                                 <button 
-                                   onClick={(e) => { e.stopPropagation(); handleMove(idx, 'up'); }}
-                                   disabled={idx === 0}
-                                   className="p-0.5 text-slate-400 hover:text-accent disabled:opacity-20"
-                                   title="Subir"
-                                 >
-                                   <ArrowUp className="w-2.5 h-2.5" />
-                                 </button>
-                                 <button 
-                                   onClick={(e) => { e.stopPropagation(); handleMove(idx, 'down'); }}
-                                   disabled={idx === attachments.length - 1}
-                                   className="p-0.5 text-slate-400 hover:text-accent disabled:opacity-20"
-                                   title="Bajar"
-                                 >
-                                   <ArrowDown className="w-2.5 h-2.5" />
-                                 </button>
-                               </div>
-                             </div>
-                           )}
-                           
-                           {att.isFromLink && (
-                             <span className="text-[8px] font-black tracking-tighter uppercase text-blue-500 bg-blue-100 px-1.5 py-0.5 rounded flex items-center gap-1">
-                               LINK
-                             </span>
-                           )}
-                           <span className="text-[10px] tabular-nums font-medium text-slate-300">{(att.size / 1024).toFixed(1)} KB</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
+            <CaseLegalAnalysisPanel
+              section="metadata"
+              parsedData={parsedData}
+              attachments={attachments}
+              selectedDocIndex={selectedDocIndex}
+              onSelectDocIndex={setSelectedDocIndex}
+              mergeSelected={mergeSelected}
+              isMerging={isMerging}
+              selectedForMerge={selectedForMerge}
+              toggleSelectForMerge={toggleSelectForMerge}
+              editingIndex={editingIndex}
+              setEditingIndex={setEditingIndex}
+              editingName={editingName}
+              setEditingName={setEditingName}
+              handleRename={handleRename}
+              handleMove={handleMove}
+            />
           </div>
 
           {/* Viewer Section */}
@@ -1877,7 +1207,7 @@ export default function NewCase() {
                  </>
                ) : (
                  <div className="flex-1 flex flex-col h-full bg-slate-100 min-h-0 overflow-hidden">
-                   <PdfViewer
+                   <CasePdfViewer
                      key={`${selectedDocIndex}-${attachments[selectedDocIndex]?.filename ?? ''}-${parseSessionId ?? ''}`}
                      content={attachments[selectedDocIndex]?.content}
                      contentType={attachments[selectedDocIndex]?.contentType}

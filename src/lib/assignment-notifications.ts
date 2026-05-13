@@ -1,14 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import {
-  assignedToMatchesProfile,
-  findStaffByAssignedValue,
-  normalizeStaffKey,
-} from './court-staff-assignees';
+import { filterSustanciadoresMatchingAssigned, fetchProfilesByCourtAndRoles } from './profile-notification-recipients';
 import { isPostgrestTableMissingError } from './supabase-user-error';
 
 /**
- * Crea filas en `user_notifications` para perfiles del mismo juzgado cuyo nombre o email
- * coincide con el texto guardado en `assigned_to` (nombre del sustanciador o correo seed).
+ * Crea filas en `user_notifications` para sustanciadores del mismo juzgado cuyo nombre o email
+ * coincide con el texto guardado en `assigned_to`.
  */
 export async function insertAssignmentNotificationsForProfiles(
   supabase: SupabaseClient,
@@ -18,27 +14,17 @@ export async function insertAssignmentNotificationsForProfiles(
     radicado: string;
     assignedTo: string;
     actorUserName: string;
-  }
+  },
 ): Promise<void> {
   const at = opts.assignedTo.trim();
   if (!at) return;
 
-  const { data: profiles, error } = await supabase
-    .from('profiles')
-    .select('id, name, email')
-    .eq('court_id', opts.courtId);
-  if (error) {
-    console.error('assignment-notifications profiles:', error);
+  const sustanciadores = await fetchProfilesByCourtAndRoles(supabase, opts.courtId, ['sustanciador']);
+  const recipients = filterSustanciadoresMatchingAssigned(sustanciadores, at);
+  if (recipients.length === 0) {
+    console.warn('assignment-notifications: ningún sustanciador coincide con assigned_to:', at);
     return;
   }
-
-  const staff = findStaffByAssignedValue(at);
-  const recipients = (profiles || []).filter((p) => {
-    if (assignedToMatchesProfile(at, p.name)) return true;
-    const em = (p.email || '').trim();
-    if (!em || !staff?.emails?.length) return false;
-    return staff.emails.some((e) => normalizeStaffKey(e) === normalizeStaffKey(em));
-  });
 
   const title = 'Le asignaron un expediente';
   const body = `Radicado ${opts.radicado}. Quien asigna: ${opts.actorUserName}.`;
@@ -61,7 +47,7 @@ export async function insertAssignmentNotificationsForProfiles(
 
 export async function markAssignmentNotificationsReadForCase(
   supabase: SupabaseClient,
-  opts: { caseId: string; recipientUserId: string }
+  opts: { caseId: string; recipientUserId: string },
 ): Promise<void> {
   const now = new Date().toISOString();
   const { error } = await supabase
