@@ -367,11 +367,14 @@ El texto debe tener al menos 2500 caracteres. Si el documento tiene consideracio
   let textoExtraido = String(resLargo.output_text || '').trim();
   textoExtraido = textoExtraido.replace(/^```[\w]*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
 
+  const textoParaContexto =
+    textoExtraido.length > 100_000 ? textoExtraido.slice(0, 100_000) : textoExtraido;
+
   const promptCortos = `Eres secretario judicial en Colombia. A partir del siguiente texto ya extraído de un fallo (prosa continua), completa el JSON indicado con datos breves y precisos. Si algo no consta en el texto, usa cadena vacía salvo defendant donde puede usarse "—".
 
 Texto extraído del fallo:
 ---
-${textoExtraido}
+${textoParaContexto}
 ---
 
 Campos del JSON:
