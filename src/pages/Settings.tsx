@@ -34,6 +34,32 @@ export default function Settings() {
   const [repartoStatus, setRepartoStatus] = useState<string | null>(null);
   const [courtDisplayName, setCourtDisplayName] = useState<string | null>(null);
   const [courtCity, setCourtCity] = useState<string | null>(null);
+  const [sgdeStatus, setSgdeStatus] = useState<{
+    enabled: boolean;
+    configured: boolean;
+    portalBaseUrl: string;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch('/api/sgde/status');
+        const j = (await res.json()) as { enabled?: boolean; configured?: boolean; portalBaseUrl?: string };
+        if (cancelled) return;
+        setSgdeStatus({
+          enabled: Boolean(j.enabled),
+          configured: Boolean(j.configured),
+          portalBaseUrl: typeof j.portalBaseUrl === 'string' ? j.portalBaseUrl : '',
+        });
+      } catch {
+        if (!cancelled) setSgdeStatus(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const loadReparto = useCallback(async () => {
     setRepartoLoading(true);
@@ -254,18 +280,40 @@ export default function Settings() {
           </div>
 
           <div className="space-y-6 flex-1">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-red-400 rounded-full animate-pulse" />
-              <span className="text-xs font-bold uppercase text-red-400 tracking-widest">Sin Conexión</span>
-            </div>
+            {sgdeStatus?.enabled ? (
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-2 rounded-full bg-emerald-500" />
+                <span className="text-xs font-bold uppercase tracking-widest text-emerald-700">Activo</span>
+              </div>
+            ) : sgdeStatus?.configured === false ? (
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-2 rounded-full bg-amber-400" />
+                <span className="text-xs font-bold uppercase tracking-widest text-amber-700">Sin credenciales</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-2 rounded-full bg-slate-300" />
+                <span className="text-xs font-bold uppercase tracking-widest text-slate-500">Desactivado</span>
+              </div>
+            )}
 
-            <p className="text-sm font-medium text-slate-400 leading-relaxed">
-              La sincronización bidireccional con el Sistema de Gestión Documental Electrónica requiere credenciales de API Institucional.
+            <p className="text-sm font-medium text-slate-500 leading-relaxed">
+              La lectura del árbol documental en SGDE usa credenciales definidas solo en el servidor (
+              <span className="font-mono text-[11px]">SGDE_USERNAME</span>,{' '}
+              <span className="font-mono text-[11px]">SGDE_PASSWORD</span>
+              {sgdeStatus?.portalBaseUrl ? (
+                <>
+                  , URL <span className="font-mono text-[11px] break-all">{sgdeStatus.portalBaseUrl}</span>
+                </>
+              ) : null}
+              ). Opcional: <span className="font-mono text-[11px]">SGDE_BASE_URL</span>,{' '}
+              <span className="font-mono text-[11px]">SGDE_ENABLED=0</span> para desactivar.
             </p>
 
-            <button className="w-full py-4 border border-slate-100 bg-slate-50 text-slate-300 rounded-xl font-bold text-xs uppercase tracking-widest cursor-not-allowed">
-              CONFIGURAR TOKEN DE ACCESO
-            </button>
+            <p className="text-[11px] leading-relaxed text-slate-400">
+              En cada expediente (pestaña expediente) puede consultar el SGDE y vincular por radicado si aún no hay{' '}
+              <span className="font-mono">sgde_id</span> en Tutelia.
+            </p>
           </div>
         </div>
       </div>

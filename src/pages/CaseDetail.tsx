@@ -40,6 +40,7 @@ import {
 import { CaseWordReviewPanel } from '../components/expediente/CaseWordReviewPanel';
 import { CaseIncidenteDesacatoPanel } from '../components/expediente/CaseIncidenteDesacatoPanel';
 import { CaseExpedienteDigitalPanel } from '../components/expediente/CaseExpedienteDigitalPanel';
+import { CaseSgdePanel } from '../components/expediente/CaseSgdePanel';
 import { buildCaseActuacionesTimeline, buildSynthesisContextBlock } from '../lib/case-detail-context';
 import { resolveAssigneeForCase, SUSTANCIADORES } from '../lib/court-staff-assignees';
 import { ensureSupabaseSessionForWrites } from '../lib/supabase-write-auth';
@@ -687,7 +688,19 @@ export default function CaseDetail() {
                 </span>
               </div>
               <p className="text-sm font-medium text-slate-500 mt-1">
-                Referencia SGDE: <span className="text-emerald-600 font-bold">CERTIFICADA-2026-0045</span>
+                Referencia SGDE (Tutelia):{' '}
+                {caseItem.sgdeId?.trim() ? (
+                  <span
+                    className="font-mono text-xs font-semibold text-emerald-700"
+                    title={caseItem.sgdeId.trim()}
+                  >
+                    {caseItem.sgdeId.trim().length > 36
+                      ? `${caseItem.sgdeId.trim().slice(0, 18)}…${caseItem.sgdeId.trim().slice(-8)}`
+                      : caseItem.sgdeId.trim()}
+                  </span>
+                ) : (
+                  <span className="text-slate-400 font-medium">Sin vincular</span>
+                )}
               </p>
             </div>
             <CaseStagePanel />
@@ -982,16 +995,19 @@ export default function CaseDetail() {
           aria-labelledby="tab-expediente"
           className={activeTab === 'expediente' ? 'block' : 'hidden'}
         >
-          <CaseExpedienteDigitalPanel
-            caseId={id!}
-            caseItem={caseItem}
-            docs={docs}
-            docsLoaded={docsLoaded}
-            selectedDoc={selectedDoc}
-            onSelectDoc={setSelectedDoc}
-            onRefetchCase={refetchCase}
-            onRefetchDocs={refetchDocs}
-          />
+          <div className="flex w-full min-w-0 flex-col gap-6">
+            <CaseExpedienteDigitalPanel
+              caseId={id!}
+              caseItem={caseItem}
+              docs={docs}
+              docsLoaded={docsLoaded}
+              selectedDoc={selectedDoc}
+              onSelectDoc={setSelectedDoc}
+              onRefetchCase={refetchCase}
+              onRefetchDocs={refetchDocs}
+            />
+            <CaseSgdePanel caseId={id!} caseItem={caseItem} onRefetchCase={refetchCase} />
+          </div>
         </div>
 
         <div
