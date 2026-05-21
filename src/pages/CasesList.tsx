@@ -10,9 +10,15 @@ import { buildExpedienteViewRow } from '../lib/expedientes-view-model';
 import { assignedToMatchesProfile, SUSTANCIADORES } from '../lib/court-staff-assignees';
 import { intentFreshNewCaseFromMenu } from '../lib/new-case-nav';
 import {
+  parseTutelasListFilter,
+  tutelasListPageTitle,
+  type TutelasListFilter,
+} from '../lib/tutelas-nav';
+import {
   courtCasesQueryKey,
   fetchCourtCasesForList,
   casesListSortToOrderColumn,
+  COURT_CASES_STALE_MS,
 } from '../lib/court-cases-query';
 import { useInvalidateCourtCasesOnRealtime } from '../hooks/useCourtCasesRealtime';
 import { useSessionCourt } from '../contexts/SessionCourtContext';
@@ -62,6 +68,10 @@ export default function CasesList() {
   const { courtId } = useSessionCourt();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
+  const tutelasFilter: TutelasListFilter = useMemo(
+    () => parseTutelasListFilter(searchParams.toString()),
+    [searchParams]
+  );
   const [searchTerm, setSearchTerm] = useState(() => searchParams.get('q') || '');
   const [statusFilter, setStatusFilter] = useState<CaseStatus | 'all'>(() => parseStatusParam(searchParams.get('status')));
   const [sortBy, setSortBy] = useState<SortKey>(() => parseSortParam(searchParams.get('sort')));
@@ -108,8 +118,26 @@ export default function CasesList() {
     if (statusFilter !== 'all') next.set('status', statusFilter);
     if (sortBy !== 'updated') next.set('sort', sortBy);
     if (view !== 'lista') next.set('vista', view);
+    if (tutelasFilter.kind === 'tipo') next.set('tipo', tutelasFilter.tipo);
+    if (tutelasFilter.kind === 'incidentes') next.set('incidentes', '1');
     setSearchParams(next, { replace: true });
-  }, [searchTerm, statusFilter, sortBy, view, setSearchParams]);
+  }, [searchTerm, statusFilter, sortBy, view, tutelasFilter, setSearchParams]);
+
+  const incidentesFilter = tutelasFilter.kind === 'incidentes';
+
+  const { data: incidentParentCaseIds } = useQuery({
+    queryKey: ['incident-parent-case-ids', courtId],
+    queryFn: async () => {
+      const { data, error: incErr } = await supabase
+        .from('incident_desacato')
+        .select('parent_case_id')
+        .eq('court_id', courtId);
+      if (incErr) throw incErr;
+      return new Set((data ?? []).map((r) => String((r as { parent_case_id: string }).parent_case_id)));
+    },
+    enabled: Boolean(courtId) && incidentesFilter,
+    staleTime: COURT_CASES_STALE_MS,
+  });
 
   const orderCol = useMemo(() => casesListSortToOrderColumn(sortBy), [sortBy]);
 
@@ -142,6 +170,13 @@ export default function CasesList() {
     const q = searchTerm.trim().toLowerCase();
     const qDigits = normalizeRadicadoQuery(searchTerm);
     return cases.filter((c) => {
+      if (tutelasFilter.kind === 'tipo') {
+        const ct = c.caseType ?? 'tutela_primera';
+        if (ct !== tutelasFilter.tipo) return false;
+      }
+      if (tutelasFilter.kind === 'incidentes') {
+        if (!incidentParentCaseIds?.has(c.id)) return false;
+      }
       const statusOk = statusFilter === 'all' || c.status === statusFilter;
       if (!statusOk) return false;
       if (!q) return true;
@@ -152,7 +187,7 @@ export default function CasesList() {
       if ((c.subject || '').toLowerCase().includes(q)) return true;
       return false;
     });
-  }, [cases, searchTerm, statusFilter]);
+  }, [cases, searchTerm, statusFilter, tutelasFilter, incidentParentCaseIds]);
 
   const enrichedBase = useMemo(
     () => filteredCases.map((c) => buildExpedienteViewRow(c, courtAssignmentMode ?? null)),
@@ -195,12 +230,26 @@ export default function CasesList() {
             <Gavel className="w-5 h-5" />
             <span className="text-[10px] font-bold uppercase tracking-widest">Módulo judicial</span>
           </div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Expedientes</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900">{tutelasListPageTitle(tutelasFilter)}</h1>
           <p className="text-sm text-slate-500 mt-2 max-w-xl">
-            Tablero, lista y calendario con término de <strong className="text-slate-700">10 días hábiles</strong>{' '}
-            desde radicación (lun–vie). El sustanciador se persiste en{' '}
-            <span className="font-mono text-slate-600">assigned_to</span> según la regla del juzgado (Configuración);
-            «Mis asignadas» usa ese campo y su perfil.
+            {tutelasFilter.kind === 'incidentes' ? (
+              <>
+                Expedientes de <strong className="text-slate-700">primera instancia</strong> con incidente de desacato
+                iniciado. El detalle del incidente se gestiona en la pestaña del expediente madre.
+              </>
+            ) : tutelasFilter.kind === 'tipo' ? (
+              <>
+                Listado filtrado por tipo de asunto. Tablero, lista y calendario con término de{' '}
+                <strong className="text-slate-700">10 días hábiles</strong> cuando aplica (lun–vie).
+              </>
+            ) : (
+              <>
+                Tablero, lista y calendario con término de <strong className="text-slate-700">10 días hábiles</strong>{' '}
+                desde radicación (lun–vie). El sustanciador se persiste en{' '}
+                <span className="font-mono text-slate-600">assigned_to</span> según la regla del juzgado (Configuración);
+                «Mis asignadas» usa ese campo y su perfil.
+              </>
+            )}
           </p>
         </div>
         <Link

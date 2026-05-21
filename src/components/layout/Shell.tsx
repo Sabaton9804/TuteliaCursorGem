@@ -1,33 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Link, useLocation } from 'react-router-dom';
-import {
-  Gavel,
-  LayoutDashboard,
-  PlusCircle,
-  Settings,
-  Scale,
-  X,
-  Search,
-  AlertTriangle,
-  FileStack,
-  Users,
-  BarChart3,
-  ChevronsLeft,
-  ChevronsRight,
-  ListTodo,
-  BookOpen,
-} from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { Scale, X, Menu, AlertTriangle, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { supabase, isSupabaseConfigured, assertSupabaseConfigured } from '../../lib/supabase';
 import { getDevAdminEmail, resolveDevAdminPassword } from '../../lib/dev-admin-auth';
 import { getSupabaseAuthErrorMessage, isLocalSupabaseAnonymousDisabled } from '../../lib/supabase-auth-errors';
 import { rowToUserProfile } from '../../lib/supabase-mappers';
-import { intentFreshNewCaseFromMenu } from '../../lib/new-case-nav';
 import { DEFAULT_DEMO_COURT_ID } from '../../lib/default-court';
 import { userRoleLabelEs } from '../../lib/user-roles';
 import { UserProfile } from '../../types';
 import { SessionCourtProvider } from '../../contexts/SessionCourtContext';
 import { AssignmentNotificationBell } from './AssignmentNotificationBell';
 import { GlobalSearch } from './GlobalSearch';
+import { AppSidebarNav } from './AppSidebarNav';
 import { useUrgentWorkflowTaskCount } from '../../hooks/useUrgentWorkflowTaskCount';
 import { motion, AnimatePresence } from 'motion/react';
 import type { Provider, User } from '@supabase/supabase-js';
@@ -230,6 +214,19 @@ export default function Shell({ children }: ShellProps) {
       /* ignore */
     }
   }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    setIsSidebarOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!isSidebarOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [isSidebarOpen]);
 
   const handleLocalLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -442,19 +439,6 @@ export default function Shell({ children }: ShellProps) {
     );
   }
 
-  const navItems = [
-    { name: 'Dashboard', path: '/', icon: LayoutDashboard },
-    { name: 'Nueva Tutela', path: '/new', icon: PlusCircle },
-    { name: 'Expedientes', path: '/cases', icon: Gavel },
-    { name: 'Centro de trabajo', path: '/tasks', icon: ListTodo },
-    { name: 'Estadísticas', path: '/estadisticas', icon: BarChart3 },
-    { name: 'Biblioteca de precedentes', path: '/biblioteca-precedentes', icon: BookOpen },
-    { name: 'Plantillas', path: '/plantillas', icon: FileStack },
-    { name: 'Equipo de trabajo', path: '/equipo', icon: Users },
-    { name: 'Sincronización SGDE', path: '/sgde', icon: Search },
-    { name: 'Configuración', path: '/settings', icon: Settings },
-  ];
-
   const sidebarWidthClass = sidebarCollapsed ? 'md:pl-[72px]' : 'md:pl-[280px]';
 
   return (
@@ -496,49 +480,7 @@ export default function Shell({ children }: ShellProps) {
           )}
 
           <nav className={`space-y-1 flex-1 ${sidebarCollapsed ? 'pb-4' : ''}`}>
-            {navItems.map((item) => {
-              const isActive =
-                item.path === '/'
-                  ? location.pathname === '/'
-                  : location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
-              const Icon = item.icon;
-              const showUrgent =
-                item.path === '/tasks' && urgentWorkflowCount > 0;
-              const urgentLabel =
-                urgentWorkflowCount > 9 ? '9+' : String(urgentWorkflowCount);
-              return (
-                <Link
-                  key={item.name}
-                  to={item.path}
-                  title={sidebarCollapsed ? item.name : undefined}
-                  onClick={
-                    item.path === '/new'
-                      ? () => intentFreshNewCaseFromMenu(location.pathname === '/new')
-                      : undefined
-                  }
-                  className={`relative flex items-center rounded-xl text-sm font-medium transition-all ${
-                    sidebarCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-4 py-3'
-                  } ${
-                    isActive
-                      ? 'bg-accent text-white shadow-lg shadow-accent/20'
-                      : 'text-slate-400 hover:text-white hover:bg-white/5'
-                  }`}
-                >
-                  <Icon className="w-4 h-4 shrink-0" />
-                  {!sidebarCollapsed && item.name}
-                  {showUrgent ? (
-                    <span
-                      className={`absolute flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-black text-white shadow-md ring-2 ring-primary ${
-                        sidebarCollapsed ? 'right-1 top-1' : 'right-2 top-2'
-                      }`}
-                      aria-label={`${urgentWorkflowCount} tareas urgentes pendientes`}
-                    >
-                      {urgentLabel}
-                    </span>
-                  ) : null}
-                </Link>
-              );
-            })}
+            <AppSidebarNav sidebarCollapsed={sidebarCollapsed} urgentWorkflowCount={urgentWorkflowCount} />
           </nav>
         </div>
 
@@ -559,17 +501,33 @@ export default function Shell({ children }: ShellProps) {
 
       <div className={`flex-1 flex flex-col min-w-0 overflow-hidden transition-[padding] duration-200 ease-out ${sidebarWidthClass}`}>
         <header className="bg-white border-b border-slate-100 sticky top-0 z-10">
-          <div className="px-10 py-6 flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">Resumen Operativo</h1>
-              <p className="text-xs text-slate-500 font-medium mt-1">Gestión de tutelas y procesos electrónicos</p>
+          <div className="px-4 py-4 sm:px-6 sm:py-5 lg:px-10 lg:py-6 flex items-start sm:items-center justify-between gap-3">
+            <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
+              <button
+                type="button"
+                onClick={() => setIsSidebarOpen(true)}
+                className="md:hidden shrink-0 rounded-lg p-2.5 text-slate-700 border border-slate-200 hover:bg-slate-50 transition-colors focus:outline-none focus:ring-2 focus:ring-accent/40"
+                aria-expanded={isSidebarOpen}
+                aria-controls="mobile-nav-drawer"
+                aria-label="Abrir menú de navegación"
+              >
+                <Menu className="w-5 h-5" />
+              </button>
+              <div className="min-w-0">
+                <h1 className="text-lg sm:text-xl lg:text-2xl font-bold tracking-tight text-slate-900 truncate">
+                  Resumen Operativo
+                </h1>
+                <p className="text-[11px] sm:text-xs text-slate-500 font-medium mt-0.5 sm:mt-1 line-clamp-2 sm:line-clamp-none">
+                  Gestión de tutelas y procesos electrónicos
+                </p>
+              </div>
             </div>
 
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 sm:gap-3 lg:gap-4 shrink-0">
               <GlobalSearch courtId={profile?.courtId?.trim() || DEFAULT_DEMO_COURT_ID} />
               <AssignmentNotificationBell userId={user?.uid} />
               <div
-                className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-700 rounded-full border border-green-100 text-[11px] font-bold max-w-[min(100%,320px)]"
+                className="hidden sm:flex items-center gap-2 px-3 lg:px-4 py-2 bg-green-50 text-green-700 rounded-full border border-green-100 text-[11px] font-bold max-w-[min(100%,320px)]"
                 title={
                   profile?.name
                     ? `${profile.name} · ${userRoleLabelEs(profile.role)}`
@@ -587,9 +545,10 @@ export default function Shell({ children }: ShellProps) {
               </div>
               <button
                 onClick={handleLogout}
-                className="px-4 py-2 border border-slate-200 rounded-lg text-[11px] font-bold text-slate-600 hover:bg-slate-50 transition-colors"
+                className="px-3 sm:px-4 py-2 border border-slate-200 rounded-lg text-[10px] sm:text-[11px] font-bold text-slate-600 hover:bg-slate-50 transition-colors whitespace-nowrap"
               >
-                Cerrar sesión
+                <span className="sm:hidden">Salir</span>
+                <span className="hidden sm:inline">Cerrar sesión</span>
               </button>
             </div>
           </div>
@@ -616,7 +575,7 @@ export default function Shell({ children }: ShellProps) {
           </div>
         )}
 
-        <main className="flex-1 overflow-y-auto p-10 bg-bg">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-10 bg-bg">
           <SessionCourtProvider profile={profile}>
             <AnimatePresence mode="wait">
               <motion.div
@@ -644,48 +603,54 @@ export default function Shell({ children }: ShellProps) {
               className="fixed inset-0 bg-black z-40 md:hidden"
             />
             <motion.aside
+              id="mobile-nav-drawer"
               initial={{ x: '-100%' }}
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}
-              className="fixed inset-y-0 left-0 w-72 bg-white border-r border-[#141414] z-50 md:hidden flex flex-col"
+              transition={{ type: 'tween', duration: 0.2 }}
+              className="fixed inset-y-0 left-0 w-[min(100vw,280px)] bg-primary text-white border-r border-white/10 z-50 md:hidden flex flex-col shadow-xl"
             >
-              <div className="p-6 flex items-center justify-between border-b border-[#141414]">
-                <span className="text-xl font-black italic font-serif">Tutelia</span>
-                <button type="button" onClick={() => setIsSidebarOpen(false)}>
+              <div className="p-6 flex items-center justify-between border-b border-white/10 shrink-0">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="bg-accent p-2 rounded-lg shrink-0">
+                    <Scale className="w-5 h-5 text-white" />
+                  </div>
+                  <span className="text-xl font-bold tracking-tight text-white truncate">Tutelia</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSidebarOpen(false)}
+                  className="rounded-lg p-2 text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                  aria-label="Cerrar menú de navegación"
+                >
                   <X className="w-6 h-6" />
                 </button>
               </div>
-              <nav className="flex-1 p-6 space-y-1">
-                {navItems.map((item) => {
-                  const isActive =
-                    item.path === '/'
-                      ? location.pathname === '/'
-                      : location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
-                  const Icon = item.icon;
-                  const showUrgent =
-                    item.path === '/tasks' && urgentWorkflowCount > 0;
-                  const urgentLabel =
-                    urgentWorkflowCount > 9 ? '9+' : String(urgentWorkflowCount);
-                  return (
-                    <Link
-                      key={item.name}
-                      to={item.path}
-                      onClick={() => setIsSidebarOpen(false)}
-                      className={`relative flex items-center gap-3 px-4 py-4 font-mono text-base border-b ${
-                        isActive ? 'bg-[#141414] text-white border-[#141414]' : 'border-transparent hover:bg-gray-50 transition-colors'
-                      }`}
-                    >
-                      <Icon className="w-5 h-5 shrink-0" />
-                      {item.name}
-                      {showUrgent ? (
-                        <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-black text-white">
-                          {urgentLabel}
-                        </span>
-                      ) : null}
-                    </Link>
-                  );
-                })}
+
+              <div className="px-6 py-4 border-b border-white/10 shrink-0">
+                <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1">Despacho judicial</p>
+                <p className="text-xs font-semibold text-white/90">Juzgado 051 Civil del Circuito de Bogotá D.C.</p>
+              </div>
+
+              <nav className="flex-1 overflow-y-auto p-4 space-y-1">
+                <AppSidebarNav
+                  sidebarCollapsed={false}
+                  urgentWorkflowCount={urgentWorkflowCount}
+                  onNavigate={() => setIsSidebarOpen(false)}
+                />
               </nav>
+
+              <div className="p-6 border-t border-white/5 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-[10px] font-bold overflow-hidden shadow-sm shrink-0">
+                    {user.photoURL ? <img src={user.photoURL} alt="" /> : user.email?.[0].toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0 truncate">
+                    <p className="text-xs font-bold text-white truncate">{user.displayName || 'Funcionario'}</p>
+                    <p className="text-[10px] text-slate-500 font-medium tracking-wider">CONECTADO</p>
+                  </div>
+                </div>
+              </div>
             </motion.aside>
           </>
         )}

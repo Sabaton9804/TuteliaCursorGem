@@ -35,6 +35,8 @@ type PrecedentMatch = {
   decision_date?: string | null;
   tags?: unknown;
   similarity: number;
+  matched_snippet?: string | null;
+  matched_chunk_index?: number | null;
 };
 
 const PRECEDENTES_ACUERDO_FOOTNOTE =
@@ -265,6 +267,11 @@ export function CaseSintesisPanel({
                         {sense === 'concede' ? 'Concedió' : sense === 'niega' ? 'Negó' : p.ruling_sense}
                       </span>
                       <p className="line-clamp-2 text-[11px] font-medium text-slate-800">{p.right_protected}</p>
+                      {p.matched_snippet?.trim() ? (
+                        <p className="mt-1.5 line-clamp-4 rounded-md border border-violet-100 bg-violet-50/50 px-2 py-1.5 text-[10px] leading-relaxed text-slate-700">
+                          {p.matched_snippet.trim()}
+                        </p>
+                      ) : null}
                       <p className="mt-1 line-clamp-2 text-[10px] text-slate-600">
                         {p.source_type === 'jurisprudencia'
                           ? `Corporación: ${p.source_corporation || '—'}`
@@ -359,7 +366,7 @@ export function CaseSintesisPanel({
               {caseItem.operationalStatus?.trim() || 'Sin dato en expediente'}
             </li>
             <li>
-              <span className="font-semibold text-slate-500">Plazo / término en sistema: </span>
+              <span className="font-semibold text-slate-500">Plazo para fallar (10 días háb. desde radicación): </span>
               {caseItem.deadlineAt && isValid(parseISO(caseItem.deadlineAt))
                 ? format(parseISO(caseItem.deadlineAt), "EEEE d 'de' MMMM yyyy", { locale: es })
                 : 'No registrado — use el desplegable siguiente o el backfill de plazos'}
@@ -378,7 +385,7 @@ export function CaseSintesisPanel({
 
         <details className="group border-t border-slate-100 bg-slate-50/50 px-4 py-2 sm:px-6 sm:py-2.5">
           <summary className="cursor-pointer list-none py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-slate-400 hover:text-slate-600 [&::-webkit-details-marker]:hidden before:mr-1.5 before:inline-block before:text-slate-300 before:transition-transform before:content-['▸'] group-open:before:rotate-90">
-            Ajuste manual del plazo (10 días háb., excepcional)
+            Ajuste manual del plazo para fallar (10 días háb. desde radicación, excepcional)
           </summary>
           <div className="mt-2 space-y-2 border-t border-slate-100/90 pt-2 pb-1 text-[10px] text-slate-500">
             <p className="leading-snug">
@@ -443,6 +450,14 @@ export function CaseSintesisPanel({
               </button>
             </div>
             <p className="text-[11px] font-semibold text-slate-700">{detailPrec.right_protected}</p>
+            {detailPrec.matched_snippet?.trim() ? (
+              <>
+                <p className="mt-2 text-[10px] font-semibold uppercase text-violet-600">Fragmento más relevante</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-slate-800 whitespace-pre-wrap">
+                  {detailPrec.matched_snippet.trim()}
+                </p>
+              </>
+            ) : null}
             <p className="mt-2 text-[11px] text-slate-600 whitespace-pre-wrap">{detailPrec.summary}</p>
             <p className="mt-3 text-[10px] font-semibold uppercase text-slate-400">Argumentos</p>
             <p className="text-[11px] text-slate-600 whitespace-pre-wrap">{detailPrec.legal_arguments}</p>

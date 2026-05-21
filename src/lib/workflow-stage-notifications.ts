@@ -50,19 +50,75 @@ export async function insertWorkflowStageEntryNotifications(
   const rad = opts.radicado.trim() || '—';
 
   switch (opts.enteredStage) {
-    case 'NOTIFICACION_AUTO_ADMISORIO': {
+    case 'ADMISION': {
       const profiles = await fetchProfilesByCourtAndRoles(
         supabase,
         opts.courtId,
         SECRETARIA_NOTIFICATION_ROLES,
       );
-      const title = `Auto admisorio firmado — ${rad} — Generar oficios de notificación`;
-      const body = 'Etapa abierta en el carril del expediente.';
+      const title = `Auto admisorio firmado — ${rad} — Generar y enviar oficios de notificación`;
+      const body =
+        'El juez aprobó el auto admisorio. Prepare los oficios, envíelos por correo a las partes y registre «Notificación enviada» en el expediente.';
       await insertNotificationRows(supabase, {
         courtId: opts.courtId,
         caseId: opts.caseId,
         recipientIds: profiles.map((p) => p.id),
         kind: 'workflow_notificacion_auto_admisorio',
+        title,
+        body,
+        metadata: { radicado: rad, stage_code: opts.enteredStage },
+      });
+      break;
+    }
+    case 'FALLO': {
+      const profiles = await fetchProfilesByCourtAndRoles(
+        supabase,
+        opts.courtId,
+        SECRETARIA_NOTIFICATION_ROLES,
+      );
+      const title = `Fallo firmado — ${rad} — Generar y enviar oficios de notificación`;
+      const body =
+        'El juez aprobó el fallo. Prepare los oficios de notificación, envíelos por correo y registre «Notificación del fallo enviada» en el expediente.';
+      await insertNotificationRows(supabase, {
+        courtId: opts.courtId,
+        caseId: opts.caseId,
+        recipientIds: profiles.map((p) => p.id),
+        kind: 'workflow_notificacion_fallo',
+        title,
+        body,
+        metadata: { radicado: rad, stage_code: opts.enteredStage },
+      });
+      break;
+    }
+    case 'TERMINO_RESPUESTA': {
+      const profiles = await fetchProfilesByCourtAndRoles(supabase, opts.courtId, ['sustanciador']);
+      const title = `Plazo de contestación (2 días hábiles) — ${rad}`;
+      const body =
+        'Las partes pueden contestar tras la notificación del auto. Monitoree vencimiento; al vencer pasa a ingreso para fallo.';
+      await insertNotificationRows(supabase, {
+        courtId: opts.courtId,
+        caseId: opts.caseId,
+        recipientIds: profiles.map((p) => p.id),
+        kind: 'workflow_termino_contestacion',
+        title,
+        body,
+        metadata: { radicado: rad, stage_code: opts.enteredStage },
+      });
+      break;
+    }
+    case 'TERMINO_IMPUGNACION': {
+      const profiles = await fetchProfilesByCourtAndRoles(
+        supabase,
+        opts.courtId,
+        SECRETARIA_NOTIFICATION_ROLES,
+      );
+      const title = `Plazo de impugnación (3 días hábiles) — ${rad}`;
+      const body = 'Tras notificar el fallo. Registre impugnación o espere vencimiento para ejecutoria.';
+      await insertNotificationRows(supabase, {
+        courtId: opts.courtId,
+        caseId: opts.caseId,
+        recipientIds: profiles.map((p) => p.id),
+        kind: 'workflow_termino_impugnacion',
         title,
         body,
         metadata: { radicado: rad, stage_code: opts.enteredStage },
@@ -78,25 +134,6 @@ export async function insertWorkflowStageEntryNotifications(
         caseId: opts.caseId,
         recipientIds: profiles.map((p) => p.id),
         kind: 'workflow_ingreso_despacho_fallo',
-        title,
-        body,
-        metadata: { radicado: rad, stage_code: opts.enteredStage },
-      });
-      break;
-    }
-    case 'NOTIFICACION_FALLO': {
-      const profiles = await fetchProfilesByCourtAndRoles(
-        supabase,
-        opts.courtId,
-        SECRETARIA_NOTIFICATION_ROLES,
-      );
-      const title = `Fallo firmado — ${rad} — Generar oficios de notificación del fallo`;
-      const body = 'Etapa abierta en el carril del expediente.';
-      await insertNotificationRows(supabase, {
-        courtId: opts.courtId,
-        caseId: opts.caseId,
-        recipientIds: profiles.map((p) => p.id),
-        kind: 'workflow_notificacion_fallo',
         title,
         body,
         metadata: { radicado: rad, stage_code: opts.enteredStage },

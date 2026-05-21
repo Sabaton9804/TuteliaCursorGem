@@ -3,11 +3,8 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { randomUUID } from 'node:crypto';
 import fs from 'fs';
 import multer from 'multer';
-import { simpleParser } from 'mailparser';
-import JSZip from 'jszip';
 import axios from 'axios';
 import OpenAI from 'openai';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
@@ -18,13 +15,32 @@ import {
 } from './docx-plantilla-server';
 import { catalogoTextoParaPromptIA } from './src/lib/plantilla-marcadores-catalog.ts';
 import type { DocumentTemplateTipo } from './src/types.ts';
-import {
-  ACTA_REPARTO_DISPLAY_NAME,
-  detectActaRepartoInPdfBuffer,
-  filenameSuggestsActaReparto,
-} from './pdf-acta-detect';
+import { detectActaRepartoInPdfBuffer } from './pdf-acta-detect';
 import { createPrecedentsFileRouter } from './precedents-routes';
 import { SgdeClient, getDefaultSgdeBaseUrl } from './server/sgde-client';
+import { getParseSession, sweepParseSessions } from './server/parse-email-sessions';
+import { parseJudicialEmailFromBuffer } from './server/parse-judicial-email';
+import { parseSegundaInstanciaFromEmail } from './server/sgde-segunda-instancia-parse';
+import { registerOutlookRoutes } from './server/outlook-routes';
+import { registerSgdeRoutes } from './server/sgde-routes';
+import { createLoggedInSgdeClientForUser, sgdePlatformState } from './server/sgde-integration';
+import { isSgdeTlsInsecure } from './server/sgde-tls';
+import { requireAuthenticatedCaller } from './server/outlook-auth';
+import {
+  aggregateChunkMatches,
+  buildChunksForPrecedent,
+  createEmbedding1536,
+  embedTextsBatch,
+  insertPrecedentChunkRows,
+  vectorToPgString,
+  type MatchPrecedentChunkRow,
+} from './server/precedent-chunks-service.js';
+import {
+  extractRadicado23FromText,
+  normalizeRadicado,
+  PRECEDENT_RADICADO_PENDIENTE,
+} from './server/precedent-radicado.js';
+import { createOpenAiTlsInsecureFetch } from './server/openai-insecure-fetch.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -35,8 +51,10 @@ function stripUtf8Bom(content: string) {
   return content.charCodeAt(0) === 0xfeff ? content.slice(1) : content;
 }
 
-function envValueIsUnset(v: string | undefined) {
-  return v === undefined || String(v).trim() === '';
+/** Activa cliente OpenAI con TLS relajado (proxy/antivirus). Acepta 1, true, yes, on (insensible a mayúsculas). */
+function isOpenAiTlsInsecureEnv(): boolean {
+  const v = String(process.env.OPENAI_TLS_INSECURE ?? '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
 }
 
 /**
@@ -69,8 +87,9 @@ function loadProjectEnv() {
     }
   }
 
+  /** Valores del merge sustituyen process.env para que .env/.env.local manden en local (evita variables viejas del shell). */
   for (const [key, val] of Object.entries(merged)) {
-    if (val !== '' && envValueIsUnset(process.env[key])) {
+    if (val !== '') {
       process.env[key] = val;
     }
   }
@@ -78,12 +97,29 @@ function loadProjectEnv() {
   const hasOpenAi = Boolean(process.env.OPENAI_API_KEY?.trim());
   console.log(
     `[tutelia] OPENAI_API_KEY: ${hasOpenAi ? 'OK' : 'NO'}. ` +
+      `OPENAI_TLS_INSECURE (HTTPS relajado hacia OpenAI): ${isOpenAiTlsInsecureEnv() ? 'SÍ' : 'no'}. ` +
+      `SGDE_TLS relajado: ${isSgdeTlsInsecure() ? 'SÍ' : 'no'}. ` +
       `Raíz server: ${projectRoot}. cwd: ${cwd}. ` +
       `Archivos leídos: ${loadedFrom.length ? loadedFrom.join(' | ') : '(ninguno)'}`
   );
 }
 
+/**
+ * Proxy/antivirus corporativo: Node falla TLS hacia api.openai.com (UNABLE_TO_VERIFY_LEAF_SIGNATURE).
+ * Solo diagnóstico local; en producción preferir NODE_EXTRA_CA_CERTS con el PEM de la CA.
+ * Afecta a todo el proceso (también Supabase u otras salidas HTTPS desde server.ts).
+ */
+function applyOpenAiTlsDevBypass() {
+  if (!isOpenAiTlsInsecureEnv()) return;
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  console.warn(
+    '[tutelia] OPENAI_TLS_INSECURE activo: verificación TLS global en Node desactivada (NODE_TLS_REJECT_UNAUTHORIZED=0). ' +
+      'Solo para diagnóstico local; use NODE_EXTRA_CA_CERTS si puede.'
+  );
+}
+
 loadProjectEnv();
+applyOpenAiTlsDevBypass();
 
 /**
  * Si `npm run dev` arrancó antes de que existiera `.env`, el primer `loadProjectEnv` no leyó nada.
@@ -120,6 +156,9 @@ function setupProjectEnvWatch() {
     if (!changed) return;
     console.log('[tutelia] Cambio en .env / .env.local; recargando variables…');
     loadProjectEnv();
+    applyOpenAiTlsDevBypass();
+    openAiClientSingleton = null;
+    openAiClientTlsInsecureSingleton = null;
     for (const p of paths) last.set(p, mtimeMs(p));
   };
 
@@ -132,41 +171,33 @@ setupProjectEnvWatch();
 const PORT = 3000;
 const BODY_LIMIT = '100mb';
 
-/** Adjuntos del último parse-email: binarios en servidor; el cliente pide cada uno por GET. */
-type ParseSessionRow = {
-  sessionIndex: number;
-  filename: string;
-  originalName?: string;
-  contentType: string;
-  size: number;
-  isFromLink?: boolean;
-  order?: number;
-  buffer: Buffer;
-};
-
-type ParseSession = {
-  createdAt: number;
-  attachments: ParseSessionRow[];
-};
-
-const parseSessions = new Map<string, ParseSession>();
-const PARSE_SESSION_TTL_MS = 60 * 60 * 1000;
-
-function sweepParseSessions() {
-  const now = Date.now();
-  for (const [id, s] of parseSessions) {
-    if (now - s.createdAt > PARSE_SESSION_TTL_MS) parseSessions.delete(id);
-  }
-}
+let openAiClientSingleton: OpenAI | null = null;
+let openAiClientTlsInsecureSingleton: OpenAI | null = null;
 
 function getOpenAiClient() {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
     throw new Error(
-      'Falta OPENAI_API_KEY. Cree .env o .env.local en la raíz del proyecto (junto a server.ts) o en la carpeta desde la que ejecuta npm run dev. Reinicie el servidor tras guardar. Revise la consola del terminal al arrancar: línea [tutelia] OPENAI_API_KEY.'
+      'Falta OPENAI_API_KEY. Cree .env o .env.local en la raíz del proyecto (junto a server.ts) o en la carpeta desde que ejecuta npm run dev. Reinicie el servidor tras guardar. Revise la consola del terminal al arrancar: línea [tutelia] OPENAI_API_KEY.'
     );
   }
-  return new OpenAI({ apiKey });
+  const insecure = isOpenAiTlsInsecureEnv();
+  if (insecure) {
+    if (!openAiClientTlsInsecureSingleton) {
+      console.warn(
+        '[tutelia] OpenAI: OPENAI_TLS_INSECURE activo — peticiones HTTPS vía node:https sin verificar certificado (solo diagnóstico).'
+      );
+      openAiClientTlsInsecureSingleton = new OpenAI({
+        apiKey,
+        fetch: createOpenAiTlsInsecureFetch(),
+      });
+    }
+    return openAiClientTlsInsecureSingleton;
+  }
+  if (!openAiClientSingleton) {
+    openAiClientSingleton = new OpenAI({ apiKey });
+  }
+  return openAiClientSingleton;
 }
 
 function normalizeSupabaseProjectUrl(raw: string | undefined): string | undefined {
@@ -199,23 +230,6 @@ type SgdeCaseRow = {
   radicado: string | null;
   sgde_id: string | null;
 };
-
-function getSgdeCredentialEnv(): { user: string; pass: string } {
-  const user = (process.env.SGDE_USERNAME?.trim() || process.env.SGDE_USER?.trim() || '').trim();
-  const pass = (process.env.SGDE_PASSWORD?.trim() || '').trim();
-  return { user, pass };
-}
-
-function sgdeIntegrationState(): { enabled: boolean; configured: boolean; portalBaseUrl: string } {
-  const { user, pass } = getSgdeCredentialEnv();
-  const configured = Boolean(user && pass);
-  const off =
-    process.env.SGDE_ENABLED === '0' ||
-    process.env.SGDE_ENABLED === 'false' ||
-    String(process.env.SGDE_ENABLED || '').toLowerCase() === 'off';
-  const enabled = configured && !off;
-  return { enabled, configured, portalBaseUrl: getDefaultSgdeBaseUrl() };
-}
 
 async function requireCaseAccessForCaller(
   req: express.Request,
@@ -273,31 +287,125 @@ async function requireCaseAccessForCaller(
   };
 }
 
-const EMBEDDING_MODEL = 'text-embedding-3-small';
-const EMBEDDING_DIM = 1536;
-
-async function createEmbedding1536(openai: OpenAI, input: string): Promise<number[]> {
-  const trimmed = input.trim().slice(0, 8000);
-  if (!trimmed) {
-    throw new Error('El texto para embedding está vacío.');
-  }
-  const res = await openai.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: trimmed,
-    dimensions: EMBEDDING_DIM,
-  });
-  const vec = res.data[0]?.embedding;
-  if (!vec?.length || vec.length !== EMBEDDING_DIM) {
-    throw new Error('Respuesta de embedding inválida o dimensión distinta de 1536.');
-  }
-  return vec;
-}
-
-function vectorToPgString(vec: number[]): string {
-  return `[${vec.join(',')}]`;
-}
-
 type PrecedentSourceType = 'despacho' | 'jurisprudencia';
+
+const CASE_DOCUMENTS_BUCKET = 'case-documents';
+const PRECEDENT_PDF_SIGNED_URL_TTL_SEC = 3600;
+
+function buildPrecedentPdfStoragePath(courtId: string, precedentId: string): string {
+  return `precedents/${courtId}/${precedentId}.pdf`;
+}
+
+/** Sube PDF de precedente; si falla solo registra en log (no aborta indexación). */
+async function persistPrecedentPdfAfterIndex(
+  supabase: SupabaseClient,
+  courtId: string,
+  precedentId: string,
+  pdfBuffer: Buffer
+): Promise<boolean> {
+  const path = buildPrecedentPdfStoragePath(courtId, precedentId);
+  const { error: uploadErr } = await supabase.storage.from(CASE_DOCUMENTS_BUCKET).upload(path, pdfBuffer, {
+    contentType: 'application/pdf',
+    upsert: true,
+  });
+  if (uploadErr) {
+    console.error('[precedents] storage upload:', uploadErr.message);
+    return false;
+  }
+  const { error: updErr } = await supabase
+    .from('precedents')
+    .update({ source_storage_path: path })
+    .eq('id', precedentId);
+  if (updErr) {
+    console.error('[precedents] source_storage_path update:', updErr.message);
+    return false;
+  }
+  return true;
+}
+
+async function enrichPrecedentSearchResultsWithStoragePath(
+  supabase: SupabaseClient,
+  results: Array<Record<string, unknown>>
+): Promise<void> {
+  const ids = results.map((r) => String(r.id || '')).filter(Boolean);
+  if (!ids.length) return;
+  const { data, error } = await supabase.from('precedents').select('id, source_storage_path').in('id', ids);
+  if (error) {
+    console.warn('[precedents/search] source_storage_path lookup:', error.message);
+    return;
+  }
+  const byId = new Map((data ?? []).map((row) => [String(row.id), row.source_storage_path as string | null]));
+  for (const row of results) {
+    const id = String(row.id || '');
+    row.source_storage_path = byId.get(id) ?? null;
+  }
+}
+
+const PRECEDENT_ROW_SELECT =
+  'id, court_id, source_case_id, source_type, source_corporation, radicado, right_protected, defendant, ruling_sense, legal_arguments, summary, decision_date, tags, source_storage_path, created_at, updated_at';
+
+async function requirePrecedentCourtAccessForCaller(
+  req: express.Request,
+  precedentId: string
+): Promise<
+  | { ok: true; admin: SupabaseClient; courtId: string; precedent: Record<string, unknown> }
+  | { ok: false; status: number; message: string }
+> {
+  const authHdr = String(req.headers.authorization || '');
+  const m = /^Bearer\s+(.+)$/i.exec(authHdr);
+  const token = m?.[1]?.trim();
+  if (!token) {
+    return { ok: false, status: 401, message: 'Se requiere sesión (Authorization: Bearer).' };
+  }
+  let admin: SupabaseClient;
+  try {
+    admin = getSupabaseAdmin();
+  } catch (e) {
+    return { ok: false, status: 503, message: String((e as Error)?.message || 'Supabase no configurado en servidor.') };
+  }
+  const { data: authData, error: authErr } = await admin.auth.getUser(token);
+  if (authErr || !authData?.user?.id) {
+    return { ok: false, status: 401, message: 'Sesión inválida o expirada.' };
+  }
+  const uid = authData.user.id;
+  const { data: prof, error: profErr } = await admin
+    .from('profiles')
+    .select('court_id')
+    .eq('id', uid)
+    .maybeSingle();
+  if (profErr || !prof?.court_id) {
+    return { ok: false, status: 403, message: 'Perfil sin despacho asignado.' };
+  }
+  const profileCourt = String(prof.court_id);
+  const { data: prec, error: precErr } = await admin
+    .from('precedents')
+    .select(PRECEDENT_ROW_SELECT)
+    .eq('id', precedentId)
+    .maybeSingle();
+  if (precErr || !prec?.id) {
+    return { ok: false, status: 404, message: 'Precedente no encontrado.' };
+  }
+  if (String(prec.court_id) !== profileCourt) {
+    return { ok: false, status: 403, message: 'No autorizado para este precedente.' };
+  }
+  return { ok: true, admin, courtId: profileCourt, precedent: prec as Record<string, unknown> };
+}
+
+async function requirePrecedentAccessForCaller(
+  req: express.Request,
+  precedentId: string
+): Promise<
+  | { ok: true; admin: SupabaseClient; courtId: string; sourceStoragePath: string }
+  | { ok: false; status: number; message: string }
+> {
+  const acc = await requirePrecedentCourtAccessForCaller(req, precedentId);
+  if (acc.ok === false) return acc;
+  const sourceStoragePath = String(acc.precedent.source_storage_path || '').trim();
+  if (!sourceStoragePath) {
+    return { ok: false, status: 404, message: 'Este precedente no tiene PDF almacenado.' };
+  }
+  return { ok: true, admin: acc.admin, courtId: acc.courtId, sourceStoragePath };
+}
 
 async function insertPrecedentRow(opts: {
   openai: OpenAI;
@@ -333,24 +441,7 @@ async function insertPrecedentRow(opts: {
     tags,
     logIndexFromFileDebug,
   } = opts;
-  const idxText = [rightProtected, legalArguments, summary].filter(Boolean).join(' ');
-  const embedding = await createEmbedding1536(openai, idxText);
-  if (logIndexFromFileDebug) {
-    console.log(
-      '[precedents/index-from-file] embedding OpenAI: vector recibido, dimensión=',
-      embedding.length,
-      '(esperado 1536)'
-    );
-  }
-  const embStr = vectorToPgString(embedding);
-  if (logIndexFromFileDebug) {
-    console.log(
-      '[precedents/index-from-file] insert precedents: incluye campo embedding=',
-      true,
-      'longitud string pgvector:',
-      embStr.length
-    );
-  }
+  const radicadoNorm = normalizeRadicado(radicado);
   if (caseId) {
     const { error: delErr } = await supabase
       .from('precedents')
@@ -359,6 +450,31 @@ async function insertPrecedentRow(opts: {
       .eq('source_case_id', caseId);
     if (delErr) throw delErr;
   }
+
+  const chunks = buildChunksForPrecedent({
+    radicado: radicadoNorm,
+    rightProtected,
+    rulingSense,
+    defendant,
+    legalArguments,
+    summary,
+    sourceType,
+    sourceCorporation,
+  });
+  const chunkTexts = chunks.map((c) => c.text);
+  const vectors = await embedTextsBatch(openai, chunkTexts);
+  const embStr0 = vectorToPgString(vectors[0]);
+
+  if (logIndexFromFileDebug) {
+    console.log(
+      '[precedents/index-from-file] fragmentos:',
+      chunks.length,
+      '; vector padre (= chunk 0), dimensión=',
+      vectors[0]?.length
+    );
+    console.log('[precedents/index-from-file] longitud string pgvector padre:', embStr0.length);
+  }
+
   const { data, error } = await supabase
     .from('precedents')
     .insert({
@@ -366,7 +482,7 @@ async function insertPrecedentRow(opts: {
       source_case_id: caseId || null,
       source_type: sourceType,
       source_corporation: sourceCorporation,
-      radicado,
+      radicado: radicadoNorm,
       right_protected: rightProtected,
       defendant,
       ruling_sense: rulingSense,
@@ -374,13 +490,25 @@ async function insertPrecedentRow(opts: {
       summary,
       decision_date: decisionDate,
       tags,
-      embedding: embStr,
+      embedding: embStr0,
     })
-    .select(
-      'id, court_id, source_case_id, source_type, source_corporation, radicado, right_protected, defendant, ruling_sense, legal_arguments, summary, decision_date, tags, created_at, updated_at'
-    )
+    .select(PRECEDENT_ROW_SELECT)
     .single();
   if (error) throw error;
+
+  const precedentId = String(data.id);
+  try {
+    await insertPrecedentChunkRows(supabase, precedentId, courtId, chunks, vectors);
+  } catch (chunkErr: any) {
+    await supabase.from('precedents').delete().eq('id', precedentId);
+    const msg = String(chunkErr?.message || chunkErr || '');
+    throw new Error(
+      msg.includes('precedent_chunks') || msg.includes('match_precedent_chunks') || msg.includes('does not exist')
+        ? 'Índice de fragmentos no disponible. Aplique la migración 20260515140000_precedent_chunks en Supabase y reintente.'
+        : msg || 'Error al guardar fragmentos vectoriales del precedente.'
+    );
+  }
+
   return data;
 }
 
@@ -389,13 +517,6 @@ function parseDecisionDateYmd(raw: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return null;
   const d = new Date(`${t}T12:00:00Z`);
   return Number.isNaN(d.getTime()) ? null : t;
-}
-
-function fallbackRadicadoFromFilename(originalname: string | undefined): string {
-  const name = (originalname || 'documento').replace(/\.[^/.]+$/i, '');
-  const compact = name.replace(/[^a-zA-Z0-9]+/g, '').slice(0, 40);
-  if (compact.length >= 4) return compact;
-  return `DOC${Date.now()}`;
 }
 
 const PRECEDENT_EXTRACT_SCHEMA = {
@@ -583,6 +704,30 @@ ${slice}`;
 }
 
 function mapAiError(error: any) {
+  const chain: unknown[] = [];
+  let cur: unknown = error;
+  const seen = new Set<unknown>();
+  while (cur != null && !seen.has(cur)) {
+    seen.add(cur);
+    chain.push(cur);
+    const c = cur as { cause?: unknown };
+    cur = c?.cause ?? null;
+  }
+  for (const e of chain) {
+    const o = e as { code?: string; message?: string };
+    const code = o?.code;
+    const msg = String(o?.message || '').toLowerCase();
+    if (code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' || msg.includes('unable to verify the first certificate')) {
+      return {
+        status: 503,
+        message:
+          'No se pudo verificar el certificado TLS al conectar con OpenAI (proxy o antivirus en la red). ' +
+          'Para pruebas locales puede añadir OPENAI_TLS_INSECURE=1 en .env y reiniciar npm run dev; ' +
+          'mejor solución: NODE_EXTRA_CA_CERTS apuntando al PEM de la CA corporativa.',
+      };
+    }
+  }
+
   const status = error?.status ?? error?.statusCode ?? 500;
   const rawMessage = String(error?.message || '');
   if (status === 429 || rawMessage.includes('rate limit') || rawMessage.includes('quota')) {
@@ -596,6 +741,56 @@ function mapAiError(error: any) {
   }
   return { status, message: rawMessage || 'Error inesperado al consultar OpenAI.' };
 }
+
+const handlePrecedentsAttachPdf: express.RequestHandler = async (req, res) => {
+  try {
+    const precedentId = String(req.params.id || '').trim();
+    if (!precedentId) {
+      return res.status(400).json({ error: 'id es requerido' });
+    }
+    const acc = await requirePrecedentCourtAccessForCaller(req, precedentId);
+    if (acc.ok === false) {
+      return res.status(acc.status).json({ error: acc.message });
+    }
+
+    const multerReq = req as Express.Request & {
+      file?: { buffer: Buffer; originalname?: string; mimetype?: string };
+    };
+    const file = multerReq.file;
+    if (!file?.buffer?.length) {
+      return res.status(400).json({ error: 'Adjunte un archivo PDF' });
+    }
+    const lower = file.originalname?.toLowerCase() ?? '';
+    const isPdf = lower.endsWith('.pdf') || file.mimetype === 'application/pdf';
+    if (!isPdf) {
+      return res.status(400).json({ error: 'Solo se admiten archivos .pdf' });
+    }
+
+    const courtId = String(acc.precedent.court_id || '');
+    const ok = await persistPrecedentPdfAfterIndex(acc.admin, courtId, precedentId, Buffer.from(file.buffer));
+    if (!ok) {
+      return res.status(500).json({
+        error:
+          'No se pudo guardar el PDF en almacenamiento. Compruebe el bucket case-documents y los logs del servidor.',
+      });
+    }
+
+    const { data, error } = await acc.admin
+      .from('precedents')
+      .select(PRECEDENT_ROW_SELECT)
+      .eq('id', precedentId)
+      .single();
+    if (error) throw error;
+    return res.json({ precedent: data });
+  } catch (error: any) {
+    console.error('precedents/attach-pdf:', error);
+    const msg = String(error?.message || '');
+    if (msg.includes('Faltan SUPABASE') || msg.includes('SUPABASE_SERVICE_ROLE')) {
+      return res.status(503).json({ error: msg });
+    }
+    return res.status(500).json({ error: msg || 'Error al adjuntar PDF' });
+  }
+};
 
 const handlePrecedentsIndexFromFile: express.RequestHandler = async (req, res) => {
   try {
@@ -669,10 +864,21 @@ const handlePrecedentsIndexFromFile: express.RequestHandler = async (req, res) =
       console.warn('[precedents/index-from-file] advertencia: derecho+argumentos+resumen vacíos tras la IA');
     }
 
-    const radicado =
-      String(extracted.radicado || '').trim() ||
-      radicadoHint ||
-      fallbackRadicadoFromFilename(file.originalname);
+    let rawRadicado = String(extracted.radicado || '').trim() || radicadoHint;
+    if (!rawRadicado) {
+      const fromText = extractRadicado23FromText(
+        [extracted.legal_arguments, extracted.summary, extracted.right_protected].join('\n')
+      );
+      if (fromText) rawRadicado = fromText;
+    }
+    const warnings: string[] = [];
+    let radicado: string;
+    if (!rawRadicado) {
+      radicado = PRECEDENT_RADICADO_PENDIENTE;
+      warnings.push('PDF indexado sin radicado. Puedes editarlo desde la biblioteca.');
+    } else {
+      radicado = normalizeRadicado(rawRadicado);
+    }
 
     let sourceCorporation: string | null = null;
     if (sourceType === 'jurisprudencia') {
@@ -722,7 +928,16 @@ const handlePrecedentsIndexFromFile: express.RequestHandler = async (req, res) =
       tags,
       logIndexFromFileDebug: true,
     });
-    return res.json({ precedent: data, extracted });
+    if (isPdf) {
+      await persistPrecedentPdfAfterIndex(supabase, courtId, String(data.id), Buffer.from(file.buffer));
+      const { data: refreshed } = await supabase
+        .from('precedents')
+        .select(PRECEDENT_ROW_SELECT)
+        .eq('id', data.id)
+        .single();
+      return res.json({ precedent: refreshed ?? data, extracted, warnings });
+    }
+    return res.json({ precedent: data, extracted, warnings });
   } catch (error: any) {
     console.error('precedents/index-from-file:', error);
     const msg = String(error?.message || '');
@@ -749,13 +964,14 @@ async function startServer() {
 
   // API Routes
   app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok' });
+    res.json({
+      status: 'ok',
+      outlookApiBuild: '2026-05-19-classify-light-v1',
+    });
   });
 
-  app.get('/api/sgde/status', (_req, res) => {
-    const s = sgdeIntegrationState();
-    res.json(s);
-  });
+  registerOutlookRoutes(app, getSupabaseAdmin);
+  registerSgdeRoutes(app, getSupabaseAdmin);
 
   app.post('/api/sgde/case-tree', async (req, res) => {
     try {
@@ -763,25 +979,27 @@ async function startServer() {
       if (!caseId) {
         return res.status(400).json({ error: 'caseId es requerido' });
       }
-      const st = sgdeIntegrationState();
-      if (!st.enabled) {
+      const platform = sgdePlatformState();
+      if (!platform.available) {
         return res.status(503).json({
-          error: 'SGDE no está habilitado o faltan credenciales en el servidor.',
-          enabled: st.enabled,
-          configured: st.configured,
+          error: platform.message || 'SGDE no disponible.',
+          encryptionReady: platform.encryptionReady,
         });
       }
       const acc = await requireCaseAccessForCaller(req, caseId);
       if (acc.ok === false) {
         return res.status(acc.status).json({ error: acc.message });
       }
-      const { user, pass } = getSgdeCredentialEnv();
-      const client = new SgdeClient(getDefaultSgdeBaseUrl());
-      client.setCredentials(user, pass);
-      const loginRes = await client.login();
-      if (loginRes.ok === false) {
-        return res.status(502).json({ error: loginRes.message });
+      const authHdr = await requireAuthenticatedCaller(req, getSupabaseAdmin);
+      if (authHdr.ok === false) {
+        return res.status(authHdr.status).json({ error: authHdr.message });
       }
+      const logged = await createLoggedInSgdeClientForUser(authHdr.admin, authHdr.userId);
+      if ('error' in logged) {
+        const status = logged.code === 'USER_NOT_CONFIGURED' ? 403 : 502;
+        return res.status(status).json({ error: logged.error, code: logged.code });
+      }
+      const client = logged.client;
       const radDigits = String(acc.caseRow.radicado || '').replace(/\D/g, '');
       let rootId = String(acc.caseRow.sgde_id || '').trim();
       if (!rootId && radDigits.length === 23) {
@@ -796,7 +1014,7 @@ async function startServer() {
               ? 'No se encontró el expediente en SGDE para este radicado.'
               : 'Falta radicado de 23 dígitos o nodo SGDE vinculado.',
           linked: Boolean(acc.caseRow.sgde_id?.trim()),
-          portalBaseUrl: st.portalBaseUrl,
+          portalBaseUrl: logged.portalBaseUrl,
         });
       }
       const tree = await client.buildTree(rootId, { maxDepth: 8, maxNodes: 400 });
@@ -805,7 +1023,7 @@ async function startServer() {
         rootId,
         tree,
         linked: Boolean(acc.caseRow.sgde_id?.trim()),
-        portalBaseUrl: st.portalBaseUrl,
+        portalBaseUrl: logged.portalBaseUrl,
       });
     } catch (error: unknown) {
       console.error('sgde/case-tree:', error);
@@ -820,12 +1038,10 @@ async function startServer() {
       if (!caseId) {
         return res.status(400).json({ error: 'caseId es requerido' });
       }
-      const st = sgdeIntegrationState();
-      if (!st.enabled) {
+      const platform = sgdePlatformState();
+      if (!platform.available) {
         return res.status(503).json({
-          error: 'SGDE no está habilitado o faltan credenciales en el servidor.',
-          enabled: st.enabled,
-          configured: st.configured,
+          error: platform.message || 'SGDE no disponible.',
         });
       }
       const acc = await requireCaseAccessForCaller(req, caseId);
@@ -836,14 +1052,16 @@ async function startServer() {
       if (radDigits.length !== 23) {
         return res.status(400).json({ error: 'El expediente no tiene un radicado válido de 23 dígitos para vincular.' });
       }
-      const { user, pass } = getSgdeCredentialEnv();
-      const client = new SgdeClient(getDefaultSgdeBaseUrl());
-      client.setCredentials(user, pass);
-      const loginRes = await client.login();
-      if (loginRes.ok === false) {
-        return res.status(502).json({ error: loginRes.message });
+      const authHdr = await requireAuthenticatedCaller(req, getSupabaseAdmin);
+      if (authHdr.ok === false) {
+        return res.status(authHdr.status).json({ error: authHdr.message });
       }
-      const nodeId = await client.buscarExpedienteNodeId(radDigits);
+      const logged = await createLoggedInSgdeClientForUser(authHdr.admin, authHdr.userId);
+      if ('error' in logged) {
+        const status = logged.code === 'USER_NOT_CONFIGURED' ? 403 : 502;
+        return res.status(status).json({ error: logged.error, code: logged.code });
+      }
+      const nodeId = await logged.client.buscarExpedienteNodeId(radDigits);
       if (!nodeId) {
         return res.status(404).json({ error: 'No se encontró el expediente en SGDE para este radicado.' });
       }
@@ -856,7 +1074,7 @@ async function startServer() {
         console.error('sgde/link update:', upErr);
         return res.status(500).json({ error: upErr.message || 'No se pudo guardar sgde_id.' });
       }
-      return res.json({ ok: true, sgdeId: nodeId, portalBaseUrl: st.portalBaseUrl });
+      return res.json({ ok: true, sgdeId: nodeId, portalBaseUrl: logged.portalBaseUrl });
     } catch (error: unknown) {
       console.error('sgde/link:', error);
       const msg = String((error as Error)?.message || error);
@@ -871,7 +1089,7 @@ async function startServer() {
     if (!sessionId || Number.isNaN(i) || i < 0) {
       return res.status(400).json({ error: 'Parámetros inválidos' });
     }
-    const session = parseSessions.get(sessionId);
+    const session = getParseSession(sessionId);
     if (!session) {
       return res.status(404).json({
         error: 'Sesión de parseo expirada o inexistente. Vuelva a cargar el archivo .eml.',
@@ -903,337 +1121,29 @@ async function startServer() {
         return res.status(400).json({ error: 'No file uploaded' });
       }
 
-      const parsed = await simpleParser(multerReq.file.buffer);
-      
-      let processedAttachments: any[] = [];
-      let globalOrderIndex = 0;
-      const nameCounters: Record<string, number> = {};
-
-      const getUniqueName = (baseName: string) => {
-        let finalName = baseName;
-        if (nameCounters[baseName]) {
-          nameCounters[baseName]++;
-          finalName = `${baseName} (${nameCounters[baseName]})`;
-        } else {
-          nameCounters[baseName] = 1;
-        }
-        return finalName;
-      };
-
-      const getPriority = (name: string) => {
-        const lower = name.toLowerCase();
-        if (lower.includes('actareparto')) return 1;
-        if (lower.includes('escritodemanda')) return 2;
-        if (lower.includes('poder')) return 3;
-        if (lower.includes('documentospruebasanexos')) return 4;
-        return 5;
-      };
-
-      // 1. Detect and process the "Archivo" download link from the body
-      const htmlBody = parsed.html || '';
-      const textBody = parsed.text || '';
-      
-      // Look for a link containing the text "Archivo" in HTML
-      let linkMatch = htmlBody.match(/<a\s+[^>]*?href=(["'])(.*?)\1[^>]*?>\s*(?:Descargar\s+)?Archivo\s*<\/a>/i);
-      
-      let downloadUrl = linkMatch ? linkMatch[2] : null;
-
-      // Fallback: Look for "Archivo: http..." in text body
-      if (!downloadUrl) {
-        const textMatch = textBody.match(/Archivo:\s*(https?:\/\/[^\s]+)/i);
-        if (textMatch) {
-          downloadUrl = textMatch[1];
-        }
-      }
-      
-      let linkFound = false;
-      if (downloadUrl) {
-        linkFound = true;
-        try {
-          console.log(`Attempting to download from: ${downloadUrl}`);
-          const response = await axios.get(downloadUrl, {
-            responseType: 'arraybuffer',
-            timeout: 60000,
-            maxRedirects: 15,
-            headers: {
-              'User-Agent':
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-              Accept: 'application/pdf,application/zip,*/*;q=0.8',
-            },
-            validateStatus: (status) => status < 500,
-          });
-
-          if (response.status >= 400) {
-            console.error(`Download failed with status ${response.status}`);
-          } else {
-            const buffer = Buffer.from(response.data);
-            let contentType = String(response.headers['content-type'] || 'application/octet-stream').split(';')[0].trim();
-
-            const isPdfMagic =
-              buffer.length >= 5 &&
-              buffer[0] === 0x25 &&
-              buffer[1] === 0x50 &&
-              buffer[2] === 0x44 &&
-              buffer[3] === 0x46 &&
-              buffer[4] === 0x2d;
-
-            // Check if it's a ZIP by content type, URL or signature
-            const isZip = contentType === 'application/zip' || 
-                          downloadUrl.toLowerCase().split('?')[0].endsWith('.zip') ||
-                          (buffer.length > 4 && buffer[0] === 0x50 && buffer[1] === 0x4B);
-
-            if (isZip) {
-              const zip = new JSZip();
-              const zipContent = await zip.loadAsync(buffer);
-              
-              // Collect files in order
-              const filePromises: any[] = [];
-              zip.forEach((relativePath, file) => {
-                if (file.dir) return;
-                filePromises.push((async () => {
-                  const filename = relativePath;
-                  const lowerName = filename.toLowerCase();
-                  let innerContentType = 'application/octet-stream';
-                  if (lowerName.endsWith('.pdf')) innerContentType = 'application/pdf';
-                  else if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) innerContentType = 'image/jpeg';
-                  else if (lowerName.endsWith('.png')) innerContentType = 'image/png';
-
-                  let baseName = filename;
-                  if (lowerName.includes('demanda')) baseName = 'EscritoDemanda';
-                  else if (lowerName.includes('prueba') || lowerName.includes('anexo')) baseName = 'DocumentosPruebasAnexos';
-                  else if (lowerName.includes('poder')) baseName = 'Poder';
-                  else if (filenameSuggestsActaReparto(lowerName)) baseName = 'ActaReparto';
-
-                  let originalNameOut = filename;
-                  let contentB64: string;
-                  if (innerContentType === 'application/pdf') {
-                    const pdfBuf = Buffer.from(await file.async('nodebuffer'));
-                    if (baseName === filename && (await detectActaRepartoInPdfBuffer(pdfBuf))) {
-                      baseName = 'ActaReparto';
-                      originalNameOut = ACTA_REPARTO_DISPLAY_NAME;
-                    }
-                    contentB64 = pdfBuf.toString('base64');
-                  } else {
-                    contentB64 = await file.async('base64');
-                  }
-
-                  return {
-                    filename: baseName,
-                    originalName: baseName === 'ActaReparto' ? ACTA_REPARTO_DISPLAY_NAME : originalNameOut,
-                    size: (file as any)._data?.uncompressedSize || 0,
-                    contentType: innerContentType,
-                    content: contentB64,
-                    isFromLink: true,
-                    tempOrder: globalOrderIndex++
-                  };
-                })());
-              });
-              
-              const unzipFiles = await Promise.all(filePromises);
-              processedAttachments = [...processedAttachments, ...unzipFiles];
-            } else {
-              // Single file downloaded
-              let baseName = 'DocumentosPruebasAnexos';
-              const lowerUrl = downloadUrl.toLowerCase();
-              if (filenameSuggestsActaReparto(lowerUrl)) {
-                baseName = 'ActaReparto';
-              } else if (lowerUrl.includes('demanda')) {
-                baseName = 'EscritoDemanda';
-              }
-
-              if (!isZip && !isPdfMagic) {
-                const probe = buffer
-                  .subarray(0, Math.min(800, buffer.length))
-                  .toString('utf8')
-                  .trimStart()
-                  .toLowerCase();
-                if (
-                  probe.startsWith('<!doctype') ||
-                  probe.startsWith('<html') ||
-                  probe.startsWith('<?xml')
-                ) {
-                  contentType = 'text/html';
-                } else if (contentType === 'application/pdf' || contentType === 'application/octet-stream') {
-                  contentType = 'application/octet-stream';
-                }
-              } else if (isPdfMagic) {
-                contentType = 'application/pdf';
-              }
-
-              let originalLinkName =
-                baseName === 'ActaReparto' ? ACTA_REPARTO_DISPLAY_NAME : 'archivo_descargado';
-              if (
-                isPdfMagic &&
-                baseName !== 'ActaReparto' &&
-                (await detectActaRepartoInPdfBuffer(buffer))
-              ) {
-                baseName = 'ActaReparto';
-                originalLinkName = ACTA_REPARTO_DISPLAY_NAME;
-              }
-
-              processedAttachments.push({
-                filename: baseName,
-                originalName: originalLinkName,
-                size: buffer.length,
-                contentType: contentType,
-                content: buffer.toString('base64'),
-                isFromLink: true,
-                tempOrder: globalOrderIndex++
-              });
-            }
-          }
-        } catch (downloadError) {
-          console.error(`Error downloading file from "Archivo" link:`, downloadError);
-        }
-      }
-
-      // 2. Process physical attachments (filtering out images as they are in the PDF already)
-      const validAttachments = (parsed.attachments || []).filter(att => {
-        if (att.contentType?.startsWith('image/')) return false;
-        return true;
-      });
-      
-      for (const att of validAttachments) {
-        const lowerOrig = (att.filename || "").toLowerCase();
-        let contentType = att.contentType || 'application/octet-stream';
-        
-        if (lowerOrig.endsWith('.pdf')) contentType = 'application/pdf';
-        
-        if (contentType === 'application/zip' || att.filename?.endsWith('.zip')) {
-          const zip = new JSZip();
-          const zipContent = await zip.loadAsync(att.content);
-          
-          const filePromises: any[] = [];
-          zip.forEach((relativePath, file) => {
-            if (file.dir) return;
-            filePromises.push((async () => {
-              const filename = relativePath;
-              const lowerName = filename.toLowerCase();
-              let innerContentType = 'application/octet-stream';
-              if (lowerName.endsWith('.pdf')) innerContentType = 'application/pdf';
-
-              let baseName = filename;
-              if (lowerName.includes('demanda')) baseName = 'EscritoDemanda';
-              else if (lowerName.includes('prueba') || lowerName.includes('anexo')) baseName = 'DocumentosPruebasAnexos';
-              else if (lowerName.includes('poder')) baseName = 'Poder';
-              else if (filenameSuggestsActaReparto(lowerName)) baseName = 'ActaReparto';
-
-              let originalNameZip = filename;
-              let contentB64Zip: string;
-              if (innerContentType === 'application/pdf') {
-                const pdfBuf = Buffer.from(await file.async('nodebuffer'));
-                if (baseName === filename && (await detectActaRepartoInPdfBuffer(pdfBuf))) {
-                  baseName = 'ActaReparto';
-                  originalNameZip = ACTA_REPARTO_DISPLAY_NAME;
-                }
-                contentB64Zip = pdfBuf.toString('base64');
-              } else {
-                contentB64Zip = await file.async('base64');
-              }
-
-              return {
-                filename: baseName,
-                originalName: baseName === 'ActaReparto' ? ACTA_REPARTO_DISPLAY_NAME : originalNameZip,
-                size: (file as any)._data?.uncompressedSize || 0,
-                contentType: innerContentType,
-                content: contentB64Zip,
-                tempOrder: globalOrderIndex++
-              };
-            })());
-          });
-
-          const unzipFiles = await Promise.all(filePromises);
-          processedAttachments = [...processedAttachments, ...unzipFiles];
-        } else {
-          // Individual file processing
-          let baseName = att.filename || 'Documento';
-          let originalNameOut = att.filename || 'Documento';
-          if (filenameSuggestsActaReparto(lowerOrig)) baseName = 'ActaReparto';
-          else if (lowerOrig.includes('poder')) baseName = 'Poder';
-          else if (lowerOrig.includes('demanda')) baseName = 'EscritoDemanda';
-          else if (lowerOrig.includes('prueba') || lowerOrig.includes('anexo')) baseName = 'DocumentosPruebasAnexos';
-
-          if (
-            contentType === 'application/pdf' &&
-            att.content &&
-            baseName === (att.filename || 'Documento')
-          ) {
-            const pdfBuf = Buffer.isBuffer(att.content) ? att.content : Buffer.from(att.content);
-            if (await detectActaRepartoInPdfBuffer(pdfBuf)) {
-              baseName = 'ActaReparto';
-              originalNameOut = ACTA_REPARTO_DISPLAY_NAME;
-            }
-          }
-          if (baseName === 'ActaReparto') {
-            originalNameOut = ACTA_REPARTO_DISPLAY_NAME;
-          }
-
-          processedAttachments.push({
-            filename: baseName,
-            originalName: originalNameOut,
-            size: att.size,
-            contentType: contentType,
-            content: att.content ? att.content.toString('base64') : '',
-            tempOrder: globalOrderIndex++
-          });
-        }
-      }
-
-      // Final Sorting and Unique Naming
-      processedAttachments.sort((a, b) => {
-        const pA = getPriority(a.filename);
-        const pB = getPriority(b.filename);
-        if (pA !== pB) return pA - pB;
-        return a.tempOrder - b.tempOrder;
-      });
-
-      // Reset counters and assign unique names + final order
-      const finalProcessed = processedAttachments.map((att, idx) => {
-        const uniqueName = getUniqueName(att.filename);
-        return {
-          ...att,
-          filename: uniqueName,
-          // Tras desempates (p. ej. dos «EscritoDemanda»), solo cambiaba `filename`;
-          // alinear `originalName` evita que radicación/visor sigan mostrando el MIME antiguo.
-          originalName: uniqueName,
-          order: idx
+      const result = await parseJudicialEmailFromBuffer(multerReq.file.buffer);
+      const text = typeof result.text === 'string' ? result.text : '';
+      const html = typeof result.html === 'string' ? result.html : '';
+      let segundaInstancia;
+      try {
+        segundaInstancia = parseSegundaInstanciaFromEmail(
+          String(result.subject || ''),
+          text,
+          html
+        );
+      } catch (siErr) {
+        console.error('segundaInstancia parse (no bloquea correo):', siErr);
+        segundaInstancia = {
+          isSegundaInstancia: false,
+          originRadicado: null,
+          originCourt: null,
+          motivo: null,
+          sentenciaFecha: null,
+          repartoSecuencia: null,
+          sgdeNodeId: null,
         };
-      });
-
-      sweepParseSessions();
-      const parseSessionId = randomUUID();
-      const sessionAttachments: ParseSessionRow[] = finalProcessed.map((att: any, idx: number) => {
-        const buf = Buffer.from(att.content || '', 'base64');
-        return {
-          sessionIndex: idx,
-          filename: att.filename,
-          originalName: att.originalName,
-          contentType: att.contentType || 'application/octet-stream',
-          size: typeof att.size === 'number' ? att.size : buf.length,
-          isFromLink: !!att.isFromLink,
-          order: att.order,
-          buffer: buf,
-        };
-      });
-      parseSessions.set(parseSessionId, {
-        createdAt: Date.now(),
-        attachments: sessionAttachments,
-      });
-
-      const publicAttachments = sessionAttachments.map(({ buffer: _buf, ...meta }) => meta);
-
-      res.json({
-        subject: parsed.subject,
-        from: parsed.from?.text,
-        to: parsed.to ? (Array.isArray(parsed.to) ? (parsed.to[0] as any).text : (parsed.to as any).text) : '',
-        date: parsed.date,
-        text: parsed.text,
-        html: parsed.html,
-        attachments: publicAttachments,
-        parseSessionId,
-        linkFound: linkFound,
-        linkUrl: downloadUrl
-      });
+      }
+      res.json({ ...result, segundaInstancia });
     } catch (error) {
       console.error('Email parsing error:', error);
       res.status(500).json({ error: 'Failed to parse email' });
@@ -1352,14 +1262,14 @@ FORMATO DE SALIDA (USAR MARKDOWN):
     }
   });
 
-  app.use('/api/precedents', createPrecedentsFileRouter(upload, handlePrecedentsIndexFromFile));
+  app.use('/api/precedents', createPrecedentsFileRouter(upload, handlePrecedentsIndexFromFile, handlePrecedentsAttachPdf));
 
   app.post('/api/precedents/index', async (req, res) => {
     try {
       const b = req.body || {};
       const caseId = String(b.caseId || '').trim();
       const courtId = String(b.courtId || '').trim();
-      const radicado = String(b.radicado || '').trim();
+      const radicado = normalizeRadicado(String(b.radicado || '').trim());
       const rightProtected = String(b.rightProtected || '').trim();
       const rulingSense = String(b.rulingSense || '').trim();
       const legalArguments = String(b.legalArguments || '').trim();
@@ -1433,25 +1343,25 @@ FORMATO DE SALIDA (USAR MARKDOWN):
       const embedding = await createEmbedding1536(openai, queryText);
       const embStr = vectorToPgString(embedding);
       const supabase = getSupabaseAdmin();
-      const preLimit = 50;
-      const { data: preThresholdRows, error: preErr } = await supabase.rpc('match_precedents', {
+
+      const { data: chunkRows, error: chunkErr } = await supabase.rpc('match_precedent_chunks', {
         query_embedding: embStr,
         match_court_id: courtId,
-        match_count: preLimit,
-        match_threshold: -1,
+        match_count: 48,
+        match_threshold: 0.22,
       });
-      if (preErr) {
-        console.warn('[precedents/search] no se pudo contar candidatos sin umbral:', preErr.message);
-      } else {
-        const n = Array.isArray(preThresholdRows) ? preThresholdRows.length : 0;
-        console.log(
-          '[precedents/search] match_precedents antes del umbral (mismo orden; threshold=-1, limit',
-          preLimit,
-          '):',
-          n,
-          'filas'
-        );
+
+      if (!chunkErr && Array.isArray(chunkRows) && chunkRows.length > 0) {
+        const aggregated = aggregateChunkMatches(chunkRows as MatchPrecedentChunkRow[], 3);
+        const results = aggregated as unknown as Array<Record<string, unknown>>;
+        await enrichPrecedentSearchResultsWithStoragePath(supabase, results);
+        return res.json({ results: aggregated });
       }
+
+      if (chunkErr) {
+        console.warn('[precedents/search] match_precedent_chunks:', chunkErr.message);
+      }
+
       const { data, error } = await supabase.rpc('match_precedents', {
         query_embedding: embStr,
         match_court_id: courtId,
@@ -1459,7 +1369,15 @@ FORMATO DE SALIDA (USAR MARKDOWN):
         match_threshold: 0.3,
       });
       if (error) throw error;
-      return res.json({ results: data ?? [] });
+      const legacy = (Array.isArray(data) ? data : []).map((row: Record<string, unknown>) => ({
+        ...row,
+        matched_snippet: null,
+        matched_chunk_index: null,
+        matched_char_start: null,
+        matched_char_end: null,
+      }));
+      await enrichPrecedentSearchResultsWithStoragePath(supabase, legacy);
+      return res.json({ results: legacy });
     } catch (error: any) {
       console.error('precedents/search:', error);
       const msg = String(error?.message || '');
@@ -1471,6 +1389,90 @@ FORMATO DE SALIDA (USAR MARKDOWN):
         return res.status(mapped.status).json({ error: mapped.message });
       }
       return res.status(500).json({ error: msg || 'Error en búsqueda de precedentes' });
+    }
+  });
+
+  app.get('/api/precedents/:id/pdf-url', async (req, res) => {
+    try {
+      const precedentId = String(req.params.id || '').trim();
+      if (!precedentId) {
+        return res.status(400).json({ error: 'id es requerido' });
+      }
+      const acc = await requirePrecedentAccessForCaller(req, precedentId);
+      if (acc.ok === false) {
+        return res.status(acc.status).json({ error: acc.message });
+      }
+      const { data: signed, error: signErr } = await acc.admin.storage
+        .from(CASE_DOCUMENTS_BUCKET)
+        .createSignedUrl(acc.sourceStoragePath, PRECEDENT_PDF_SIGNED_URL_TTL_SEC);
+      if (signErr || !signed?.signedUrl) {
+        console.error('precedents/pdf-url signed:', signErr?.message);
+        return res.status(500).json({ error: 'No se pudo generar el enlace al PDF.' });
+      }
+      return res.json({ url: signed.signedUrl });
+    } catch (error: any) {
+      console.error('precedents/pdf-url:', error);
+      const msg = String(error?.message || '');
+      if (msg.includes('Faltan SUPABASE') || msg.includes('SUPABASE_SERVICE_ROLE')) {
+        return res.status(503).json({ error: msg });
+      }
+      return res.status(500).json({ error: msg || 'Error al obtener URL del PDF' });
+    }
+  });
+
+  app.patch('/api/precedents/:id', async (req, res) => {
+    try {
+      const precedentId = String(req.params.id || '').trim();
+      if (!precedentId) {
+        return res.status(400).json({ error: 'id es requerido' });
+      }
+      const acc = await requirePrecedentCourtAccessForCaller(req, precedentId);
+      if (acc.ok === false) {
+        return res.status(acc.status).json({ error: acc.message });
+      }
+
+      const b = req.body || {};
+      const patch: Record<string, unknown> = {};
+      if (b.radicado !== undefined) {
+        const r = normalizeRadicado(String(b.radicado ?? ''));
+        if (!r) {
+          return res.status(400).json({ error: 'radicado no puede quedar vacío' });
+        }
+        patch.radicado = r;
+      }
+      if (b.ruling_sense !== undefined) {
+        patch.ruling_sense = String(b.ruling_sense ?? '').trim();
+      }
+      if (b.decision_date !== undefined) {
+        const raw = b.decision_date == null ? '' : String(b.decision_date).trim();
+        patch.decision_date = raw ? parseDecisionDateYmd(raw) : null;
+      }
+
+      const allowed = ['radicado', 'ruling_sense', 'decision_date'] as const;
+      const extra = Object.keys(b).filter((k) => !allowed.includes(k as (typeof allowed)[number]));
+      if (extra.length) {
+        return res.status(400).json({ error: `Campos no permitidos: ${extra.join(', ')}` });
+      }
+      if (!Object.keys(patch).length) {
+        return res.status(400).json({ error: 'Nada que actualizar' });
+      }
+
+      // No re-embeddear ni re-chunkear: el vector y precedent_chunks conservan el texto indexado original.
+      const { data, error } = await acc.admin
+        .from('precedents')
+        .update(patch)
+        .eq('id', precedentId)
+        .select(PRECEDENT_ROW_SELECT)
+        .single();
+      if (error) throw error;
+      return res.json({ precedent: data });
+    } catch (error: any) {
+      console.error('precedents/patch:', error);
+      const msg = String(error?.message || '');
+      if (msg.includes('Faltan SUPABASE') || msg.includes('SUPABASE_SERVICE_ROLE')) {
+        return res.status(503).json({ error: msg });
+      }
+      return res.status(500).json({ error: msg || 'Error al actualizar precedente' });
     }
   });
 

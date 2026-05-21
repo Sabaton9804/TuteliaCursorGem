@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "tsx watch server.ts",
     "build": "vite build",
     "preview": "vite preview",
     "start": "node server.ts",
@@ -14,6 +14,7 @@
     "seed:dev-admin": "tsx scripts/seed-dev-admin.mts",
     "seed:court-users": "tsx scripts/seed-court-users.mts",
     "analyze:eml": "tsx scripts/analyze-eml.mts",
+    "demo:segunda-eml": "tsx scripts/demo-segunda-instancia-eml.mts",
     "supabase:ensure-case-documents": "tsx scripts/ensure-case-documents-bucket.mts",
     "backfill:case-deadlines": "tsx scripts/backfill-case-deadlines.mts"
   },

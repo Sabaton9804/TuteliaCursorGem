@@ -10,7 +10,7 @@ import React, {
   useState,
 } from 'react';
 import type { ReactNode } from 'react';
-import type { Editor, JSONContent } from '@tiptap/core';
+import type { Editor, Extensions, JSONContent } from '@tiptap/core';
 import type { EditorProps } from '@tiptap/pm/view';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
@@ -95,7 +95,7 @@ function buildExtensions(opts: {
   plantillaResolveLabel?: (key: string) => string;
   showComments: boolean;
 }) {
-  const exts = [
+  const exts: Extensions = [
     StarterKit.configure({
       heading: { levels: [1, 2, 3, 4, 5, 6] },
       underline: false,

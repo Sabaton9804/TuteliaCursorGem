@@ -29,6 +29,16 @@ import {
   runAutomaticStageChecksOnCaseLoad,
 } from '../../lib/case-stages-service';
 import type { UserRole } from '../../types';
+import {
+  businessDaysRemainingInTenDayWindow,
+  businessDaysRemainingWithStoredDeadline,
+  startOfLocalDay,
+} from '../../lib/business-days';
+import {
+  businessDaysRemainingUntilSubDeadline,
+  resolveSubStageDeadline,
+  subStageDeadlineLabel,
+} from '../../lib/case-stage-deadlines';
 
 function formatStageDate(iso: string): string {
   try {
@@ -86,6 +96,32 @@ export function CaseStagesExperience() {
 
   const openRow = stages.openRow;
   const badgeSecret = openRow?.responsibleRole === 'secretaria';
+
+  const plazoFallar = useMemo(() => {
+    const filed = caseItem.createdAt?.trim();
+    const dl = caseItem.deadlineAt?.trim();
+    if (!filed) return null;
+    try {
+      const filing = startOfLocalDay(parseISO(filed));
+      const remaining = dl
+        ? businessDaysRemainingWithStoredDeadline(filing, startOfLocalDay(parseISO(dl)))
+        : businessDaysRemainingInTenDayWindow(filing);
+      const end = dl ? parseISO(dl) : null;
+      return { remaining, end, valid: !end || !Number.isNaN(end.getTime()) };
+    } catch {
+      return null;
+    }
+  }, [caseItem.createdAt, caseItem.deadlineAt]);
+
+  const plazoEtapa = useMemo(() => {
+    if (!openRow) return null;
+    const label = subStageDeadlineLabel(openRow.stageCode);
+    if (!label) return null;
+    const end = resolveSubStageDeadline(openRow.stageCode, openRow.enteredAt, openRow.metadata);
+    if (!end) return null;
+    const remaining = businessDaysRemainingUntilSubDeadline(end);
+    return { label, end, remaining };
+  }, [openRow]);
 
   const handleRetroceder = useCallback(async () => {
     if (!openRow) return;
@@ -332,6 +368,42 @@ export function CaseStagesExperience() {
                 </div>
               ) : (
                 <>
+                  {caseType === 'tutela_primera' && (plazoFallar || plazoEtapa) ? (
+                    <section className="rounded-xl border border-amber-100 bg-amber-50/60 px-3 py-3 text-xs text-amber-950">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-amber-800">
+                        Plazos
+                      </p>
+                      {plazoFallar ? (
+                        <p className="mt-2">
+                          <span className="font-bold">Fallar la tutela (10 días háb. desde radicación): </span>
+                          {plazoFallar.remaining > 0 ? (
+                            <>
+                              quedan <strong>{plazoFallar.remaining}</strong> día(s) hábil(es)
+                              {plazoFallar.end && plazoFallar.valid ? (
+                                <> — vence {format(plazoFallar.end, "d MMM yyyy", { locale: es })}</>
+                              ) : null}
+                            </>
+                          ) : (
+                            <strong className="text-red-800">término vencido o en el último día hábil</strong>
+                          )}
+                        </p>
+                      ) : null}
+                      {plazoEtapa ? (
+                        <p className={plazoFallar ? 'mt-2 border-t border-amber-200/80 pt-2' : 'mt-2'}>
+                          <span className="font-bold">{plazoEtapa.label}: </span>
+                          {plazoEtapa.remaining > 0 ? (
+                            <>
+                              quedan <strong>{plazoEtapa.remaining}</strong> día(s) hábil(es) — vence{' '}
+                              {format(plazoEtapa.end, "d MMM yyyy", { locale: es })}
+                            </>
+                          ) : (
+                            <strong className="text-red-800">vencido</strong>
+                          )}
+                        </p>
+                      ) : null}
+                    </section>
+                  ) : null}
+
                   {roleCanRegistrarHitosSecretaria(role) && caseType === 'tutela_primera' ? (
                     <section className="rounded-xl border border-indigo-100 bg-indigo-50/50 px-3 py-3 text-xs">
                       <p className="text-[10px] font-black uppercase tracking-widest text-indigo-700">

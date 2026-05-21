@@ -6,6 +6,7 @@
 
 import axios, { type AxiosInstance } from 'axios';
 import https from 'node:https';
+import { formatSgdeConnectionError, isSgdeTlsInsecure } from './sgde-tls';
 
 const EXPEDIENTE_REGEX = /\d{23}/;
 
@@ -17,6 +18,55 @@ export type SgdeTreeNode = {
   orden?: string;
   children?: SgdeTreeNode[];
 };
+
+export type SgdePdfLeaf = {
+  id: string;
+  name: string;
+  tipoDocumental?: string;
+  orden?: string;
+  /** Ruta de carpetas SGDE (p. ej. Primera Instancia / 01CdoPrincipal). */
+  folderPath?: string;
+};
+
+/** Recorre el árbol (carpetas anidadas) y devuelve hojas PDF. */
+export function flattenSgdePdfLeaves(
+  node: SgdeTreeNode,
+  out: SgdePdfLeaf[] = [],
+  folderPath = ''
+): SgdePdfLeaf[] {
+  if (!node.isFolder) {
+    const nm = String(node.name || '').trim();
+    const lower = nm.toLowerCase();
+    if (!lower || lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+      return out;
+    }
+    if (lower.endsWith('.pdf') || !lower.includes('.')) {
+      out.push({
+        id: node.id,
+        name: nm,
+        tipoDocumental: node.tipoDocumental,
+        orden: node.orden,
+        ...(folderPath ? { folderPath } : {}),
+      });
+    }
+    return out;
+  }
+  for (const ch of node.children || []) {
+    const childPath = folderPath
+      ? `${folderPath} / ${String(ch.name || '').trim()}`
+      : String(ch.name || '').trim();
+    if (ch.isFolder) {
+      flattenSgdePdfLeaves(ch, out, childPath);
+    } else {
+      flattenSgdePdfLeaves(ch, out, folderPath);
+    }
+  }
+  return out;
+}
+
+export function sgdeLeafDisplayPath(leaf: SgdePdfLeaf): string {
+  return leaf.folderPath ? `${leaf.folderPath} / ${leaf.name}` : leaf.name;
+}
 
 function b64(s: string): string {
   return Buffer.from(s, 'utf8').toString('base64');
@@ -44,7 +94,7 @@ export class SgdeClient {
     this.base = base;
     this.alf = `${base}/alfresco/api/-default-/public`;
     this.back = `${base}/backendrama`;
-    const insecure = process.env.SGDE_TLS_INSECURE === '1';
+    const insecure = isSgdeTlsInsecure();
     this.axios = axios.create({
       httpsAgent: new https.Agent({ rejectUnauthorized: !insecure }),
       timeout: 45_000,
@@ -121,7 +171,10 @@ export class SgdeClient {
         }
       }
     } catch (e) {
-      return { ok: false, message: `No se pudo cargar la página de login SGDE: ${String(e)}` };
+      return {
+        ok: false,
+        message: formatSgdeConnectionError(`No se pudo cargar la página de login SGDE: ${String(e)}`),
+      };
     }
 
     const hdrs: Record<string, string> = {
@@ -222,15 +275,296 @@ export class SgdeClient {
     return m ? decodeURIComponent(m[1]) : '';
   }
 
-  async buscarExpedienteNodeId(radicadoRaw: string): Promise<string | null> {
+  /** Fila de grilla compartidos: expediente en columnas + nodeId en el mismo objeto. */
+  private findNodeIdInCompartidosPayload(data: unknown, radicado: string): string | null {
+    const uuidIn = (raw: unknown): string | null => {
+      const s = String(raw ?? '').trim();
+      const m = s.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+      return m ? m[0].toLowerCase() : null;
+    };
+    const rowMatches = (o: Record<string, unknown>): boolean => {
+      const fields = [
+        o.expediente,
+        o.radicado,
+        o.numeroRadicado,
+        o.elementoCompartido,
+        o.nombre,
+        o.name,
+        o.titulo,
+        o.descripcion,
+      ];
+      return fields.some((v) => {
+        const t = String(v ?? '');
+        const digits = t.replace(/\D/g, '');
+        return digits === radicado || t.includes(radicado);
+      });
+    };
+    const idFromRow = (o: Record<string, unknown>): string | null => {
+      for (const key of [
+        'nodeId',
+        'id',
+        'uuid',
+        'nodeRef',
+        'idNodo',
+        'idExpediente',
+        'idDocumento',
+        'idElemento',
+        'ref',
+      ]) {
+        const u = uuidIn(o[key]);
+        if (u) return u;
+      }
+      return null;
+    };
+
+    const walk = (obj: unknown, depth: number): string | null => {
+      if (depth > 18 || obj == null) return null;
+      if (Array.isArray(obj)) {
+        for (const item of obj) {
+          const nid = walk(item, depth + 1);
+          if (nid) return nid;
+        }
+        return null;
+      }
+      if (typeof obj !== 'object') return null;
+      const o = obj as Record<string, unknown>;
+      if (rowMatches(o)) {
+        const nid = idFromRow(o);
+        if (nid) return nid;
+      }
+      for (const v of Object.values(o)) {
+        const nid = walk(v, depth + 1);
+        if (nid) return nid;
+      }
+      return null;
+    };
+    return walk(data, 0);
+  }
+
+  private extractNodeIdFromBackendPayload(data: unknown, radicado: string): string | null {
+    const walk = (obj: unknown, depth: number): string | null => {
+      if (depth > 10 || obj == null) return null;
+      if (Array.isArray(obj)) {
+        for (const x of obj) {
+          const nid = walk(x, depth + 1);
+          if (nid) return nid;
+        }
+        return null;
+      }
+      if (typeof obj !== 'object') return null;
+      const o = obj as Record<string, unknown>;
+      const radicadoFields = [o.radicado, o.numeroRadicado, o.expediente, o.name, o.nombre, o.cm_name]
+        .map((v) => String(v ?? ''))
+        .filter(Boolean);
+      const mentionsRad =
+        radicadoFields.length > 0 &&
+        radicadoFields.some((f) => f.replace(/\D/g, '').includes(radicado));
+      for (const key of ['nodeId', 'id', 'uuid', 'nodeRef']) {
+        const raw = String(o[key] ?? '').trim();
+        const uuid = raw.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0];
+        if (uuid && (!radicadoFields.length || mentionsRad)) return uuid;
+      }
+      for (const v of Object.values(o)) {
+        const nid = walk(v, depth + 1);
+        if (nid) return nid;
+      }
+      return null;
+    };
+    return walk(data, 0);
+  }
+
+  /** Expedientes compartidos «Con el despacho» (no aparecen en la grilla principal). */
+  async buscarExpedienteEnCompartidos(radicadoRaw: string): Promise<string | null> {
     const radicado = radicadoRaw.replace(/\D/g, '');
     if (!EXPEDIENTE_REGEX.test(radicado)) return null;
+
+    const paths = [
+      `/expedientes/compartidos/buscar?radicado=${encodeURIComponent(radicado)}`,
+      `/expedientes/compartidos?radicado=${encodeURIComponent(radicado)}`,
+      `/compartidos/expedientes?radicado=${encodeURIComponent(radicado)}`,
+      `/compartidos/buscar?radicado=${encodeURIComponent(radicado)}`,
+      `/expedientes/buscarCompartidos?radicado=${encodeURIComponent(radicado)}`,
+      `/expedientes/buscar-compartidos?radicado=${encodeURIComponent(radicado)}`,
+      `/expedientes/misCompartidos?radicado=${encodeURIComponent(radicado)}`,
+      `/expedientes/mis-compartidos?radicado=${encodeURIComponent(radicado)}`,
+      `/expedientes/compartido/${encodeURIComponent(radicado)}`,
+      `/compartidos?radicado=${encodeURIComponent(radicado)}`,
+    ];
+
+    for (const path of paths) {
+      try {
+        const r = await this.axios.get(`${this.back}${path}`);
+        if (r.status < 200 || r.status >= 300 || r.data == null) continue;
+        const nid =
+          this.findNodeIdInCompartidosPayload(r.data, radicado) ||
+          this.extractNodeIdFromBackendPayload(r.data, radicado);
+        if (nid) {
+          console.info(`[sgde] Expediente ${radicado} en compartidos vía ${path}`);
+          return nid;
+        }
+      } catch {
+        /* siguiente endpoint */
+      }
+    }
+
+    const postBodies: Record<string, unknown>[] = [
+      { radicado, expediente: radicado, numeroRadicado: radicado },
+      { radicado, tipo: 'CON_DESPACHO' },
+      { radicado, tab: 'conElDespacho' },
+      { filtro: { expediente: radicado } },
+    ];
+    const postPaths = [
+      '/expedientes/compartidos/buscar',
+      '/expedientes/misCompartidos/buscar',
+      '/compartidos/expedientes/buscar',
+      '/expedientes/compartidos/listar',
+    ];
+    for (const path of postPaths) {
+      for (const body of postBodies) {
+        try {
+          const r = await this.axios.post(`${this.back}${path}`, body);
+          if (r.status < 200 || r.status >= 300 || r.data == null) continue;
+          const nid =
+            this.findNodeIdInCompartidosPayload(r.data, radicado) ||
+            this.extractNodeIdFromBackendPayload(r.data, radicado);
+          if (nid) {
+            console.info(`[sgde] Expediente ${radicado} en compartidos vía POST ${path}`);
+            return nid;
+          }
+        } catch {
+          /* siguiente */
+        }
+      }
+    }
+
+    const paginated = await this.buscarExpedienteEnCompartidosPaginado(radicado);
+    if (paginated) return paginated;
+
+    return null;
+  }
+
+  /**
+   * Replica la grilla «Con el despacho»: listados paginados sin filtro de radicado en URL.
+   */
+  private async buscarExpedienteEnCompartidosPaginado(radicado: string): Promise<string | null> {
+    const pageSize = 50;
+    const maxPages = 30;
+
+    const attempts: Array<{
+      method: 'GET' | 'POST';
+      path: string;
+      body?: (page: number) => Record<string, unknown>;
+      params?: (page: number) => Record<string, string | number>;
+    }> = [
+      {
+        method: 'GET',
+        path: '/expedientes/compartidos/con-despacho',
+        params: (page) => ({ page, size: pageSize, expediente: radicado }),
+      },
+      {
+        method: 'GET',
+        path: '/expedientes/compartidos/conDespacho',
+        params: (page) => ({ page, size: pageSize, expediente: radicado }),
+      },
+      {
+        method: 'GET',
+        path: '/expedientes/compartidos',
+        params: (page) => ({
+          page,
+          size: pageSize,
+          tipo: 'CON_DESPACHO',
+          expediente: radicado,
+        }),
+      },
+      {
+        method: 'GET',
+        path: '/expedientes/misCompartidos',
+        params: (page) => ({ page, size: pageSize, tab: 'conElDespacho', expediente: radicado }),
+      },
+      {
+        method: 'POST',
+        path: '/expedientes/compartidos/listar',
+        body: (page) => ({
+          page,
+          size: pageSize,
+          tipo: 'CON_DESPACHO',
+          tab: 'conElDespacho',
+          expediente: radicado,
+          radicado,
+        }),
+      },
+      {
+        method: 'POST',
+        path: '/expedientes/compartidos/buscar',
+        body: (page) => ({
+          page,
+          size: pageSize,
+          tipoCompartido: 'CON_DESPACHO',
+          expediente: radicado,
+          numeroRadicado: radicado,
+        }),
+      },
+    ];
+
+    for (const att of attempts) {
+      let emptyStreak = 0;
+      for (let page = 0; page < maxPages; page++) {
+        try {
+          const url = `${this.back}${att.path}`;
+          const r =
+            att.method === 'GET'
+              ? await this.axios.get(url, { params: att.params?.(page) })
+              : await this.axios.post(url, att.body?.(page) ?? { page, size: pageSize });
+          if (r.status < 200 || r.status >= 300 || r.data == null) {
+            emptyStreak += 1;
+            if (emptyStreak >= 2) break;
+            continue;
+          }
+          const nid =
+            this.findNodeIdInCompartidosPayload(r.data, radicado) ||
+            this.extractNodeIdFromBackendPayload(r.data, radicado);
+          if (nid) {
+            console.info(
+              `[sgde] Expediente ${radicado} en compartidos paginado ${att.method} ${att.path} p=${page}`
+            );
+            return nid;
+          }
+          const raw = JSON.stringify(r.data);
+          if (!raw.includes(radicado)) {
+            emptyStreak += 1;
+            if (emptyStreak >= 2) break;
+          } else {
+            emptyStreak = 0;
+          }
+        } catch {
+          break;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  async buscarExpedienteNodeId(
+    radicadoRaw: string,
+    opts?: { nodeIdHint?: string | null }
+  ): Promise<string | null> {
+    const hint = String(opts?.nodeIdHint || '').trim();
+    if (/^[0-9a-f-]{36}$/i.test(hint)) return hint;
+
+    const radicado = radicadoRaw.replace(/\D/g, '');
+    if (!EXPEDIENTE_REGEX.test(radicado)) return null;
+
+    const compartidoPrimero = await this.buscarExpedienteEnCompartidos(radicado);
+    if (compartidoPrimero) return compartidoPrimero;
 
     const url = `${this.alf}/search/versions/1/search`;
     const queries = [
       `TYPE:"rama:expedientes" AND =cm:name:"${radicado}"`,
       `TYPE:"rama:expedientes" AND cm:name:"${radicado}"`,
       `TYPE:"rama:expedientes" AND cm:name:"*${radicado}*"`,
+      `=cm:name:"${radicado}"`,
+      `cm:name:"*${radicado}*"`,
     ];
     const csrf = this.csrf();
     const hdrs: Record<string, string> = {
@@ -288,6 +622,7 @@ export class SgdeClient {
         }
       }
     }
+
     return null;
   }
 
@@ -401,6 +736,34 @@ export class SgdeClient {
 
     const rootLabel = (await this.getNodeName(rootId)) || rootId;
     return walk(rootId, rootLabel, 0);
+  }
+
+  /** Descarga el contenido binario de un nodo documento en Alfresco. */
+  async downloadNodeContent(
+    nodeId: string
+  ): Promise<{ buffer: Buffer; contentType: string } | null> {
+    const url = `${this.alf}/alfresco/versions/1/nodes/${encodeURIComponent(nodeId)}/content`;
+    const csrf = this.csrf();
+    const hdrs: Record<string, string> = {
+      Accept: 'application/pdf,application/octet-stream,*/*',
+      ...(csrf ? { 'alf-csrftoken': csrf } : {}),
+    };
+    const r = await this.axios.get(url, {
+      headers: hdrs,
+      responseType: 'arraybuffer',
+      maxContentLength: 20 * 1024 * 1024,
+      maxBodyLength: 20 * 1024 * 1024,
+    });
+    if (r.status < 200 || r.status >= 300 || !r.data) return null;
+    const buf = Buffer.from(r.data);
+    if (buf.length < 5) return null;
+    const isPdf =
+      buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46 && buf[4] === 0x2d;
+    const ct = String(r.headers['content-type'] || '').split(';')[0].trim();
+    if (!isPdf && ct && !ct.includes('pdf') && !ct.includes('octet-stream')) {
+      return null;
+    }
+    return { buffer: buf, contentType: isPdf || ct.includes('pdf') ? 'application/pdf' : ct || 'application/pdf' };
   }
 }
 

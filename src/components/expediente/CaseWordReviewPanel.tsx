@@ -28,6 +28,7 @@ import {
   fetchCaseWordReviews,
   updateCaseWordReview,
 } from '../../lib/case-word-reviews';
+import { ensureSupabaseSessionForWrites } from '../../lib/supabase-write-auth';
 import { fetchCourtBranding } from '../../lib/court-branding';
 import type { PlantillasStateV2 } from '../../lib/plantillas-store';
 import { loadPlantillas } from '../../lib/plantillas-store';

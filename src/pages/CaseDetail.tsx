@@ -664,9 +664,24 @@ export default function CaseDetail() {
     return <div className="p-10 text-center font-mono">EXPEDIENTE NO ENCONTRADO</div>;
   }
 
+  const outlookPendingAttach =
+    searchParams.get('fromOutlook') === '1' && Boolean(searchParams.get('parseSessionId')?.trim());
+
   return (
     <CaseDetailProvider value={caseDetailContextValue}>
     <div className="w-full min-w-0 space-y-10">
+      {outlookPendingAttach ? (
+        <div
+          className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+          role="status"
+        >
+          Hay un correo en cola para este expediente. Revise el análisis y apruebe el ingreso en{' '}
+          <a href="/correo/pendientes" className="font-semibold underline">
+            Pendientes correo
+          </a>
+          .
+        </div>
+      ) : null}
       <header className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
         <div className="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
           <button 

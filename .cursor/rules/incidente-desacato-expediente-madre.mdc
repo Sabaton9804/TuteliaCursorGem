@@ -1,0 +1,20 @@
+---
+description: Incidente de desacato — siempre registro en expediente madre, sin radicado hijo
+globs:
+  - src/components/expediente/CaseIncidenteDesacatoPanel.tsx
+  - src/pages/CaseDetail.tsx
+  - supabase/migrations/**/*incident*
+  - supabase/migrations/**/*workflow_stages*
+---
+
+# Incidente de desacato (decisión cerrada)
+
+Antes de proponer “expediente hijo”, nuevo radicado o fila extra en `cases` para un incidente, lee:
+
+**`docs/incidente-desacato-modelo-expediente.md`**
+
+Resumen obligatorio:
+
+- El incidente es una **actuación dentro del expediente de tutela madre**, no un proceso autónomo.
+- Persistir en `incident_desacato` + `case_actions` / tareas; **no** crear `cases` hijo ni radicado propio.
+- La UI correcta es la pestaña en detalle del caso (`CaseIncidenteDesacatoPanel`), no un flujo de “Nueva tutela” para el incidente.

@@ -93,9 +93,16 @@ export function CaseSgdePanel({ caseId, caseItem, onRefetchCase }: CaseSgdePanel
         headers: await authHeaders(),
         body: JSON.stringify({ caseId }),
       });
-      const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      const body = (await res.json().catch(() => ({}))) as Record<string, unknown> & {
+        code?: string;
+      };
       if (!res.ok) {
-        setErr(String(body.error || res.statusText || 'Error al consultar SGDE'));
+        const msg = String(body.error || res.statusText || 'Error al consultar SGDE');
+        setErr(
+          body.code === 'USER_NOT_CONFIGURED'
+            ? `${msg} Configure sus credenciales en Ajustes → Interconexión SGDE.`
+            : msg
+        );
         setTree(null);
         setRootId(null);
         return;

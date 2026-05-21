@@ -1,6 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { CaseType, UserRole } from '../types';
-import { startOfLocalDay, tenthBusinessDayDeadline } from './business-days';
+import { startOfLocalDay } from './business-days';
+import {
+  metadataForContestacionDeadline,
+  metadataForImpugnacionDeadline,
+  resolveSubStageDeadline,
+} from './case-stage-deadlines';
 import {
   pipelineForCaseType,
   responsibleRoleForStage,
@@ -367,7 +372,7 @@ export async function applyStageTransitionNotificacionAutoEnviada(
     created_by: userId,
     metadata: { source: 'notificacion_auto_instantanea' },
   });
-  const deadlineIso = tenthBusinessDayDeadline(startOfLocalDay(new Date())).toISOString();
+  const notifiedDay = startOfLocalDay(new Date());
   await insertOpenStage(supabase, {
     courtId: opts.courtId,
     caseId: opts.caseId,
@@ -375,12 +380,13 @@ export async function applyStageTransitionNotificacionAutoEnviada(
     enteredAt: t0,
     previousStageCode: notif,
     createdBy: userId,
-    metadata: { source: 'notificacion_auto_enviada' },
+    metadata: {
+      source: 'notificacion_auto_enviada',
+      notified_at: t0,
+      ...metadataForContestacionDeadline(notifiedDay),
+    },
   });
-  await supabase
-    .from('cases')
-    .update({ deadline_at: deadlineIso, updated_at: now })
-    .eq('id', opts.caseId);
+  await supabase.from('cases').update({ updated_at: now }).eq('id', opts.caseId);
 
   await insertCaseAction(supabase, {
     caseId: opts.caseId,
@@ -399,7 +405,7 @@ export async function applyStageTransitionNotificacionAutoEnviada(
     courtId: opts.courtId,
     caseId: opts.caseId,
     radicado: opts.radicado,
-    enteredStage: notif,
+    enteredStage: termino,
   });
   await enqueueWorkflowTaskForStage(supabase, {
     courtId: opts.courtId,
@@ -420,17 +426,18 @@ export async function applyStageTransitionIfTerminoRespuestaVencido(
     radicado: string;
     caseType: CaseType;
     caseAssignedTo?: string | null;
-    deadlineAt: string | null | undefined;
+    deadlineAt?: string | null;
   },
 ): Promise<void> {
   if (opts.caseType !== 'tutela_primera') return;
   const open = await fetchOpenStageRow(supabase, opts.caseId);
   if (!open || open.stage_code !== 'TERMINO_RESPUESTA') return;
-  const dl = opts.deadlineAt?.trim();
-  if (!dl) return;
-  const end = startOfLocalDay(new Date(dl));
+  const end =
+    resolveSubStageDeadline('TERMINO_RESPUESTA', open.entered_at, open.metadata ?? {}) ??
+    (opts.deadlineAt?.trim() ? startOfLocalDay(new Date(opts.deadlineAt)) : null);
+  if (!end) return;
   const today = startOfLocalDay(new Date());
-  if (today <= end) return;
+  if (today.getTime() <= end.getTime()) return;
 
   await ensureSupabaseSessionForWrites();
   const { userId, userName } = await authActor(supabase);
@@ -503,7 +510,7 @@ export async function applyStageTransitionNotificacionFalloEnviada(
     created_by: userId,
     metadata: { source: 'notificacion_fallo_instantanea' },
   });
-  const deadlineIso = tenthBusinessDayDeadline(startOfLocalDay(new Date())).toISOString();
+  const notifiedDay = startOfLocalDay(new Date());
   await insertOpenStage(supabase, {
     courtId: opts.courtId,
     caseId: opts.caseId,
@@ -511,9 +518,13 @@ export async function applyStageTransitionNotificacionFalloEnviada(
     enteredAt: t0,
     previousStageCode: notif,
     createdBy: userId,
-    metadata: { source: 'notificacion_fallo_enviada' },
+    metadata: {
+      source: 'notificacion_fallo_enviada',
+      notified_at: t0,
+      ...metadataForImpugnacionDeadline(notifiedDay),
+    },
   });
-  await supabase.from('cases').update({ deadline_at: deadlineIso, updated_at: now }).eq('id', opts.caseId);
+  await supabase.from('cases').update({ updated_at: now }).eq('id', opts.caseId);
   await insertCaseAction(supabase, {
     caseId: opts.caseId,
     type: 'CAMBIO_ETAPA_AUTOMATICO',
@@ -531,7 +542,7 @@ export async function applyStageTransitionNotificacionFalloEnviada(
     courtId: opts.courtId,
     caseId: opts.caseId,
     radicado: opts.radicado,
-    enteredStage: notif,
+    enteredStage: termino,
   });
   await enqueueWorkflowTaskForStage(supabase, {
     courtId: opts.courtId,
@@ -552,17 +563,18 @@ export async function applyStageTransitionIfTerminoImpugnacionVencido(
     radicado: string;
     caseType: CaseType;
     caseAssignedTo?: string | null;
-    deadlineAt: string | null | undefined;
+    deadlineAt?: string | null;
   },
 ): Promise<void> {
   if (opts.caseType !== 'tutela_primera') return;
   const open = await fetchOpenStageRow(supabase, opts.caseId);
   if (!open || open.stage_code !== 'TERMINO_IMPUGNACION') return;
-  const dl = opts.deadlineAt?.trim();
-  if (!dl) return;
-  const end = startOfLocalDay(new Date(dl));
+  const end =
+    resolveSubStageDeadline('TERMINO_IMPUGNACION', open.entered_at, open.metadata ?? {}) ??
+    (opts.deadlineAt?.trim() ? startOfLocalDay(new Date(opts.deadlineAt)) : null);
+  if (!end) return;
   const today = startOfLocalDay(new Date());
-  if (today <= end) return;
+  if (today.getTime() <= end.getTime()) return;
 
   await ensureSupabaseSessionForWrites();
   const { userId, userName } = await authActor(supabase);

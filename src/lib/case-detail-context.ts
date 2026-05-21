@@ -38,8 +38,8 @@ export function buildSynthesisContextBlock(
   });
 
   const deadlineLine = caseItem.deadlineAt?.trim()
-    ? `Plazo / término registrado (deadline_at, ISO): ${caseItem.deadlineAt}`
-    : 'Plazo / término en sistema: no registrado (deadline_at vacío).';
+    ? `Plazo para fallar la tutela — 10 días hábiles desde radicación (deadline_at, ISO): ${caseItem.deadlineAt}`
+    : 'Plazo para fallar (10 días háb. desde radicación): no registrado (deadline_at vacío).';
 
   const lines = [
     `Accionado: ${caseItem.defendant}`,

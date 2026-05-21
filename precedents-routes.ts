@@ -6,9 +6,11 @@ import multer from 'multer';
  */
 export function createPrecedentsFileRouter(
   upload: ReturnType<typeof multer>,
-  indexFromFileHandler: express.RequestHandler
+  indexFromFileHandler: express.RequestHandler,
+  attachPdfHandler: express.RequestHandler
 ): express.Router {
   const router = express.Router();
   router.post('/index-from-file', upload.single('archivo'), indexFromFileHandler);
+  router.post('/:id/attach-pdf', upload.single('archivo'), attachPdfHandler);
   return router;
 }

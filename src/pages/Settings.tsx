@@ -2,7 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { DEFAULT_DEMO_COURT_ID } from '../lib/default-court';
-import { Shield, Database, CheckCircle2, UsersRound } from 'lucide-react';
+import { Shield, Database, CheckCircle2, UsersRound, Mail, Loader2 } from 'lucide-react';
+import { fetchSgdeUserStatus, saveSgdeCredentials, deleteSgdeCredentials } from '../lib/sgde-api';
+import { Link } from 'react-router-dom';
 import { useSessionCourt } from '../contexts/SessionCourtContext';
 import { ensureSupabaseSessionForWrites } from '../lib/supabase-write-auth';
 import type { SustanciadorAssignmentMode } from '../types';
@@ -37,23 +39,94 @@ export default function Settings() {
   const [sgdeStatus, setSgdeStatus] = useState<{
     enabled: boolean;
     configured: boolean;
+    userConfigured: boolean;
+    usernameMasked: string | null;
     portalBaseUrl: string;
+    encryptionReady: boolean;
+    message?: string;
   } | null>(null);
+  const [sgdeUsername, setSgdeUsername] = useState('');
+  const [sgdePassword, setSgdePassword] = useState('');
+  const [sgdeSaving, setSgdeSaving] = useState(false);
+  const [sgdeCredStatus, setSgdeCredStatus] = useState<string | null>(null);
+  const [outlookStatus, setOutlookStatus] = useState<{
+    enabled: boolean;
+    configured: boolean;
+    connected: boolean;
+    mailboxEmail: string | null;
+  } | null>(null);
+
+  const loadSgdeStatus = useCallback(async () => {
+    try {
+      await ensureSupabaseSessionForWrites();
+      const j = await fetchSgdeUserStatus();
+      setSgdeStatus({
+        enabled: Boolean(j.enabled),
+        configured: Boolean(j.userConfigured),
+        userConfigured: Boolean(j.userConfigured),
+        usernameMasked: j.usernameMasked,
+        portalBaseUrl: j.portalBaseUrl || '',
+        encryptionReady: Boolean(j.encryptionReady),
+        message: j.message,
+      });
+    } catch {
+      setSgdeStatus(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSgdeStatus();
+  }, [loadSgdeStatus]);
+
+  const handleSaveSgdeCredentials = async () => {
+    setSgdeSaving(true);
+    setSgdeCredStatus(null);
+    try {
+      await ensureSupabaseSessionForWrites();
+      await saveSgdeCredentials(sgdeUsername.trim(), sgdePassword);
+      setSgdePassword('');
+      setSgdeCredStatus('Credenciales SGDE guardadas y validadas con la Rama.');
+      await loadSgdeStatus();
+    } catch (e) {
+      setSgdeCredStatus(e instanceof Error ? e.message : 'Error al guardar credenciales SGDE.');
+    } finally {
+      setSgdeSaving(false);
+    }
+  };
+
+  const handleDeleteSgdeCredentials = async () => {
+    setSgdeSaving(true);
+    setSgdeCredStatus(null);
+    try {
+      await ensureSupabaseSessionForWrites();
+      await deleteSgdeCredentials();
+      setSgdeUsername('');
+      setSgdePassword('');
+      setSgdeCredStatus('Credenciales SGDE eliminadas de Tutelia.');
+      await loadSgdeStatus();
+    } catch (e) {
+      setSgdeCredStatus(e instanceof Error ? e.message : 'Error al eliminar.');
+    } finally {
+      setSgdeSaving(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch('/api/sgde/status');
-        const j = (await res.json()) as { enabled?: boolean; configured?: boolean; portalBaseUrl?: string };
-        if (cancelled) return;
-        setSgdeStatus({
-          enabled: Boolean(j.enabled),
-          configured: Boolean(j.configured),
-          portalBaseUrl: typeof j.portalBaseUrl === 'string' ? j.portalBaseUrl : '',
-        });
+        const { fetchOutlookStatus } = await import('../lib/outlook-api');
+        const s = await fetchOutlookStatus();
+        if (!cancelled) {
+          setOutlookStatus({
+            enabled: Boolean(s.enabled),
+            configured: Boolean(s.configured),
+            connected: Boolean(s.connected),
+            mailboxEmail: s.mailboxEmail,
+          });
+        }
       } catch {
-        if (!cancelled) setSgdeStatus(null);
+        if (!cancelled) setOutlookStatus(null);
       }
     })();
     return () => {
@@ -246,6 +319,37 @@ export default function Settings() {
         )}
       </div>
 
+
+      <div className="card-modern p-8 space-y-4">
+        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400 border-b border-slate-50 pb-4">
+          <Mail className="w-4 h-4 text-accent" aria-hidden />
+          Correo Outlook (Microsoft 365)
+        </div>
+        {outlookStatus?.enabled && outlookStatus.connected ? (
+          <p className="text-sm text-slate-600">
+            Su sesión tiene Outlook conectado (<strong>{outlookStatus.mailboxEmail}</strong>). Gestione la bandeja en{' '}
+            <Link to="/correo" className="font-semibold text-accent hover:underline">
+              Correo
+            </Link>
+            .
+          </p>
+        ) : outlookStatus?.enabled ? (
+          <p className="text-sm text-slate-600">
+            Outlook está configurado en el servidor. Conecte su buzón en{' '}
+            <Link to="/correo" className="font-semibold text-accent hover:underline">
+              Correo
+            </Link>
+            .
+          </p>
+        ) : (
+          <p className="text-sm text-slate-600">
+            Defina <span className="font-mono text-[11px]">OUTLOOK_CLIENT_ID</span> y{' '}
+            <span className="font-mono text-[11px]">OUTLOOK_CLIENT_SECRET</span> en el servidor (Microsoft Entra ID).
+            Redirect: <span className="font-mono text-[11px]">/api/outlook/callback</span>.
+          </p>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div className="card-modern p-8 space-y-8 flex flex-col">
           <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400 border-b border-slate-50 pb-4">
@@ -280,39 +384,106 @@ export default function Settings() {
           </div>
 
           <div className="space-y-6 flex-1">
-            {sgdeStatus?.enabled ? (
+            {!sgdeStatus?.encryptionReady ? (
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-2 rounded-full bg-red-400" />
+                <span className="text-xs font-bold uppercase tracking-widest text-red-700">
+                  Servidor sin clave de cifrado
+                </span>
+              </div>
+            ) : sgdeStatus?.userConfigured ? (
               <div className="flex items-center gap-2">
                 <div className="h-2 w-2 rounded-full bg-emerald-500" />
-                <span className="text-xs font-bold uppercase tracking-widest text-emerald-700">Activo</span>
-              </div>
-            ) : sgdeStatus?.configured === false ? (
-              <div className="flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-amber-400" />
-                <span className="text-xs font-bold uppercase tracking-widest text-amber-700">Sin credenciales</span>
+                <span className="text-xs font-bold uppercase tracking-widest text-emerald-700">
+                  Conectado como {sgdeStatus.usernameMasked}
+                </span>
               </div>
             ) : (
               <div className="flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-slate-300" />
-                <span className="text-xs font-bold uppercase tracking-widest text-slate-500">Desactivado</span>
+                <div className="h-2 w-2 rounded-full bg-amber-400" />
+                <span className="text-xs font-bold uppercase tracking-widest text-amber-700">
+                  Sin credenciales SGDE
+                </span>
               </div>
             )}
 
             <p className="text-sm font-medium text-slate-500 leading-relaxed">
-              La lectura del árbol documental en SGDE usa credenciales definidas solo en el servidor (
-              <span className="font-mono text-[11px]">SGDE_USERNAME</span>,{' '}
-              <span className="font-mono text-[11px]">SGDE_PASSWORD</span>
+              Cada funcionario usa su propio usuario y contraseña del portal SGDE de la Rama. Tutelia las guarda
+              cifradas; no van en un archivo <span className="font-mono text-[11px]">.env</span> compartido.
               {sgdeStatus?.portalBaseUrl ? (
                 <>
-                  , URL <span className="font-mono text-[11px] break-all">{sgdeStatus.portalBaseUrl}</span>
+                  {' '}
+                  Portal:{' '}
+                  <a
+                    href={sgdeStatus.portalBaseUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono text-[11px] text-accent hover:underline break-all"
+                  >
+                    {sgdeStatus.portalBaseUrl}
+                  </a>
                 </>
               ) : null}
-              ). Opcional: <span className="font-mono text-[11px]">SGDE_BASE_URL</span>,{' '}
-              <span className="font-mono text-[11px]">SGDE_ENABLED=0</span> para desactivar.
             </p>
 
+            <div className="space-y-3">
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Usuario SGDE
+              </label>
+              <input
+                type="text"
+                autoComplete="username"
+                value={sgdeUsername}
+                onChange={(e) => setSgdeUsername(e.target.value)}
+                placeholder={sgdeStatus?.usernameMasked || 'correo o usuario CENDOJ'}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
+              />
+              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Contraseña SGDE
+              </label>
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={sgdePassword}
+                onChange={(e) => setSgdePassword(e.target.value)}
+                placeholder={sgdeStatus?.userConfigured ? 'Nueva contraseña (opcional)' : 'Contraseña del portal'}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={sgdeSaving || !sgdeStatus?.encryptionReady}
+                onClick={() => void handleSaveSgdeCredentials()}
+                className="btn-primary px-4 py-2.5 text-xs tracking-widest disabled:opacity-50"
+              >
+                {sgdeSaving ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> VALIDANDO…
+                  </span>
+                ) : (
+                  'GUARDAR Y VALIDAR'
+                )}
+              </button>
+              {sgdeStatus?.userConfigured ? (
+                <button
+                  type="button"
+                  disabled={sgdeSaving}
+                  onClick={() => void handleDeleteSgdeCredentials()}
+                  className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50"
+                >
+                  QUITAR
+                </button>
+              ) : null}
+            </div>
+
+            {sgdeCredStatus ? (
+              <p className="text-xs font-semibold text-slate-600">{sgdeCredStatus}</p>
+            ) : null}
+
             <p className="text-[11px] leading-relaxed text-slate-400">
-              En cada expediente (pestaña expediente) puede consultar el SGDE y vincular por radicado si aún no hay{' '}
-              <span className="font-mono">sgde_id</span> en Tutelia.
+              Segunda instancia, árbol documental en expedientes y migración desde correo usan estas credenciales.
             </p>
           </div>
         </div>

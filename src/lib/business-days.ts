@@ -162,11 +162,30 @@ export function addBusinessDays(start: Date, businessDays: number): Date {
 
 /** Fecha del último día del término de 10 días hábiles (día 10 hábil desde radicación, radicación = día 1). */
 export function tenthBusinessDayDeadline(filingDate: Date): Date {
-  const d = startOfLocalDay(filingDate);
+  return businessDayTermEnd(filingDate, 10);
+}
+
+/** Último día de un término de N días hábiles (fecha de inicio = día 1). */
+export function businessDayTermEnd(startDate: Date, termBusinessDays: number): Date {
+  const d = startOfLocalDay(startDate);
   let counted = 1;
-  while (counted < 10) {
+  while (counted < termBusinessDays) {
     d.setDate(d.getDate() + 1);
     if (isBusinessDayColombia(d)) counted += 1;
   }
   return d;
+}
+
+/** Plazo para que accionados/entidad contesten tras notificar el auto admisorio. */
+export const CONTESTACION_BUSINESS_DAYS = 2;
+
+/** Plazo para impugnar tras notificar el fallo. */
+export const IMPUGNACION_BUSINESS_DAYS = 3;
+
+export function contestacionDeadlineFrom(notifiedOn: Date): Date {
+  return businessDayTermEnd(startOfLocalDay(notifiedOn), CONTESTACION_BUSINESS_DAYS);
+}
+
+export function impugnacionDeadlineFrom(notifiedOn: Date): Date {
+  return businessDayTermEnd(startOfLocalDay(notifiedOn), IMPUGNACION_BUSINESS_DAYS);
 }

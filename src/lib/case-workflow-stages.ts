@@ -182,8 +182,24 @@ export async function resolveWorkflowAssigneeId(
 export function workflowTaskPayloadForStage(
   stage: CaseStageCode,
   radicado: string,
-): { title: string; description: string; task_type: 'custom' } {
+): { title: string; description: string; task_type: 'custom' | 'generate_notifs' } {
   const label = STAGE_LABEL_ES[stage];
+  if (stage === 'ADMISION') {
+    return {
+      title: `Generar oficios — notificación auto admisorio — ${radicado}`,
+      description:
+        'Auto admisorio firmado. Genere oficios, envíelos por correo a las partes y registre la notificación en el expediente.',
+      task_type: 'generate_notifs',
+    };
+  }
+  if (stage === 'FALLO') {
+    return {
+      title: `Generar oficios — notificación del fallo — ${radicado}`,
+      description:
+        'Fallo firmado. Genere oficios de notificación, envíelos por correo y registre «Notificación del fallo enviada».',
+      task_type: 'generate_notifs',
+    };
+  }
   return {
     title: `Trámite: ${label}`,
     description: `Acción pendiente en la etapa «${label}» del expediente ${radicado}.`,

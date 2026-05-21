@@ -22,7 +22,13 @@ import {
   removeCaseDocumentObjects,
   uploadCaseAttachment,
 } from '../lib/case-document-storage';
-import { DEFAULT_NOTEBOOK_CODE } from '../lib/expediente-notebook';
+import { notebookCodeForCaseType, NOTEBOOK_SI_C01_PRINCIPAL } from '../lib/expediente-notebook';
+import { sgdeMigrateOriginToCase, type SgdePreflightResult } from '../lib/sgde-api';
+import {
+  extractSegundaInstanciaFromParsedEmail,
+  shouldUseSegundaInstanciaFlow,
+} from '../lib/segunda-instancia-email';
+import { CaseSgdeSegundaPreflightPanel } from '../components/new-case/CaseSgdeSegundaPreflightPanel';
 import { fetchParseSessionAttachment, uint8ArrayToBase64 } from '../lib/parse-session-attachment';
 import { NEW_CASE_FRESH_EVENT, NEW_CASE_FRESH_NAV_FLAG } from '../lib/new-case-nav';
 import { guessDerechoTuteladoCodeFromText } from '../lib/sierju-case-codes';
@@ -278,8 +284,64 @@ export default function NewCase() {
   const [appellantSel, setAppellantSel] = useState<'' | CaseAppellant>('');
   const [originRulingSel, setOriginRulingSel] = useState<'' | CaseOriginRuling>('');
   const [conductDescription, setConductDescription] = useState('');
+  const [sgdePreflight, setSgdePreflight] = useState<SgdePreflightResult | null>(null);
+  const [sgdeNodeIdHint, setSgdeNodeIdHint] = useState<string | null>(null);
+  const [segundaPrefillNote, setSegundaPrefillNote] = useState<string | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
+
+  const applySegundaInstanciaPrefill = useCallback(
+    (parsed: Record<string, unknown>, opts?: { forceFlowType?: boolean }) => {
+      const si = extractSegundaInstanciaFromParsedEmail(parsed);
+      if (!shouldUseSegundaInstanciaFlow(si)) return false;
+      if (opts?.forceFlowType || !caseFlowType) {
+        setCaseFlowType('tutela_segunda');
+      }
+      if (si.originRadicado) setOriginRadicado(si.originRadicado);
+      if (si.originCourt) setOriginCourt(si.originCourt);
+      if (si.sgdeNodeId) setSgdeNodeIdHint(si.sgdeNodeId);
+      setSegundaPrefillNote(
+        `Origen detectado en el correo: ${si.originCourt || 'juzgado en SGDE'} · CUI ${si.originRadicado}` +
+          (si.repartoSecuencia ? ` · Reparto ${si.repartoSecuencia}` : '')
+      );
+      return true;
+    },
+    [caseFlowType]
+  );
+
+  useEffect(() => {
+    if (!parsedData) return;
+    applySegundaInstanciaPrefill(parsedData as Record<string, unknown>);
+  }, [parsedData, applySegundaInstanciaPrefill]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('fromOutlook') !== '1') return;
+    const raw = sessionStorage.getItem('tutelia_outlook_radicacion');
+    if (!raw) return;
+    try {
+      const data = JSON.parse(raw) as {
+        parseSessionId?: string;
+        attachments?: unknown[];
+        segundaInstancia?: {
+          isSegundaInstancia?: boolean;
+          originRadicado?: string | null;
+          originCourt?: string | null;
+        };
+        [key: string]: unknown;
+      };
+      setParsedData(data);
+      setParseSessionId(typeof data.parseSessionId === 'string' ? data.parseSessionId : null);
+      setAttachments(Array.isArray(data.attachments) ? data.attachments : []);
+      setSelectedDocIndex(-1);
+      setError(null);
+      applySegundaInstanciaPrefill(data, { forceFlowType: true });
+      sessionStorage.removeItem('tutelia_outlook_radicacion');
+      navigate('/new', { replace: true });
+    } catch {
+      setError('No se pudo cargar el correo importado desde Outlook.');
+    }
+  }, [location.search, navigate, applySegundaInstanciaPrefill]);
 
   const resetNewCaseWizard = useCallback(() => {
     localStorage.removeItem(NEW_CASE_DRAFT_KEY);
@@ -307,6 +369,9 @@ export default function NewCase() {
     setAppellantSel('');
     setOriginRulingSel('');
     setConductDescription('');
+    setSegundaPrefillNote(null);
+    setSgdePreflight(null);
+    setSgdeNodeIdHint(null);
   }, []);
 
   useEffect(() => {
@@ -461,13 +526,20 @@ export default function NewCase() {
         body: formData,
       });
 
-      if (!response.ok) throw new Error('Error al parsear el archivo');
-
-      const data = await response.json();
+      const data = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        [key: string]: unknown;
+      };
+      if (!response.ok) {
+        throw new Error(data.error || `Error al parsear el archivo (${response.status})`);
+      }
       setParsedData(data);
       setParseSessionId(typeof data.parseSessionId === 'string' ? data.parseSessionId : null);
       setAttachments(data.attachments || []);
-      setSelectedDocIndex(-1); // Default to CorreoReparto
+      setSelectedDocIndex(-1);
+      if (caseFlowType === 'tutela_segunda' || extractSegundaInstanciaFromParsedEmail(data).isSegundaInstancia) {
+        applySegundaInstanciaPrefill(data, { forceFlowType: true });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error desconocido');
     } finally {
@@ -496,6 +568,7 @@ export default function NewCase() {
     }
 
     const flow: CaseType = caseFlowType ?? 'tutela_primera';
+    const notebookCode = notebookCodeForCaseType(flow);
     const originErr = validateCaseOriginForRadicate(
       flow,
       originCourt,
@@ -504,6 +577,23 @@ export default function NewCase() {
       originRulingSel,
       conductDescription,
     );
+    if (!originErr && flow === 'tutela_segunda') {
+      const originDigits = originRadicado.replace(/\D/g, '');
+      if (originDigits.length === 23 && sgdePreflight?.status === 'no_encontrado') {
+        setError(
+          sgdePreflight.message ||
+            'El expediente de origen no aparece en SGDE. Verifique el traslado digital antes de radicar.',
+        );
+        return;
+      }
+      if (originDigits.length === 23 && sgdePreflight?.status === 'sin_documentos') {
+        setError(
+          sgdePreflight.message ||
+            'SGDE no muestra documentos en el expediente de origen. Espere el traslado o confirme en el portal.',
+        );
+        return;
+      }
+    }
     if (originErr) {
       setError(originErr);
       return;
@@ -662,7 +752,7 @@ export default function NewCase() {
           size: Math.round((parsedData.text?.length || 0) * 1.5),
           sort_order: -1,
           is_from_link: false,
-          notebook_code: DEFAULT_NOTEBOOK_CODE,
+          notebook_code: notebookCode,
         },
       ];
 
@@ -684,7 +774,7 @@ export default function NewCase() {
               content: null,
               is_from_link: !!att.isFromLink,
               sort_order: i,
-              notebook_code: DEFAULT_NOTEBOOK_CODE,
+              notebook_code: notebookCode,
               error: 'Sin contenido binario para subir a Storage.',
             });
             continue;
@@ -707,7 +797,7 @@ export default function NewCase() {
               content: null,
               is_from_link: !!att.isFromLink,
               sort_order: i,
-              notebook_code: DEFAULT_NOTEBOOK_CODE,
+              notebook_code: notebookCode,
               error: 'Base64 del adjunto inválido.',
             });
             continue;
@@ -735,7 +825,7 @@ export default function NewCase() {
             storage_path: up.path,
             is_from_link: !!att.isFromLink,
             sort_order: i,
-            notebook_code: DEFAULT_NOTEBOOK_CODE,
+            notebook_code: notebookCode,
           });
         }
       }
@@ -748,6 +838,50 @@ export default function NewCase() {
         const { error: delErr } = await supabase.from('cases').delete().eq('id', caseId);
         if (delErr) console.error('No se pudo revertir el expediente tras fallo en anexos:', delErr);
         throw docErr;
+      }
+
+      if (flow === 'tutela_segunda') {
+        const originDigits = originRadicado.replace(/\D/g, '');
+        if (
+          originDigits.length === 23 &&
+          sgdePreflight &&
+          (sgdePreflight.status === 'listo' || sgdePreflight.status === 'incompleto') &&
+          sgdePreflight.pdfCount > 0
+        ) {
+          try {
+            const mig = await sgdeMigrateOriginToCase({
+              caseId,
+              originRadicado: originDigits,
+              sgdeRootId: sgdePreflight.sgdeRootId,
+              sgdeNodeIdHint: sgdeNodeIdHint || sgdePreflight.sgdeRootId,
+              notebookCode: NOTEBOOK_SI_C01_PRINCIPAL,
+            });
+            if (mig.migrated > 0) {
+              const { data: u } = await supabase.auth.getUser();
+              const uname = u.user?.user_metadata?.full_name || u.user?.email || 'Sistema';
+              const migRow = deepSanitizeForPostgresInsert({
+                case_id: caseId,
+                type: 'sgde_migrate',
+                description: `Migrados ${mig.migrated} PDF desde SGDE (origen ${originDigits}).`,
+                user_id: u.user?.id ?? null,
+                user_name: String(uname),
+                metadata: {
+                  origin_radicado: originDigits,
+                  sgde_root_id: mig.sgdeRootId,
+                  migrated: mig.migrated,
+                  failed: mig.failed,
+                },
+              });
+              const { error: migActErr } = await supabase.from('case_actions').insert(migRow);
+              if (migActErr) console.error('Actuación migración SGDE:', migActErr);
+            }
+            if (mig.failed > 0) {
+              console.warn('SGDE migrate partial failures:', mig.errors);
+            }
+          } catch (migErr) {
+            console.error('Migración SGDE tras radicación:', migErr);
+          }
+        }
       }
 
       if (repartoMode === 'alternating') {
@@ -1006,19 +1140,28 @@ export default function NewCase() {
             setError(null);
           }}
           originFields={
-            <NewCaseOriginFlowFields
-              caseFlowType={caseFlowType}
-              originCourt={originCourt}
-              setOriginCourt={setOriginCourt}
-              originRadicado={originRadicado}
-              setOriginRadicado={setOriginRadicado}
-              appellantSel={appellantSel}
-              setAppellantSel={setAppellantSel}
-              originRulingSel={originRulingSel}
-              setOriginRulingSel={setOriginRulingSel}
-              conductDescription={conductDescription}
-              setConductDescription={setConductDescription}
-            />
+            <>
+              <NewCaseOriginFlowFields
+                caseFlowType={caseFlowType}
+                originCourt={originCourt}
+                setOriginCourt={setOriginCourt}
+                originRadicado={originRadicado}
+                setOriginRadicado={setOriginRadicado}
+                appellantSel={appellantSel}
+                setAppellantSel={setAppellantSel}
+                originRulingSel={originRulingSel}
+                setOriginRulingSel={setOriginRulingSel}
+                conductDescription={conductDescription}
+                setConductDescription={setConductDescription}
+              />
+              {caseFlowType === 'tutela_segunda' ? (
+                <CaseSgdeSegundaPreflightPanel
+                  originRadicado={originRadicado}
+                  sgdeNodeIdHint={sgdeNodeIdHint}
+                  onPreflightChange={setSgdePreflight}
+                />
+              ) : null}
+            </>
           }
           file={file}
           onFileInputChange={handleFileChange}
@@ -1098,6 +1241,21 @@ export default function NewCase() {
               conductDescription={conductDescription}
               setConductDescription={setConductDescription}
             />
+
+            {segundaPrefillNote ? (
+              <p className="rounded-xl border border-violet-100 bg-violet-50/60 px-4 py-2.5 text-xs font-medium text-violet-900">
+                {segundaPrefillNote}
+              </p>
+            ) : null}
+
+            {caseFlowType === 'tutela_segunda' ? (
+              <CaseSgdeSegundaPreflightPanel
+                originRadicado={originRadicado}
+                sgdeNodeIdHint={sgdeNodeIdHint}
+                disabled={isRadicating}
+                onPreflightChange={setSgdePreflight}
+              />
+            ) : null}
 
             <CaseRadicacionConsecutivePanel
               consecutive={consecutive}

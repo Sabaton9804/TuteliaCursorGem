@@ -1,3 +1,7 @@
+/**
+ * Incidente de desacato: registro en expediente madre (`incident_desacato`), sin radicado hijo.
+ * @see docs/incidente-desacato-modelo-expediente.md
+ */
 import React, { useCallback, useEffect, useState } from 'react';
 import { format, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';

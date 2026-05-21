@@ -10,6 +10,9 @@ import Team from './pages/Team';
 import Tasks from './pages/Tasks';
 import Estadisticas from './pages/Estadisticas';
 import BibliotecaPrecedentes from './pages/BibliotecaPrecedentes';
+import SgdeSync from './pages/SgdeSync';
+import Correo from './pages/Correo';
+import CorreoPendientes from './pages/CorreoPendientes';
 
 const Plantillas = lazy(() => import('./pages/Plantillas'));
 
@@ -41,6 +44,9 @@ export default function App() {
           />
           <Route path="/settings" element={<Settings />} />
           <Route path="/equipo" element={<Team />} />
+          <Route path="/sgde" element={<SgdeSync />} />
+          <Route path="/correo" element={<Correo />} />
+          <Route path="/correo/pendientes" element={<CorreoPendientes />} />
         </Routes>
       </Shell>
     </Router>
