@@ -3,7 +3,9 @@ export const COURT_CONSTANTS = {
   ENTITY_CODE: '31',   // Juzgado del Circuito
   SPECIALTY_CODE: '03', // Civil
   DESPACHO_CODE: '051',
-  INSTANCE_CODE: '00',  // Primera instancia
+  /** Código instancia en CUI (2 últimos dígitos). Primera = 00, segunda = 01. */
+  INSTANCE_CODE: '00',
+  INSTANCE_CODE_SEGUNDA: '01',
   NAME: 'Juzgado 051 Civil del Circuito de Bogotá D.C.'
 };
 

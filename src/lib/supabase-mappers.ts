@@ -48,6 +48,10 @@ export function rowToCase(row: Record<string, unknown>): Case {
       ? String(row.deadline_override_note)
       : undefined,
     sgdeId: row.sgde_id ? String(row.sgde_id) : undefined,
+    sgdeLinkedAt: row.sgde_linked_at ? ts(row.sgde_linked_at) : undefined,
+    sgdeSyncStatus: row.sgde_sync_status
+      ? (String(row.sgde_sync_status) as Case['sgdeSyncStatus'])
+      : undefined,
     sourceChannel: row.source_channel ? String(row.source_channel) : undefined,
     summary: row.summary ? String(row.summary) : undefined,
     claimantId: row.claimant_id ? String(row.claimant_id) : undefined,
@@ -107,6 +111,10 @@ export function rowToCaseDoc(row: Record<string, unknown>, caseId: string): Docu
     storagePath: row.storage_path ? String(row.storage_path) : undefined,
     hash: row.hash ? String(row.hash) : '',
     sgdeId: row.sgde_id ? String(row.sgde_id) : undefined,
+    sgdeFolderPath: row.sgde_folder_path ? String(row.sgde_folder_path) : undefined,
+    sgdeSyncStatus: row.sgde_sync_status
+      ? (String(row.sgde_sync_status) as Document['sgdeSyncStatus'])
+      : undefined,
     createdAt: typeof row.created_at === 'string' ? row.created_at : String(row.created_at ?? ''),
     content: row.content ? String(row.content) : undefined,
     contentType: row.content_type ? String(row.content_type) : undefined,

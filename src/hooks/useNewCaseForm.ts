@@ -34,6 +34,10 @@ export function validateCaseOriginForRadicate(
   if (flow === 'tutela_segunda') {
     if (!court) return 'Indique el juzgado de origen.';
     if (!rad) return 'Indique el radicado de origen.';
+    const digits = rad.replace(/\D/g, '');
+    if (digits.length !== 23) {
+      return 'El radicado de origen debe tener 23 dígitos (CUI de primera instancia).';
+    }
     if (appellant !== 'accionante' && appellant !== 'accionado') {
       return 'Seleccione quién impugna: Accionante o Accionado.';
     }

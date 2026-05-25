@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { Eye, Download, Upload, Loader2, AlertCircle, FolderPlus, X } from 'lucide-react';
+import { Eye, Download, Upload, Loader2, AlertCircle, FolderPlus, X, PenLine } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { supabase } from '../../lib/supabase';
@@ -14,10 +14,23 @@ import {
 import type { Document } from '../../types';
 import {
   DEFAULT_NOTEBOOK_CODE,
+  INSTANCIA_LABELS,
   NOTEBOOK_META,
   NOTEBOOK_PI_C01_PRINCIPAL,
+  NOTEBOOK_SI_C01_PRINCIPAL,
+  instanciaForNotebook,
+  notebookCodeForCaseType,
   normalizeNotebookCode,
+  type ExpedienteInstanciaCode,
 } from '../../lib/expediente-notebook';
+import {
+  DOCUMENT_SGDE_SYNC_LABELS,
+  DOCUMENT_SGDE_SYNC_STYLES,
+  documentSgdeSyncStatus,
+} from '../../lib/expediente-sgde-sync';
+import { ExpedienteSgdeBar } from './ExpedienteSgdeBar';
+import { ExpedienteSignSgdeDialog } from './ExpedienteSignSgdeDialog';
+import type { Case } from '../../types';
 import { sanitizeExpedienteFilenameForDisplay } from '../../lib/sanitize-expediente-filename';
 import { caseDocumentRawLabel } from '../../lib/case-document-display-name';
 
@@ -121,17 +134,26 @@ function maxSortOrder(docs: Document[], code: string): number {
 
 function buildNotebookSections(
   extra: ExpedienteCuadernoExtra[],
-  docs: Document[]
+  docs: Document[],
+  caseType?: Case['caseType']
 ): ExpedienteCuadernoExtra[] {
-  const c01 = NOTEBOOK_PI_C01_PRINCIPAL;
+  const primary =
+    caseType === 'tutela_segunda' ? NOTEBOOK_SI_C01_PRINCIPAL : NOTEBOOK_PI_C01_PRINCIPAL;
   const out: ExpedienteCuadernoExtra[] = [
-    { code: c01, label: NOTEBOOK_META[c01].label },
+    { code: primary, label: NOTEBOOK_META[primary].label },
   ];
-  const seen = new Set<string>([c01]);
+  const seen = new Set<string>([primary]);
+  if (caseType === 'tutela_segunda') {
+    const pi = NOTEBOOK_PI_C01_PRINCIPAL;
+    if (!seen.has(pi)) {
+      seen.add(pi);
+      out.push({ code: pi, label: 'Expediente de origen (1ª instancia)' });
+    }
+  }
 
   for (const e of extra) {
     const code = (e.code || '').trim();
-    if (!code || seen.has(code) || code === c01) continue;
+    if (!code || seen.has(code) || code === primary) continue;
     seen.add(code);
     out.push({ code, label: (e.label || '').trim() || code });
   }
@@ -139,7 +161,7 @@ function buildNotebookSections(
   const fromDocs = new Set<string>();
   for (const d of docs) {
     const c = normalizeNotebookCode(d.notebookCode);
-    if (c !== c01) fromDocs.add(c);
+    if (c !== primary) fromDocs.add(c);
   }
   for (const code of [...fromDocs].sort()) {
     if (seen.has(code)) continue;
@@ -160,6 +182,7 @@ async function signedDownloadUrl(storagePath: string): Promise<string | null> {
 
 type Props = {
   caseId: string;
+  caseItem: Case;
   extraNotebooks: ExpedienteCuadernoExtra[];
   onRefetchCase: () => void | Promise<void>;
   docs: Document[];
@@ -168,8 +191,25 @@ type Props = {
   onRefetchDocs: () => void | Promise<void>;
 };
 
+function groupSectionsByInstancia(
+  sections: ExpedienteCuadernoExtra[]
+): { instancia: ExpedienteInstanciaCode; notebooks: ExpedienteCuadernoExtra[] }[] {
+  const order: ExpedienteInstanciaCode[] = ['PI', 'SI'];
+  const buckets = new Map<ExpedienteInstanciaCode, ExpedienteCuadernoExtra[]>();
+  for (const nb of sections) {
+    const inst = instanciaForNotebook(nb.code);
+    const list = buckets.get(inst) || [];
+    list.push(nb);
+    buckets.set(inst, list);
+  }
+  return order
+    .filter((i) => (buckets.get(i)?.length ?? 0) > 0)
+    .map((instancia) => ({ instancia, notebooks: buckets.get(instancia)! }));
+}
+
 export function ExpedienteDigitalPanel({
   caseId,
+  caseItem,
   extraNotebooks,
   onRefetchCase,
   docs,
@@ -177,15 +217,37 @@ export function ExpedienteDigitalPanel({
   onSelectDoc,
   onRefetchDocs,
 }: Props) {
+  const defaultNb = notebookCodeForCaseType(caseItem.caseType);
+  const [selectedNb, setSelectedNb] = useState(defaultNb);
   const [uploadingNb, setUploadingNb] = useState<string | null>(null);
   const [uploadErr, setUploadErr] = useState<string | null>(null);
   const [addingNb, setAddingNb] = useState(false);
   const [addCuadernoOpen, setAddCuadernoOpen] = useState(false);
   const [newCuadernoLabel, setNewCuadernoLabel] = useState('');
+  const [signDoc, setSignDoc] = useState<Document | null>(null);
   const pickNbRef = useRef(DEFAULT_NOTEBOOK_CODE);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const sections = useMemo(() => buildNotebookSections(extraNotebooks, docs), [extraNotebooks, docs]);
+  const canSignInSgde = (doc: Document): boolean => {
+    if (!doc.sgdeId?.trim()) return false;
+    const nm = (doc.name || '').toLowerCase();
+    const ct = (doc.contentType || '').toLowerCase();
+    return nm.endsWith('.pdf') || ct.includes('pdf');
+  };
+
+  const sections = useMemo(
+    () => buildNotebookSections(extraNotebooks, docs, caseItem.caseType),
+    [extraNotebooks, docs, caseItem.caseType]
+  );
+  const instanciaGroups = useMemo(() => groupSectionsByInstancia(sections), [sections]);
+
+  const activeNb =
+    sections.find((s) => s.code === selectedNb) ??
+    sections.find((s) => s.code === defaultNb) ??
+    sections[0];
+  const activeCode = activeNb?.code ?? defaultNb;
+  const activeList = useMemo(() => filterByNotebook(docs, activeCode), [docs, activeCode]);
+  const activeMeta = NOTEBOOK_META[activeCode];
 
   const openFilePicker = (notebookCode: string) => {
     pickNbRef.current = notebookCode;
@@ -363,6 +425,10 @@ export function ExpedienteDigitalPanel({
     const ext = typeChipForDoc(doc, rawFileLabel(doc) || displayName);
     const sel = selectedDoc?.id === doc.id;
     const badge = badgeFor(doc);
+    const sgdeSync = documentSgdeSyncStatus(doc);
+    const sgdeSyncStyle = DOCUMENT_SGDE_SYNC_STYLES[sgdeSync];
+    const sgdeSyncLabel = DOCUMENT_SGDE_SYNC_LABELS[sgdeSync];
+    const showSgdeChip = Boolean(caseItem.sgdeId?.trim()) || sgdeSync !== 'none';
     const created = doc.createdAt ? format(new Date(doc.createdAt), 'd MMM', { locale: es }) : '—';
     const canDownload = Boolean(doc.storagePath?.trim()) && !doc.ingestError;
     const ordenReparto =
@@ -396,9 +462,18 @@ export function ExpedienteDigitalPanel({
             <span className={`shrink-0 rounded-full px-2 py-0.5 text-[8px] font-bold uppercase tracking-wide ${badge.className}`}>
               {badge.text}
             </span>
+            {showSgdeChip ? (
+              <span
+                className={`shrink-0 rounded-full px-2 py-0.5 text-[8px] font-bold uppercase tracking-wide ${sgdeSyncStyle}`}
+                title={doc.sgdeFolderPath || undefined}
+              >
+                {sgdeSyncLabel}
+              </span>
+            ) : null}
           </div>
           <p className="mt-0.5 text-[10px] text-slate-400">
             {created} · {formatBytes(doc.size)} · orden reparto {ordenReparto}
+            {doc.sgdeFolderPath ? ` · ${doc.sgdeFolderPath}` : ''}
           </p>
           {doc.ingestError ? (
             <p className="mt-0.5 text-[10px] text-amber-700">{doc.ingestError}</p>
@@ -406,6 +481,19 @@ export function ExpedienteDigitalPanel({
         </div>
         <span className="hidden shrink-0 text-[10px] text-slate-400 sm:inline">nº lista {listIndex + 1}</span>
         <div className="flex shrink-0 items-center gap-1">
+          {canSignInSgde(doc) ? (
+            <button
+              type="button"
+              title="Firmar en SGDE (expediente Rama)"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSignDoc(doc);
+              }}
+              className="rounded-full p-1.5 text-violet-600 hover:bg-violet-50 hover:text-violet-800"
+            >
+              <PenLine className="h-4 w-4" />
+            </button>
+          ) : null}
           <button
             type="button"
             title="Ver en el visor"
@@ -431,25 +519,59 @@ export function ExpedienteDigitalPanel({
     );
   };
 
-  const renderNotebookBlock = (nb: ExpedienteCuadernoExtra) => {
-    const list = filterByNotebook(docs, nb.code);
-    return (
-      <div key={nb.code} className="rounded-lg border border-slate-200 bg-slate-50/40 p-3">
-        <h4 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{nb.label}</h4>
-        <div className="mt-2 space-y-2">
-          {list.length === 0 ? (
-            <p className="py-4 text-center text-[11px] text-slate-400">Sin piezas en este cuaderno aún.</p>
-          ) : (
-            list.map((d, i) => renderRow(d, i))
-          )}
+  const renderCuadernoNav = () => (
+    <nav className="flex w-full shrink-0 flex-col gap-3 sm:w-52 lg:w-56" aria-label="Cuadernos del expediente">
+      {instanciaGroups.map(({ instancia, notebooks }) => (
+        <div key={instancia}>
+          <p className="mb-1.5 px-1 text-[9px] font-bold uppercase tracking-widest text-slate-400">
+            {INSTANCIA_LABELS[instancia]}
+          </p>
+          <ul className="space-y-1">
+            {notebooks.map((nb) => {
+              const count = filterByNotebook(docs, nb.code).length;
+              const sel = nb.code === activeCode;
+              const meta = NOTEBOOK_META[nb.code];
+              return (
+                <li key={nb.code}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedNb(nb.code)}
+                    className={`w-full rounded-lg border px-3 py-2.5 text-left transition ${
+                      sel
+                        ? 'border-emerald-200 bg-emerald-50/90 shadow-sm'
+                        : 'border-transparent bg-white/60 hover:border-slate-200 hover:bg-white'
+                    }`}
+                  >
+                    <span className="block text-xs font-semibold text-slate-800">{nb.label}</span>
+                    {meta?.subtitle ? (
+                      <span className="mt-0.5 block text-[10px] leading-snug text-slate-500">{meta.subtitle}</span>
+                    ) : null}
+                    <span className="mt-1 inline-block text-[10px] font-medium tabular-nums text-slate-400">
+                      {count} pieza{count === 1 ? '' : 's'}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         </div>
-        {renderDropZone(nb)}
-      </div>
-    );
-  };
+      ))}
+    </nav>
+  );
 
   return (
-    <div id="panel-documentos" className="scroll-mt-24">
+    <div id="panel-documentos" className="scroll-mt-24 space-y-4">
+      <ExpedienteSignSgdeDialog
+        open={Boolean(signDoc)}
+        caseId={caseId}
+        doc={signDoc}
+        onClose={() => setSignDoc(null)}
+        onSigned={() => {
+          void onRefetchDocs();
+          void onRefetchCase();
+        }}
+      />
+      <ExpedienteSgdeBar caseId={caseId} caseItem={caseItem} docs={docs} onRefetchCase={onRefetchCase} />
       <input
         ref={fileInputRef}
         type="file"
@@ -459,16 +581,18 @@ export function ExpedienteDigitalPanel({
         onChange={(e) => void handleFiles(e.target.files)}
       />
 
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+        {renderCuadernoNav()}
+        <div className="min-w-0 flex-1">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Documentos del expediente</h3>
-        <span className="text-[10px] text-slate-400">{docs.length} piezas indexadas</span>
+        <div>
+          <h3 className="text-sm font-semibold text-slate-800">{activeNb?.label ?? 'Cuaderno'}</h3>
+          {activeMeta?.subtitle ? (
+            <p className="text-[11px] text-slate-500">{activeMeta.subtitle}</p>
+          ) : null}
+        </div>
+        <span className="text-[10px] text-slate-400">{activeList.length} en este cuaderno · {docs.length} total</span>
       </div>
-
-      <p className="mb-3 text-[11px] leading-relaxed text-slate-500">
-        En pantalla se muestra un <span className="font-semibold text-slate-600">título sanitizado</span> a partir del nombre
-        índice del documento (el mismo que en radicación o al subir); la ruta en almacenamiento es técnica. Los cuadernos de
-        incidente los abre usted con el botón de abajo.
-      </p>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <button
@@ -573,10 +697,16 @@ export function ExpedienteDigitalPanel({
         </div>
       ) : null}
 
-      <div className="space-y-4">
-        <div>
-          <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Primera instancia</h4>
-          <div className="space-y-3">{sections.map((nb) => renderNotebookBlock(nb))}</div>
+      <div className="space-y-2">
+        {activeList.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-slate-200 py-10 text-center text-[11px] text-slate-400">
+            Sin piezas en este cuaderno. Arrastre archivos abajo o impórtelos desde SGDE.
+          </p>
+        ) : (
+          activeList.map((d, i) => renderRow(d, i))
+        )}
+      </div>
+      {activeNb ? renderDropZone(activeNb) : null}
         </div>
       </div>
     </div>

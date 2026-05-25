@@ -151,9 +151,9 @@ export function CaseSgdeSegundaPreflightPanel({
           ) : null}
           {result.status === 'solo_compartidos' ? (
             <p className="text-[11px] leading-relaxed opacity-90">
-              Usted ya lo ve en la grilla de compartidos; el conector de Tutelia no enlazó ese registro automáticamente.
-              Haga clic en el CUI en SGDE → F12 → Red → copie el UUID de <span className="font-mono text-[10px]">nodes/…</span>{' '}
-              → péguelo abajo → Actualizar.
+              Si en SGDE ya ve el CUI en Mis compartidos → Con el despacho, pulse Actualizar (Tutelia consulta la misma
+              API del portal). Si el correo de reparto trae enlace a SGDE, no necesita copiar nada manualmente. Solo si
+              sigue sin enlazar: abra el expediente en SGDE, copie el enlace de la barra del navegador y péguelo abajo.
             </p>
           ) : (
             <>
@@ -197,14 +197,14 @@ export function CaseSgdeSegundaPreflightPanel({
 
       <div className="rounded-lg border border-violet-100 bg-white/80 px-3 py-2.5 space-y-1.5">
         <label className="text-[10px] font-bold uppercase tracking-widest text-violet-800">
-          ID nodo SGDE (opcional)
+          Enlace o ID SGDE (solo si Actualizar no enlazó)
         </label>
         <input
           type="text"
           value={manualNodeId}
           onChange={(e) => setManualNodeId(e.target.value)}
           disabled={disabled || loading}
-          placeholder="UUID al abrir el expediente en SGDE (carpeta raíz del CUI)"
+          placeholder="Pegue el enlace al abrir el CUI en SGDE, o el UUID si se lo indicó soporte"
           className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-mono text-slate-800 placeholder:text-slate-400 disabled:opacity-50"
         />
         {effectiveNodeHint ? (

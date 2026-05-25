@@ -49,24 +49,37 @@ export async function removeCaseDocumentObjectsAdmin(
   if (error) console.error('[storage] remove:', error.message);
 }
 
-function isMissingNotebookColumn(err: unknown): boolean {
+function isMissingColumn(err: unknown, column: string): boolean {
   const msg = String(err && typeof err === 'object' && 'message' in err ? (err as { message: string }).message : err);
-  return /notebook_code/i.test(msg) && (/schema cache/i.test(msg) || /could not find the/i.test(msg));
+  return new RegExp(column, 'i').test(msg) && (/schema cache/i.test(msg) || /could not find the/i.test(msg));
+}
+
+function stripOptionalDocColumns(
+  rows: Array<Record<string, unknown>>,
+  keys: string[]
+): Array<Record<string, unknown>> {
+  return rows.map((r) => {
+    const out = { ...r };
+    for (const k of keys) delete out[k];
+    return out;
+  });
 }
 
 export async function insertCaseDocumentRowsAdmin(
   admin: SupabaseClient,
   rows: Array<Record<string, unknown>>
 ) {
-  const first = await admin.from('case_documents').insert(rows);
-  if (first.error && isMissingNotebookColumn(first.error)) {
-    const stripped = rows.map((r) => {
-      const { notebook_code: _o, ...rest } = r;
-      return rest;
-    });
-    return admin.from('case_documents').insert(stripped);
+  const optionalKeys = ['notebook_code', 'sgde_id', 'sgde_folder_path', 'sgde_sync_status'];
+  let payload = rows;
+  let res = await admin.from('case_documents').insert(payload);
+  while (res.error) {
+    const missing = optionalKeys.find((k) => isMissingColumn(res.error, k));
+    if (!missing) break;
+    const idx = optionalKeys.indexOf(missing);
+    payload = stripOptionalDocColumns(rows, optionalKeys.slice(idx));
+    res = await admin.from('case_documents').insert(payload);
   }
-  return first;
+  return res;
 }
 
 export async function nextSortOrderForCase(

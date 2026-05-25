@@ -5,6 +5,7 @@ import {
   Gavel,
   LayoutDashboard,
   PlusCircle,
+  Scale,
   Settings,
   Search,
   FileStack,
@@ -32,7 +33,7 @@ type NavLinkItem = {
 
 const NAV_LINKS: NavLinkItem[] = [
   { name: 'Dashboard', path: '/', icon: LayoutDashboard },
-  { name: 'Nueva Tutela', path: '/new', icon: PlusCircle },
+  { name: 'Radicación', path: '/new', icon: PlusCircle },
   { name: 'Centro de trabajo', path: '/tasks', icon: ListTodo },
   { name: 'Estadísticas', path: '/estadisticas', icon: BarChart3 },
   { name: 'Biblioteca de precedentes', path: '/biblioteca-precedentes', icon: BookOpen },
@@ -96,6 +97,28 @@ export function AppSidebarNav({ sidebarCollapsed, urgentWorkflowCount, onNavigat
       </span>
     ) : null;
 
+  const renderProcesosPlaceholder = () => (
+    <div
+      key="procesos-placeholder"
+      title={sidebarCollapsed ? 'Procesos — Próximamente' : undefined}
+      aria-disabled="true"
+      className={`relative flex cursor-default select-none rounded-xl ${
+        sidebarCollapsed ? 'items-center justify-center px-2 py-3' : 'items-start gap-3 px-4 py-3'
+      }`}
+    >
+      <Scale
+        className={`w-4 h-4 shrink-0 text-slate-500 ${sidebarCollapsed ? '' : 'mt-0.5'}`}
+        aria-hidden
+      />
+      {!sidebarCollapsed && (
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-slate-400">Procesos</p>
+          <p className="text-[10px] font-medium tracking-wide text-slate-500/80">Próximamente</p>
+        </div>
+      )}
+    </div>
+  );
+
   const renderTutelasGroup = () => (
     <div key="tutelas-group" className="space-y-0.5">
       {sidebarCollapsed ? (
@@ -145,6 +168,7 @@ export function AppSidebarNav({ sidebarCollapsed, urgentWorkflowCount, onNavigat
     const item = NAV_LINKS[i];
     if (i === 2) {
       items.push(renderTutelasGroup());
+      items.push(renderProcesosPlaceholder());
     }
 
     const isActive = linkIsActive(location.pathname, item.path);

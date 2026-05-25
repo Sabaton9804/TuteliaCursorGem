@@ -557,6 +557,7 @@ export function CaseExpedienteDigitalPanel({
             ) : (
               <ExpedienteDigitalPanel
                 caseId={caseId}
+                caseItem={caseItem}
                 extraNotebooks={caseItem.expedienteCuadernosExtra ?? []}
                 onRefetchCase={onRefetchCase}
                 docs={docs}

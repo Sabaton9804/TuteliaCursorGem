@@ -6,6 +6,7 @@
 
 import axios, { type AxiosInstance } from 'axios';
 import https from 'node:https';
+import { encryptSgdePortalPassword } from './sgde-sign-crypto';
 import { formatSgdeConnectionError, isSgdeTlsInsecure } from './sgde-tls';
 
 const EXPEDIENTE_REGEX = /\d{23}/;
@@ -73,10 +74,39 @@ function b64(s: string): string {
 }
 
 function entryIsFolder(entry: Record<string, unknown>): boolean {
+  const nt = String(entry.nodeType || '').toLowerCase();
+  if (nt.includes('rama:documentos')) return false;
   if (entry.isFolder === true) return true;
   if (entry.isFile === true) return false;
-  const nt = String(entry.nodeType || '').toLowerCase();
+  if (nt.includes('rama:carpeta') || nt.includes('rama:expedientes') || nt.includes('rama:instancia')) {
+    return true;
+  }
   return nt.includes('cm:folder') || nt.endsWith(':folder') || nt.includes('folder');
+}
+
+function entryToPdfLeaf(ent: Record<string, unknown>, folderPath?: string): SgdePdfLeaf | null {
+  const nt = String(ent.nodeType || '').toLowerCase();
+  if (!nt.includes('rama:documentos') && !nt.includes('documentos')) {
+    const nm0 = String(ent.name || '').toLowerCase();
+    if (!nm0.endsWith('.pdf')) return null;
+  }
+  const nm = String(ent.name || '').trim();
+  if (!nm) return null;
+  const lower = nm.toLowerCase();
+  if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return null;
+  const id = String(ent.id || '').trim();
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+  const props = (ent.properties as Record<string, unknown> | undefined) || {};
+  const tipo = String(props['rama:tipoDocumental'] || '').trim();
+  const ordenRaw = props['rama:orden'] ?? props['rama:idDocumento'];
+  const orden = ordenRaw != null ? String(ordenRaw).trim() : '';
+  return {
+    id: id.toLowerCase(),
+    name: nm,
+    ...(tipo ? { tipoDocumental: tipo } : {}),
+    ...(orden ? { orden } : {}),
+    ...(folderPath ? { folderPath } : {}),
+  };
 }
 
 export class SgdeClient {
@@ -88,6 +118,8 @@ export class SgdeClient {
   private ticket = '';
   private user = '';
   private pwd = '';
+  /** Último nodeId resuelto vía Mis compartidos (Alfresco público suele devolver 401). */
+  private nodeFromCompartidos = false;
 
   constructor(baseUrl: string) {
     const base = baseUrl.replace(/\/$/, '');
@@ -275,280 +307,294 @@ export class SgdeClient {
     return m ? decodeURIComponent(m[1]) : '';
   }
 
-  /** Fila de grilla compartidos: expediente en columnas + nodeId en el mismo objeto. */
-  private findNodeIdInCompartidosPayload(data: unknown, radicado: string): string | null {
-    const uuidIn = (raw: unknown): string | null => {
-      const s = String(raw ?? '').trim();
-      const m = s.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-      return m ? m[0].toLowerCase() : null;
+  private jsonHeaders(): Record<string, string> {
+    const csrf = this.csrf();
+    return {
+      Accept: 'application/json',
+      ...(csrf ? { 'alf-csrftoken': csrf } : {}),
     };
-    const rowMatches = (o: Record<string, unknown>): boolean => {
-      const fields = [
-        o.expediente,
-        o.radicado,
-        o.numeroRadicado,
-        o.elementoCompartido,
-        o.nombre,
-        o.name,
-        o.titulo,
-        o.descripcion,
-      ];
-      return fields.some((v) => {
-        const t = String(v ?? '');
-        const digits = t.replace(/\D/g, '');
-        return digits === radicado || t.includes(radicado);
-      });
-    };
-    const idFromRow = (o: Record<string, unknown>): string | null => {
-      for (const key of [
-        'nodeId',
-        'id',
-        'uuid',
-        'nodeRef',
-        'idNodo',
-        'idExpediente',
-        'idDocumento',
-        'idElemento',
-        'ref',
-      ]) {
-        const u = uuidIn(o[key]);
-        if (u) return u;
-      }
-      return null;
-    };
-
-    const walk = (obj: unknown, depth: number): string | null => {
-      if (depth > 18 || obj == null) return null;
-      if (Array.isArray(obj)) {
-        for (const item of obj) {
-          const nid = walk(item, depth + 1);
-          if (nid) return nid;
-        }
-        return null;
-      }
-      if (typeof obj !== 'object') return null;
-      const o = obj as Record<string, unknown>;
-      if (rowMatches(o)) {
-        const nid = idFromRow(o);
-        if (nid) return nid;
-      }
-      for (const v of Object.values(o)) {
-        const nid = walk(v, depth + 1);
-        if (nid) return nid;
-      }
-      return null;
-    };
-    return walk(data, 0);
   }
 
-  private extractNodeIdFromBackendPayload(data: unknown, radicado: string): string | null {
-    const walk = (obj: unknown, depth: number): string | null => {
-      if (depth > 10 || obj == null) return null;
-      if (Array.isArray(obj)) {
-        for (const x of obj) {
-          const nid = walk(x, depth + 1);
-          if (nid) return nid;
-        }
-        return null;
-      }
-      if (typeof obj !== 'object') return null;
-      const o = obj as Record<string, unknown>;
-      const radicadoFields = [o.radicado, o.numeroRadicado, o.expediente, o.name, o.nombre, o.cm_name]
-        .map((v) => String(v ?? ''))
-        .filter(Boolean);
-      const mentionsRad =
-        radicadoFields.length > 0 &&
-        radicadoFields.some((f) => f.replace(/\D/g, '').includes(radicado));
-      for (const key of ['nodeId', 'id', 'uuid', 'nodeRef']) {
-        const raw = String(o[key] ?? '').trim();
-        const uuid = raw.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0];
-        if (uuid && (!radicadoFields.length || mentionsRad)) return uuid;
-      }
-      for (const v of Object.values(o)) {
-        const nid = walk(v, depth + 1);
-        if (nid) return nid;
-      }
-      return null;
-    };
-    return walk(data, 0);
+  private ticketAuthHeader(): string | null {
+    if (!this.ticket) return null;
+    const inner = this.ticket.startsWith('TICKET_')
+      ? `ROLE_TICKET:${this.ticket}`
+      : this.ticket;
+    return `Basic ${b64(inner)}`;
   }
 
-  /** Expedientes compartidos «Con el despacho» (no aparecen en la grilla principal). */
+  /** Restaura Authorization previa tras un request con alf_ticket. */
+  private async withTicketAlfrescoAuth<T>(fn: () => Promise<T>): Promise<T> {
+    const prev = this.axios.defaults.headers.common.Authorization;
+    const ticketHdr = this.ticketAuthHeader();
+    if (ticketHdr) this.axios.defaults.headers.common.Authorization = ticketHdr;
+    try {
+      return await fn();
+    } finally {
+      if (ticketHdr) {
+        if (prev) this.axios.defaults.headers.common.Authorization = prev;
+        else delete this.axios.defaults.headers.common.Authorization;
+      }
+    }
+  }
+
+  /**
+   * GET /backendrama/getNode/{uuid}?alf_ticket=… — mismo proxy que SGDE en compartidos (flag=true).
+   */
+  async getNodeViaBackend(
+    nodeId: string,
+    include = 'path,properties,permissions,allowableOperations'
+  ): Promise<Record<string, unknown> | null> {
+    if (!this.ticket) await this.fetchTicketFallback();
+    const params: Record<string, string> = { include };
+    if (this.ticket) params.alf_ticket = this.ticket;
+    const r = await this.axios.get(`${this.back}/getNode/${encodeURIComponent(nodeId)}`, {
+      params,
+      headers: this.jsonHeaders(),
+    });
+    if (r.status < 200 || r.status >= 300) {
+      console.warn(`[sgde] getNode backend HTTP ${r.status} ${nodeId.slice(0, 8)}…`);
+      return null;
+    }
+    const ent = (r.data as { entry?: Record<string, unknown> })?.entry;
+    return ent && typeof ent === 'object' ? ent : null;
+  }
+
+  /** Indica si el último nodeId vino de Mis compartidos. */
+  wasLastNodeFromCompartidos(): boolean {
+    return this.nodeFromCompartidos;
+  }
+
+  private limpiarIdGrupoOfpr(groupId: string): string {
+    return groupId.replace(/^GROUP_(?:OFPR\s+)?/i, '').trim();
+  }
+
+  private radicadosCoinciden(a: string, b: string): boolean {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    return a.includes(b) || b.includes(a);
+  }
+
+  private collectGroupIdsFromPayload(data: unknown): string[] {
+    const out: string[] = [];
+    const walk = (obj: unknown, depth: number): void => {
+      if (depth > 12 || obj == null) return;
+      if (Array.isArray(obj)) {
+        for (const x of obj) walk(x, depth + 1);
+        return;
+      }
+      if (typeof obj !== 'object') return;
+      const o = obj as Record<string, unknown>;
+      for (const key of ['id', 'authorityId', 'name', 'groupId', 'shortName']) {
+        const v = String(o[key] ?? '').trim();
+        if (v.includes('GROUP_')) out.push(v);
+      }
+      for (const v of Object.values(o)) walk(v, depth + 1);
+    };
+    walk(data, 0);
+    return out;
+  }
+
+  /** Usuario + grupos OFPR, igual que la pantalla Mis compartidos del portal SGDE. */
+  private async fetchMyCompartidosContext(): Promise<{
+    usuarios: string[];
+    despachoEmisor: string[];
+  }> {
+    const usuarios = new Set<string>();
+    if (this.user) usuarios.add(this.user);
+
+    const csrf = this.csrf();
+    const hdrs: Record<string, string> = {
+      Accept: 'application/json',
+      ...(csrf ? { 'alf-csrftoken': csrf } : {}),
+    };
+
+    const peoplePaths = [
+      `${this.alf}/alfresco/versions/1/people/-me-/groups`,
+      this.user
+        ? `${this.alf}/alfresco/versions/1/people/${encodeURIComponent(this.user)}/groups`
+        : null,
+    ].filter(Boolean) as string[];
+
+    for (const url of peoplePaths) {
+      try {
+        const r = await this.axios.get(url, {
+          headers: hdrs,
+          params: { include: 'description' },
+        });
+        if (r.status >= 200 && r.status < 300 && r.data) {
+          const entries = (r.data as { list?: { entries?: unknown[] } })?.list?.entries || [];
+          for (const row of entries) {
+            const ent =
+              row && typeof row === 'object' && 'entry' in row
+                ? (row as { entry: { id?: string } }).entry
+                : (row as { id?: string });
+            const id = String(ent?.id || '').trim();
+            if (id.includes('GROUP_OFPR')) usuarios.add(id);
+          }
+        }
+      } catch {
+        /* siguiente */
+      }
+    }
+
+    if (this.user) {
+      try {
+        const r = await this.axios.get(`${this.back}/grupos/peopleGroupsList`, {
+          headers: hdrs,
+          params: { username: this.user },
+        });
+        if (r.status >= 200 && r.status < 300 && r.data) {
+          for (const id of this.collectGroupIdsFromPayload(r.data)) {
+            if (id.includes('GROUP_OFPR')) usuarios.add(id);
+          }
+        }
+      } catch {
+        /* sin grupos backend */
+      }
+    }
+
+    const despachoEmisor = [...usuarios]
+      .filter((u) => u.startsWith('GROUP_'))
+      .map((u) => this.limpiarIdGrupoOfpr(u))
+      .filter(Boolean);
+
+    console.info(
+      `[sgde] Compartidos: usuario=${this.user || '?'} grupos=${usuarios.size} despachos=${despachoEmisor.length}`
+    );
+
+    return { usuarios: [...usuarios], despachoEmisor };
+  }
+
+  private extractUuidFromCompartirRow(row: unknown, radicado: string): string | null {
+    if (!row || typeof row !== 'object') return null;
+    const o = row as Record<string, unknown>;
+    const comp = (
+      o.compartir && typeof o.compartir === 'object' ? o.compartir : o
+    ) as Record<string, unknown>;
+    const expDigits = String(
+      comp.expediente ?? o.expediente ?? comp.nombre ?? o.nombre ?? ''
+    ).replace(/\D/g, '');
+    if (expDigits && !this.radicadosCoinciden(expDigits, radicado)) return null;
+    const uuid = String(comp.uuid ?? comp.nodeId ?? o.uuid ?? o.nodeId ?? '').trim();
+    return /^[0-9a-f-]{36}$/i.test(uuid) ? uuid.toLowerCase() : null;
+  }
+
+  /**
+   * Misma API que SGDE → Mis compartidos (pestañas Con el despacho / Por el despacho).
+   * POST /backendrama/interno/compartirUnificado
+   */
+  private async compartirUnificadoBuscarPages(
+    radicado: string,
+    modo: 'conDespacho' | 'porDespacho',
+    ctx: { usuarios: string[]; despachoEmisor: string[] },
+    expedienteFiltro: string,
+    maxPages: number
+  ): Promise<string | null> {
+    const pageSize = 50;
+    const csrf = this.csrf();
+    const postHdrs: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      ...(csrf ? { 'alf-csrftoken': csrf } : {}),
+    };
+
+    for (let page = 0; page < maxPages; page++) {
+      const body: Record<string, unknown> =
+        modo === 'conDespacho'
+          ? {
+              expediente: expedienteFiltro,
+              usuarios: ctx.usuarios,
+              despachos: null,
+              usuarioBusquedaLibre: null,
+              fechaInicio: null,
+              fechaFin: null,
+              page,
+              size: pageSize,
+              sortBy: 'fechaCompartir',
+              asc: false,
+            }
+          : {
+              expediente: expedienteFiltro,
+              usuarioBusquedaLibre: null,
+              fechaInicio: null,
+              fechaFin: null,
+              page,
+              size: pageSize,
+              sortBy: 'fechaCompartir',
+              asc: false,
+              despachoEmisor: ctx.despachoEmisor,
+            };
+
+      try {
+        const r = await this.axios.post(`${this.back}/interno/compartirUnificado`, body, {
+          headers: postHdrs,
+        });
+        if (r.status < 200 || r.status >= 300 || r.data == null) {
+          console.warn(
+            `[sgde] compartirUnificado ${modo} HTTP ${r.status} p=${page} filtro="${expedienteFiltro || '*'}"`
+          );
+          break;
+        }
+
+        const data = r.data as { content?: unknown[]; totalElements?: number };
+        const content = Array.isArray(data.content) ? data.content : [];
+        for (const row of content) {
+          const nid = this.extractUuidFromCompartirRow(row, radicado);
+          if (nid) {
+            console.info(
+              `[sgde] Expediente ${radicado} en compartidos (${modo}) p=${page} filtro="${expedienteFiltro || 'lista'}"`
+            );
+            return nid;
+          }
+        }
+        if (content.length < pageSize) break;
+        const total = data.totalElements;
+        if (typeof total === 'number' && (page + 1) * pageSize >= total) break;
+      } catch (e) {
+        console.warn(`[sgde] compartirUnificado ${modo} error p=${page}:`, e);
+        break;
+      }
+    }
+    return null;
+  }
+
+  private async compartirUnificadoBuscar(
+    radicado: string,
+    modo: 'conDespacho' | 'porDespacho',
+    ctx: { usuarios: string[]; despachoEmisor: string[] }
+  ): Promise<string | null> {
+    if (modo === 'conDespacho' && !ctx.usuarios.length) return null;
+    if (modo === 'porDespacho' && !ctx.despachoEmisor.length) return null;
+
+    const filtros = [radicado, radicado.slice(0, 21), ''];
+    const seen = new Set<string>();
+    for (const filtro of filtros) {
+      if (seen.has(filtro)) continue;
+      seen.add(filtro);
+      const maxPages = filtro === '' ? 12 : 4;
+      const nid = await this.compartirUnificadoBuscarPages(radicado, modo, ctx, filtro, maxPages);
+      if (nid) return nid;
+    }
+    return null;
+  }
+
+  /** Expedientes en Mis compartidos (no aparecen en la grilla principal ni en Alfresco por CUI). */
   async buscarExpedienteEnCompartidos(radicadoRaw: string): Promise<string | null> {
     const radicado = radicadoRaw.replace(/\D/g, '');
     if (!EXPEDIENTE_REGEX.test(radicado)) return null;
 
-    const paths = [
-      `/expedientes/compartidos/buscar?radicado=${encodeURIComponent(radicado)}`,
-      `/expedientes/compartidos?radicado=${encodeURIComponent(radicado)}`,
-      `/compartidos/expedientes?radicado=${encodeURIComponent(radicado)}`,
-      `/compartidos/buscar?radicado=${encodeURIComponent(radicado)}`,
-      `/expedientes/buscarCompartidos?radicado=${encodeURIComponent(radicado)}`,
-      `/expedientes/buscar-compartidos?radicado=${encodeURIComponent(radicado)}`,
-      `/expedientes/misCompartidos?radicado=${encodeURIComponent(radicado)}`,
-      `/expedientes/mis-compartidos?radicado=${encodeURIComponent(radicado)}`,
-      `/expedientes/compartido/${encodeURIComponent(radicado)}`,
-      `/compartidos?radicado=${encodeURIComponent(radicado)}`,
-    ];
-
-    for (const path of paths) {
-      try {
-        const r = await this.axios.get(`${this.back}${path}`);
-        if (r.status < 200 || r.status >= 300 || r.data == null) continue;
-        const nid =
-          this.findNodeIdInCompartidosPayload(r.data, radicado) ||
-          this.extractNodeIdFromBackendPayload(r.data, radicado);
-        if (nid) {
-          console.info(`[sgde] Expediente ${radicado} en compartidos vía ${path}`);
-          return nid;
-        }
-      } catch {
-        /* siguiente endpoint */
-      }
-    }
-
-    const postBodies: Record<string, unknown>[] = [
-      { radicado, expediente: radicado, numeroRadicado: radicado },
-      { radicado, tipo: 'CON_DESPACHO' },
-      { radicado, tab: 'conElDespacho' },
-      { filtro: { expediente: radicado } },
-    ];
-    const postPaths = [
-      '/expedientes/compartidos/buscar',
-      '/expedientes/misCompartidos/buscar',
-      '/compartidos/expedientes/buscar',
-      '/expedientes/compartidos/listar',
-    ];
-    for (const path of postPaths) {
-      for (const body of postBodies) {
-        try {
-          const r = await this.axios.post(`${this.back}${path}`, body);
-          if (r.status < 200 || r.status >= 300 || r.data == null) continue;
-          const nid =
-            this.findNodeIdInCompartidosPayload(r.data, radicado) ||
-            this.extractNodeIdFromBackendPayload(r.data, radicado);
-          if (nid) {
-            console.info(`[sgde] Expediente ${radicado} en compartidos vía POST ${path}`);
-            return nid;
-          }
-        } catch {
-          /* siguiente */
-        }
-      }
-    }
-
-    const paginated = await this.buscarExpedienteEnCompartidosPaginado(radicado);
-    if (paginated) return paginated;
-
-    return null;
-  }
-
-  /**
-   * Replica la grilla «Con el despacho»: listados paginados sin filtro de radicado en URL.
-   */
-  private async buscarExpedienteEnCompartidosPaginado(radicado: string): Promise<string | null> {
-    const pageSize = 50;
-    const maxPages = 30;
-
-    const attempts: Array<{
-      method: 'GET' | 'POST';
-      path: string;
-      body?: (page: number) => Record<string, unknown>;
-      params?: (page: number) => Record<string, string | number>;
-    }> = [
-      {
-        method: 'GET',
-        path: '/expedientes/compartidos/con-despacho',
-        params: (page) => ({ page, size: pageSize, expediente: radicado }),
-      },
-      {
-        method: 'GET',
-        path: '/expedientes/compartidos/conDespacho',
-        params: (page) => ({ page, size: pageSize, expediente: radicado }),
-      },
-      {
-        method: 'GET',
-        path: '/expedientes/compartidos',
-        params: (page) => ({
-          page,
-          size: pageSize,
-          tipo: 'CON_DESPACHO',
-          expediente: radicado,
-        }),
-      },
-      {
-        method: 'GET',
-        path: '/expedientes/misCompartidos',
-        params: (page) => ({ page, size: pageSize, tab: 'conElDespacho', expediente: radicado }),
-      },
-      {
-        method: 'POST',
-        path: '/expedientes/compartidos/listar',
-        body: (page) => ({
-          page,
-          size: pageSize,
-          tipo: 'CON_DESPACHO',
-          tab: 'conElDespacho',
-          expediente: radicado,
-          radicado,
-        }),
-      },
-      {
-        method: 'POST',
-        path: '/expedientes/compartidos/buscar',
-        body: (page) => ({
-          page,
-          size: pageSize,
-          tipoCompartido: 'CON_DESPACHO',
-          expediente: radicado,
-          numeroRadicado: radicado,
-        }),
-      },
-    ];
-
-    for (const att of attempts) {
-      let emptyStreak = 0;
-      for (let page = 0; page < maxPages; page++) {
-        try {
-          const url = `${this.back}${att.path}`;
-          const r =
-            att.method === 'GET'
-              ? await this.axios.get(url, { params: att.params?.(page) })
-              : await this.axios.post(url, att.body?.(page) ?? { page, size: pageSize });
-          if (r.status < 200 || r.status >= 300 || r.data == null) {
-            emptyStreak += 1;
-            if (emptyStreak >= 2) break;
-            continue;
-          }
-          const nid =
-            this.findNodeIdInCompartidosPayload(r.data, radicado) ||
-            this.extractNodeIdFromBackendPayload(r.data, radicado);
-          if (nid) {
-            console.info(
-              `[sgde] Expediente ${radicado} en compartidos paginado ${att.method} ${att.path} p=${page}`
-            );
-            return nid;
-          }
-          const raw = JSON.stringify(r.data);
-          if (!raw.includes(radicado)) {
-            emptyStreak += 1;
-            if (emptyStreak >= 2) break;
-          } else {
-            emptyStreak = 0;
-          }
-        } catch {
-          break;
-        }
-      }
-    }
-
-    return null;
+    const ctx = await this.fetchMyCompartidosContext();
+    const con = await this.compartirUnificadoBuscar(radicado, 'conDespacho', ctx);
+    if (con) return con;
+    return this.compartirUnificadoBuscar(radicado, 'porDespacho', ctx);
   }
 
   async buscarExpedienteNodeId(
     radicadoRaw: string,
     opts?: { nodeIdHint?: string | null }
   ): Promise<string | null> {
+    this.nodeFromCompartidos = false;
     const hint = String(opts?.nodeIdHint || '').trim();
     if (/^[0-9a-f-]{36}$/i.test(hint)) return hint;
 
@@ -556,7 +602,10 @@ export class SgdeClient {
     if (!EXPEDIENTE_REGEX.test(radicado)) return null;
 
     const compartidoPrimero = await this.buscarExpedienteEnCompartidos(radicado);
-    if (compartidoPrimero) return compartidoPrimero;
+    if (compartidoPrimero) {
+      this.nodeFromCompartidos = true;
+      return compartidoPrimero;
+    }
 
     const url = `${this.alf}/search/versions/1/search`;
     const queries = [
@@ -627,37 +676,116 @@ export class SgdeClient {
   }
 
   async getNodeName(nodeId: string): Promise<string> {
-    const url = `${this.alf}/alfresco/versions/1/nodes/${encodeURIComponent(nodeId)}`;
-    const csrf = this.csrf();
-    const hdrs: Record<string, string> = {
-      Accept: 'application/json',
-      ...(csrf ? { 'alf-csrftoken': csrf } : {}),
+    const read = async (): Promise<{ name: string; status: number }> => {
+      const url = `${this.alf}/alfresco/versions/1/nodes/${encodeURIComponent(nodeId)}`;
+      const r = await this.axios.get(url, {
+        headers: this.jsonHeaders(),
+        params: { include: 'properties' },
+      });
+      if (r.status < 200 || r.status >= 300) return { name: '', status: r.status };
+      const ent = (r.data as { entry?: { name?: string } })?.entry;
+      return { name: String(ent?.name || '').trim(), status: r.status };
     };
-    const r = await this.axios.get(url, {
-      headers: hdrs,
-      params: { include: 'properties' },
-    });
-    if (r.status < 200 || r.status >= 300) return '';
-    const ent = (r.data as { entry?: { name?: string } })?.entry;
+
+    let { name, status } = await read();
+    if (!name && (status === 401 || this.nodeFromCompartidos) && this.ticket) {
+      ({ name } = await this.withTicketAlfrescoAuth(read));
+    }
+    if (name) return name;
+
+    const ent = await this.getNodeViaBackend(nodeId, 'properties');
     return String(ent?.name || '').trim();
+  }
+
+  /**
+   * Misma consulta que SGDE usa en el visor de ficheros (busquedaDocumentos):
+   * documentos bajo el nodo del expediente vía ANCESTOR, no solo hijos directos.
+   */
+  async fetchPdfLeavesViaSearch(rootId: string, opts?: { maxDocs?: number }): Promise<SgdePdfLeaf[]> {
+    const maxDocs = opts?.maxDocs ?? 600;
+    const pageSize = 100;
+    const url = `${this.alf}/search/versions/1/search`;
+    const ancestor = `workspace://SpacesStore/${rootId}`;
+    const query = `TYPE:('rama:carpetaDocumento' OR 'rama:documentos') and ANCESTOR:'${ancestor}' and ISUNSET:'rama:eliminadoLogico'`;
+
+    const runSearch = async (): Promise<SgdePdfLeaf[]> => {
+      const hdrs: Record<string, string> = {
+        ...this.jsonHeaders(),
+        'Content-Type': 'application/json',
+      };
+      const out: SgdePdfLeaf[] = [];
+      const seen = new Set<string>();
+
+      for (let skip = 0; skip < maxDocs; skip += pageSize) {
+        const r = await this.axios.post(
+          url,
+          {
+            query: { query, language: 'afts' },
+            include: ['aspectNames', 'properties', 'isLink', 'path'],
+            paging: { maxItems: pageSize, skipCount: skip },
+          },
+          { headers: hdrs }
+        );
+        if (r.status < 200 || r.status >= 300 || !r.data) {
+          console.warn(`[sgde] busquedaDocumentos HTTP ${r.status} skip=${skip}`);
+          if (r.status === 401) throw Object.assign(new Error('alfresco_search_401'), { status: 401 });
+          break;
+        }
+        const entries = (r.data as { list?: { entries?: unknown[] } })?.list?.entries || [];
+        if (!entries.length) break;
+
+        for (const row of entries) {
+          const ent =
+            row && typeof row === 'object' && 'entry' in row
+              ? (row as { entry: Record<string, unknown> }).entry
+              : (row as Record<string, unknown>);
+          const nt = String(ent.nodeType || '').toLowerCase();
+          if (!nt.includes('rama:documentos')) continue;
+          const pathEls = (ent.path as { elements?: Array<{ name?: string }> } | undefined)?.elements;
+          const folderPath =
+            pathEls && pathEls.length > 1
+              ? pathEls
+                  .slice(1, -1)
+                  .map((e) => String(e.name || '').trim())
+                  .filter(Boolean)
+                  .join(' / ')
+              : undefined;
+          const leaf = entryToPdfLeaf(ent, folderPath);
+          if (leaf && !seen.has(leaf.id)) {
+            seen.add(leaf.id);
+            out.push(leaf);
+          }
+        }
+
+        if (entries.length < pageSize) break;
+      }
+
+      if (out.length) {
+        console.info(`[sgde] ${out.length} documento(s) vía ANCESTOR bajo ${rootId.slice(0, 8)}…`);
+      }
+      return out;
+    };
+
+    try {
+      return await runSearch();
+    } catch (e) {
+      if ((e as { status?: number })?.status === 401 && this.ticket) {
+        console.info('[sgde] Reintento busquedaDocumentos con alf_ticket…');
+        return this.withTicketAlfrescoAuth(runSearch);
+      }
+      return [];
+    }
   }
 
   async fetchChildren(nodeId: string): Promise<Record<string, unknown>[]> {
     const url = `${this.alf}/alfresco/versions/1/nodes/${encodeURIComponent(nodeId)}/children`;
-    const all: Record<string, unknown>[] = [];
-    let skip = 0;
-    const page = 200;
-    const csrf = this.csrf();
-    const hdrs: Record<string, string> = {
-      Accept: 'application/json',
-      ...(csrf ? { 'alf-csrftoken': csrf } : {}),
-    };
-    while (true) {
+
+    const readPage = async (skip: number, page: number): Promise<{ chunk: Record<string, unknown>[]; status: number }> => {
       const r = await this.axios.get(url, {
-        headers: hdrs,
+        headers: this.jsonHeaders(),
         params: { maxItems: page, skipCount: skip, include: 'properties' },
       });
-      if (r.status < 200 || r.status >= 300) break;
+      if (r.status < 200 || r.status >= 300) return { chunk: [], status: r.status };
       const raw = (r.data as { list?: { entries?: unknown[] } })?.list?.entries || [];
       const chunk: Record<string, unknown>[] = [];
       for (const e of raw) {
@@ -667,10 +795,29 @@ export class SgdeClient {
         if (ent && typeof ent === 'object') chunk.push(ent as Record<string, unknown>);
         else if (row.id) chunk.push(row);
       }
-      if (!chunk.length) break;
-      all.push(...chunk);
-      if (chunk.length < page) break;
-      skip += page;
+      return { chunk, status: r.status };
+    };
+
+    const readAll = async (): Promise<{ all: Record<string, unknown>[]; status: number }> => {
+      const all: Record<string, unknown>[] = [];
+      let skip = 0;
+      const page = 200;
+      let lastStatus = 200;
+      while (true) {
+        const { chunk, status } = await readPage(skip, page);
+        lastStatus = status;
+        if (status === 401) return { all, status };
+        if (!chunk.length) break;
+        all.push(...chunk);
+        if (chunk.length < page) break;
+        skip += page;
+      }
+      return { all, status: lastStatus };
+    };
+
+    let { all, status } = await readAll();
+    if (!all.length && status === 401 && this.ticket) {
+      ({ all } = await this.withTicketAlfrescoAuth(readAll));
     }
     return all;
   }
@@ -738,34 +885,574 @@ export class SgdeClient {
     return walk(rootId, rootLabel, 0);
   }
 
+  private async buscarNodoExpedienteAlfresco(cui: string): Promise<string | null> {
+    const url = `${this.alf}/search/versions/1/search`;
+    const csrf = this.csrf();
+    const hdrs: Record<string, string> = {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...(csrf ? { 'alf-csrftoken': csrf } : {}),
+    };
+    const q = `TYPE:'rama:expedientes' and cm:name:'${cui}' and ISUNSET:'rama:eliminadoLogico'`;
+    const r = await this.axios.post(
+      url,
+      { query: { query: q, language: 'afts' }, paging: { maxItems: 5, skipCount: 0 } },
+      { headers: hdrs }
+    );
+    if (r.status < 200 || r.status >= 300 || !r.data) return null;
+    const entries = (r.data as { list?: { entries?: unknown[] } })?.list?.entries || [];
+    for (const row of entries) {
+      const ent =
+        row && typeof row === 'object' && 'entry' in row
+          ? (row as { entry: { id?: string; name?: string } }).entry
+          : (row as { id?: string; name?: string });
+      const id = String(ent?.id || '').trim();
+      const name = String(ent?.name || '').replace(/\D/g, '');
+      if (id && name === cui) return id.toLowerCase();
+    }
+    return null;
+  }
+
+  /** Árbol por hijos; si queda vacío, búsqueda ANCESTOR como el visor SGDE. */
+  async collectPdfLeavesForExpediente(
+    rootId: string,
+    opts?: { maxDepth?: number; maxNodes?: number; maxSearchDocs?: number; originRadicado?: string }
+  ): Promise<SgdePdfLeaf[]> {
+    const tree = await this.buildTree(rootId, {
+      maxDepth: opts?.maxDepth ?? 12,
+      maxNodes: opts?.maxNodes ?? 800,
+    });
+    const fromTree = flattenSgdePdfLeaves(tree);
+    if (fromTree.length > 0) return fromTree;
+
+    let fromSearch = await this.fetchPdfLeavesViaSearch(rootId, { maxDocs: opts?.maxSearchDocs });
+    if (fromSearch.length > 0) return fromSearch;
+
+    const rootName = await this.getNodeName(rootId);
+    const cui = (opts?.originRadicado || rootName).replace(/\D/g, '');
+    if (cui.length === 23) {
+      const altId = await this.buscarNodoExpedienteAlfresco(cui);
+      if (altId && altId !== rootId.toLowerCase()) {
+        console.info(`[sgde] Reintento ANCESTOR con nodo expediente ${altId.slice(0, 8)}…`);
+        fromSearch = await this.fetchPdfLeavesViaSearch(altId, { maxDocs: opts?.maxSearchDocs });
+      }
+    }
+    return fromSearch;
+  }
+
   /** Descarga el contenido binario de un nodo documento en Alfresco. */
   async downloadNodeContent(
     nodeId: string
   ): Promise<{ buffer: Buffer; contentType: string } | null> {
     const url = `${this.alf}/alfresco/versions/1/nodes/${encodeURIComponent(nodeId)}/content`;
-    const csrf = this.csrf();
-    const hdrs: Record<string, string> = {
-      Accept: 'application/pdf,application/octet-stream,*/*',
-      ...(csrf ? { 'alf-csrftoken': csrf } : {}),
+
+    const read = async (): Promise<{ buffer: Buffer; contentType: string } | null> => {
+      const r = await this.axios.get(url, {
+        headers: {
+          ...this.jsonHeaders(),
+          Accept: 'application/pdf,application/octet-stream,*/*',
+        },
+        responseType: 'arraybuffer',
+        maxContentLength: 20 * 1024 * 1024,
+        maxBodyLength: 20 * 1024 * 1024,
+      });
+      if (r.status === 401) throw Object.assign(new Error('alfresco_content_401'), { status: 401 });
+      if (r.status < 200 || r.status >= 300 || !r.data) return null;
+      const buf = Buffer.from(r.data);
+      if (buf.length < 5) return null;
+      const isPdf =
+        buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46 && buf[4] === 0x2d;
+      const ct = String(r.headers['content-type'] || '').split(';')[0].trim();
+      if (!isPdf && ct && !ct.includes('pdf') && !ct.includes('octet-stream')) {
+        return null;
+      }
+      return {
+        buffer: buf,
+        contentType: isPdf || ct.includes('pdf') ? 'application/pdf' : ct || 'application/pdf',
+      };
     };
-    const r = await this.axios.get(url, {
-      headers: hdrs,
-      responseType: 'arraybuffer',
-      maxContentLength: 20 * 1024 * 1024,
-      maxBodyLength: 20 * 1024 * 1024,
-    });
-    if (r.status < 200 || r.status >= 300 || !r.data) return null;
-    const buf = Buffer.from(r.data);
-    if (buf.length < 5) return null;
-    const isPdf =
-      buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46 && buf[4] === 0x2d;
-    const ct = String(r.headers['content-type'] || '').split(';')[0].trim();
-    if (!isPdf && ct && !ct.includes('pdf') && !ct.includes('octet-stream')) {
+
+    try {
+      return await read();
+    } catch (e) {
+      if ((e as { status?: number })?.status === 401 && this.ticket) {
+        return this.withTicketAlfrescoAuth(read);
+      }
       return null;
     }
-    return { buffer: buf, contentType: isPdf || ct.includes('pdf') ? 'application/pdf' : ct || 'application/pdf' };
+  }
+
+  /** Ticket Alfresco para operaciones de escritura (tras login). */
+  alfTicketValue(): string {
+    return this.ticket;
+  }
+
+  bearerTokenValue(): string {
+    return this.accessToken;
+  }
+
+  sgdeUsername(): string {
+    return this.user;
+  }
+
+  private nodesUrl(): string {
+    return `${this.alf}/alfresco/versions/1/nodes`;
+  }
+
+  private sanitizeSgdeName(nombre: string): string {
+    let s = (nombre || '').trim().replace(/[/\\:*?"<>|]/g, '').replace(/\s+/g, ' ').trim();
+    return s;
+  }
+
+  private async alfrescoJsonRequest<T>(
+    method: 'GET' | 'POST' | 'PUT',
+    url: string,
+    opts?: { body?: unknown; params?: Record<string, string> }
+  ): Promise<{ status: number; data: T | null }> {
+    const run = async (): Promise<{ status: number; data: T | null }> => {
+      const r = await this.axios.request({
+        method,
+        url,
+        headers: { ...this.jsonHeaders(), 'Content-Type': 'application/json' },
+        data: opts?.body,
+        params: opts?.params,
+      });
+      return { status: r.status, data: (r.data as T) ?? null };
+    };
+    try {
+      return await run();
+    } catch {
+      return { status: 0, data: null };
+    }
+  }
+
+  private async searchFirstNodeId(query: string): Promise<string | null> {
+    const url = `${this.alf}/search/versions/1/search`;
+    const run = async (): Promise<string | null> => {
+      const r = await this.axios.post(
+        url,
+        {
+          query: { query, language: 'afts' },
+          paging: { maxItems: 5, skipCount: 0 },
+        },
+        { headers: { ...this.jsonHeaders(), 'Content-Type': 'application/json' } }
+      );
+      if (r.status < 200 || r.status >= 300) return null;
+      const entries = (r.data as { list?: { entries?: unknown[] } })?.list?.entries || [];
+      for (const row of entries) {
+        const ent =
+          row && typeof row === 'object' && 'entry' in row
+            ? (row as { entry: { id?: string } }).entry
+            : (row as { id?: string });
+        const id = String(ent?.id || '').trim();
+        if (/^[0-9a-f-]{36}$/i.test(id)) return id.toLowerCase();
+      }
+      return null;
+    };
+    try {
+      return await run();
+    } catch (e) {
+      if ((e as { status?: number })?.status === 401 && this.ticket) {
+        return this.withTicketAlfrescoAuth(run);
+      }
+      return null;
+    }
+  }
+
+  private async obtenerParentNodeId(nodeId: string): Promise<string | null> {
+    const url = `${this.nodesUrl()}/${encodeURIComponent(nodeId)}`;
+    const { status, data } = await this.alfrescoJsonRequest<{ entry?: { parentId?: string } }>('GET', url, {
+      params: { include: 'path' },
+    });
+    if (status < 200 || status >= 300) return null;
+    const pid = String(data?.entry?.parentId || '').trim();
+    return /^[0-9a-f-]{36}$/i.test(pid) ? pid.toLowerCase() : null;
+  }
+
+  /** Carpeta contenedora de expedientes del despacho (12 dígitos de radicación). */
+  async resolveParentContainer(codigoRadicacion12: string): Promise<string | null> {
+    const c12 = codigoRadicacion12.replace(/\D/g, '').slice(0, 12);
+    if (c12.length !== 12 || !this.ticket) return null;
+
+    const pref = c12;
+    for (const q of [
+      `TYPE:"rama:expedientes" AND @rama\\:nomExpediente:${pref}*`,
+      `TYPE:'rama:expedientes' AND cm:name:${pref}*`,
+    ]) {
+      const expId = await this.searchFirstNodeId(q);
+      if (expId) {
+        const parent = await this.obtenerParentNodeId(expId);
+        if (parent) return parent;
+      }
+    }
+
+    const despacho3 = c12.slice(9, 12);
+    for (const nombre of [c12, despacho3]) {
+      const q = `TYPE:"cm:folder" AND cm:name:"${nombre}" AND -TYPE:"rama:expedientes"`;
+      const folderId = await this.searchFirstNodeId(q);
+      if (folderId) return folderId;
+    }
+    return null;
+  }
+
+  async createExpedienteNode(
+    parentNodeUuid: string,
+    radicado23: string,
+    properties: Record<string, string>
+  ): Promise<{ ok: true; nodeId: string; yaExiste?: boolean } | { ok: false; error: string }> {
+    const name = radicado23.replace(/\D/g, '').slice(0, 23);
+    if (name.length !== 23) {
+      return { ok: false, error: 'El radicado debe tener 23 dígitos.' };
+    }
+    if (!this.ticket || !parentNodeUuid) {
+      return { ok: false, error: 'Faltan sesión SGDE o carpeta padre del despacho.' };
+    }
+
+    const url = `${this.nodesUrl()}/${encodeURIComponent(parentNodeUuid)}/children`;
+    const body = { name, nodeType: 'rama:expedientes', properties: { 'rama:nomExpediente': name, ...properties } };
+
+    const post = async (): Promise<{ status: number; data: { entry?: { id?: string } } | null }> => {
+      const r = await this.axios.post(url, body, {
+        headers: { ...this.jsonHeaders(), 'Content-Type': 'application/json' },
+      });
+      return { status: r.status, data: (r.data as { entry?: { id?: string } }) ?? null };
+    };
+
+    let { status, data } = await post();
+    if (status === 401 && this.ticket) {
+      ({ status, data } = await this.withTicketAlfrescoAuth(post));
+    }
+
+    if (status === 201) {
+      const id = String(data?.entry?.id || '').trim();
+      if (id) return { ok: true, nodeId: id.toLowerCase() };
+      return { ok: false, error: 'SGDE devolvió 201 sin id de expediente.' };
+    }
+
+    if (status === 409 || status === 422) {
+      const existing = await this.buscarExpedienteNodeId(name);
+      if (existing) return { ok: true, nodeId: existing, yaExiste: true };
+    }
+
+    return { ok: false, error: `No se pudo crear el expediente en SGDE (HTTP ${status}).` };
+  }
+
+  private async createCmFolder(
+    parentNodeUuid: string,
+    nombre: string
+  ): Promise<{ ok: true; nodeId: string } | { ok: false; error: string }> {
+    const name = this.sanitizeSgdeName(nombre);
+    if (!name) return { ok: false, error: 'Nombre de carpeta vacío.' };
+    const url = `${this.nodesUrl()}/${encodeURIComponent(parentNodeUuid)}/children`;
+    const post = async () => {
+      const r = await this.axios.post(
+        url,
+        { name, nodeType: 'cm:folder' },
+        { headers: { ...this.jsonHeaders(), 'Content-Type': 'application/json' } }
+      );
+      return r.status;
+    };
+    let status = await post();
+    if (status === 401 && this.ticket) {
+      status = await this.withTicketAlfrescoAuth(post);
+    }
+    if (status === 201) {
+      const children = await this.fetchChildren(parentNodeUuid);
+      for (const ch of children) {
+        if (entryIsFolder(ch) && String(ch.name || '').toLowerCase() === name.toLowerCase()) {
+          const id = String(ch.id || '').trim();
+          if (id) return { ok: true, nodeId: id.toLowerCase() };
+        }
+      }
+      return { ok: false, error: 'Carpeta creada pero no se encontró su id.' };
+    }
+    if (status === 409 || status === 422) {
+      const children = await this.fetchChildren(parentNodeUuid);
+      const want = name.toLowerCase();
+      for (const ch of children) {
+        if (entryIsFolder(ch) && String(ch.name || '').toLowerCase() === want) {
+          const id = String(ch.id || '').trim();
+          if (id) return { ok: true, nodeId: id.toLowerCase() };
+        }
+      }
+    }
+    return { ok: false, error: `No se pudo crear carpeta «${name}» (HTTP ${status}).` };
+  }
+
+  private findChildFolderId(entries: Record<string, unknown>[], matcher: (n: string) => boolean): string | null {
+    for (const ch of entries) {
+      if (!entryIsFolder(ch)) continue;
+      const n = String(ch.name || '').trim().toLowerCase();
+      if (matcher(n)) {
+        const id = String(ch.id || '').trim();
+        if (id) return id.toLowerCase();
+      }
+    }
+    return null;
+  }
+
+  /** Idempotente: Primera instancia → Principal. */
+  async ensurePrimeraInstanciaPrincipal(
+    expedienteNodeUuid: string
+  ): Promise<
+    | { ok: true; primeraInstanciaId: string; principalFolderId: string }
+    | { ok: false; error: string }
+  > {
+    if (!this.ticket || !expedienteNodeUuid) {
+      return { ok: false, error: 'Faltan sesión SGDE o nodo expediente.' };
+    }
+
+    const expChildren = await this.fetchChildren(expedienteNodeUuid);
+    let primeraId =
+      this.findChildFolderId(expChildren, (n) => n.includes('primera')) ||
+      this.findChildFolderId(expChildren, (n) => n.includes('01primera'));
+
+    if (!primeraId) {
+      let folderRes = await this.createCmFolder(expedienteNodeUuid, 'Primera instancia');
+      if (!folderRes.ok) {
+        folderRes = await this.createCmFolder(expedienteNodeUuid, '01PrimeraInstancia');
+      }
+      if (folderRes.ok === false) {
+        return { ok: false, error: folderRes.error };
+      }
+      primeraId = folderRes.nodeId;
+    }
+
+    const piChildren = await this.fetchChildren(primeraId);
+    let principalId =
+      this.findChildFolderId(piChildren, (n) => n.includes('principal')) ||
+      this.findChildFolderId(piChildren, (n) => n.includes('c01'));
+
+    if (!principalId) {
+      const folderRes = await this.createCmFolder(primeraId, 'Principal');
+      if (folderRes.ok === false) {
+        return { ok: false, error: folderRes.error };
+      }
+      principalId = folderRes.nodeId;
+    }
+
+    return { ok: true, primeraInstanciaId: primeraId, principalFolderId: principalId };
+  }
+
+  private async getAzureSas(): Promise<{
+    sasToken?: string;
+    container?: string;
+    account?: string;
+  } | null> {
+    if (!this.accessToken) return null;
+    const r = await this.axios.get(`${this.back}/azure/sas`, {
+      headers: { ...this.jsonHeaders(), Authorization: `Bearer ${this.accessToken}` },
+    });
+    if (r.status < 200 || r.status >= 300) return null;
+    const d = r.data as Record<string, unknown>;
+    return {
+      sasToken: String(d.sasToken || d.sas || ''),
+      container: String(d.container || 'alfresco'),
+      account: String(d.account || 'stalfrescoprod'),
+    };
+  }
+
+  private async getSiguienteOrdenDocumento(folderUuid: string): Promise<number> {
+    const docs = await this.fetchChildren(folderUuid);
+    let max = 0;
+    for (const d of docs) {
+      if (entryIsFolder(d)) continue;
+      const props = (d.properties as Record<string, unknown> | undefined) || {};
+      const ord = Number(props['rama:idDocumento'] ?? 0);
+      if (Number.isFinite(ord) && ord > max) max = ord;
+    }
+    return max + 1;
+  }
+
+  private azureMetaAscii(val: string, maxLen = 400): string {
+    let s = val.replace(/[^\x20-\x7e]/g, '_');
+    if (s.length > maxLen) s = s.slice(0, maxLen);
+    return s;
+  }
+
+  async uploadDocumentToFolder(opts: {
+    folderNodeUuid: string;
+    radicado23: string;
+    buffer: Buffer;
+    fileName: string;
+    contentType: string;
+    tipoDocumental: string;
+    expedienteMetadata: Record<string, string>;
+    orden?: number;
+  }): Promise<{ ok: true; sgdeDocId?: string } | { ok: false; error: string }> {
+    const { folderNodeUuid, buffer, fileName, tipoDocumental, expedienteMetadata } = opts;
+    if (!this.ticket || !this.accessToken) {
+      return { ok: false, error: 'Sesión SGDE incompleta para subir documentos.' };
+    }
+
+    const cui = opts.radicado23.replace(/\D/g, '').slice(0, 23);
+    if (cui.length !== 23) return { ok: false, error: 'CUI inválido para subida SGDE.' };
+
+    const sas = await this.getAzureSas();
+    if (!sas?.sasToken) return { ok: false, error: 'No se obtuvo SAS de Azure desde SGDE.' };
+
+    const mime = opts.contentType?.includes('pdf') ? 'application/pdf' : 'application/pdf';
+    const idDoc = opts.orden ?? (await this.getSiguienteOrdenDocumento(folderNodeUuid));
+    const now = new Date();
+    const hoy = now.toISOString().slice(0, 10);
+    const { randomUUID } = await import('node:crypto');
+    const blobUuid = randomUUID().replace(/-/g, '');
+    const pathParts = [
+      String(now.getUTCFullYear()),
+      String(now.getUTCMonth() + 1).padStart(2, '0'),
+      String(now.getUTCDate()).padStart(2, '0'),
+      String(now.getUTCHours()).padStart(2, '0'),
+      String(now.getUTCMinutes()).padStart(2, '0'),
+    ];
+    const blobPath = `${pathParts.join('/')}/${blobUuid}.bin`;
+    const pathData = `store://${blobPath}`;
+    const account = sas.account || 'stalfrescoprod';
+    const container = sas.container || 'alfresco';
+    const azureUrl = `https://${account}.blob.core.windows.net/${container}/alf_data/contentstore/${blobPath}?${sas.sasToken}`;
+
+    const fechaCarga = now.toISOString().replace(/:/g, '%3A');
+    const azureRes = await fetch(azureUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'x-ms-blob-type': 'BlockBlob',
+        'x-ms-meta-cui': this.azureMetaAscii(cui),
+        'x-ms-meta-fecha_carga': fechaCarga,
+        'x-ms-meta-originalname': this.azureMetaAscii(fileName),
+        'x-ms-meta-username': this.azureMetaAscii(this.user || 'tutelia'),
+        'x-ms-meta-uuid': 'temporal',
+        'x-ms-version': '2025-05-05',
+      },
+      body: new Uint8Array(buffer),
+    });
+    if (!azureRes.ok) {
+      const t = await azureRes.text().catch(() => '');
+      return { ok: false, error: `Azure PUT ${azureRes.status}: ${t.slice(0, 200)}` };
+    }
+
+    const s = (x: string | undefined) => (x == null ? '' : this.sanitizeSgdeName(String(x)));
+    const nodeProps: Record<string, string | number> = {
+      'rama:idDocumento': idDoc,
+      'rama:nomExpediente': cui,
+      'rama:nombreSerie': s(expedienteMetadata['rama:nombreSerie'] || SGDE_SERIE_TUTELA),
+      'rama:nomOficinaProductora': s(expedienteMetadata['rama:nomOficinaProductora'] || ''),
+      'rama:nomSubserie': s(expedienteMetadata['rama:nomSubserie'] || SGDE_SUBSERIE_TUTELA),
+      'rama:anexos': 'No',
+      'rama:docPdfA': 'No',
+      'rama:origen': 'Electronico',
+      'rama:observacionesDoc': '',
+      'rama:fechaDeclaracionArchivoD': hoy,
+      'rama:fechaPublicacion': hoy,
+      'rama:tipoDocumental': tipoDocumental,
+      'rama:palabrasClave': '',
+      'rama:acceso': 'Publico',
+      'cm:title': s(fileName) || '-',
+      'rama:paginaInicioDoc': 1,
+      'rama:paginaFinDoc': 1,
+      'rama:tamano': buffer.length,
+      'rama:formato': 'PDF',
+      'rama:paginas': 1,
+    };
+
+    const createBody = {
+      alf_token: this.ticket,
+      node: {
+        id: null,
+        name: fileName.endsWith('.pdf') ? fileName : `${fileName.replace(/\.[^.]+$/, '')}.pdf`,
+        nodeType: 'rama:documentos',
+        properties: nodeProps,
+        aspectNames: ['cm:titled'],
+      },
+      pathData,
+      uuid: folderNodeUuid,
+      mimetype: mime,
+      filesize: buffer.length,
+      auditoria: {
+        accion: 'Anadir archivo',
+        despacho: '',
+        nodoReferencia: '',
+        path: '',
+        usuario: this.user,
+        descripcion: `Se ha anadido el archivo "${fileName}"`,
+        fechaRegistro:
+          new Date().toLocaleString('sv-SE', { timeZone: 'America/Bogota' }).replace(' ', 'T') +
+          '.000-05:00',
+        registroId: null,
+      },
+    };
+
+    const cr = await this.axios.post(`${this.back}/nodos/createNodeAzure`, createBody, {
+      headers: {
+        ...this.jsonHeaders(),
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.accessToken}`,
+      },
+    });
+    if (cr.status >= 200 && cr.status < 300) {
+      const docId = String((cr.data as { id?: string; nodeId?: string })?.id || '').trim();
+      return { ok: true, ...(docId ? { sgdeDocId: docId } : {}) };
+    }
+    const errText = typeof cr.data === 'string' ? cr.data : JSON.stringify(cr.data || '');
+    return { ok: false, error: `createNodeAzure ${cr.status}: ${errText.slice(0, 400)}` };
+  }
+
+  /**
+   * Firma electrónica de un PDF en SGDE (mismo endpoint que el portal: POST /backendrama/documento/firma).
+   */
+  async signDocument(opts: {
+    nodeId: string;
+    username: string;
+    password: string;
+  }): Promise<{ ok: true; detail?: string } | { ok: false; message: string }> {
+    const nodeId = String(opts.nodeId || '')
+      .trim()
+      .toLowerCase();
+    if (!/^[0-9a-f-]{36}$/.test(nodeId)) {
+      return { ok: false, message: 'ID de documento SGDE inválido.' };
+    }
+    const user = String(opts.username || '').trim();
+    const pass = String(opts.password || '');
+    if (!user || !pass) {
+      return { ok: false, message: 'Usuario y contraseña SGDE son obligatorios para firmar.' };
+    }
+
+    const p = encryptSgdePortalPassword(pass);
+    try {
+      const r = await this.axios.post(
+        `${this.back}/documento/firma`,
+        { uuid: nodeId, user, p },
+        {
+          headers: { ...this.jsonHeaders(), 'Content-Type': 'application/json' },
+          responseType: 'text',
+        }
+      );
+      if (r.status >= 200 && r.status < 300) {
+        const detail = typeof r.data === 'string' ? r.data.trim() : '';
+        return { ok: true, ...(detail ? { detail } : {}) };
+      }
+      const msg =
+        typeof r.data === 'string'
+          ? r.data.trim()
+          : r.data != null
+            ? JSON.stringify(r.data)
+            : '';
+      return {
+        ok: false,
+        message:
+          msg ||
+          `SGDE no pudo firmar el documento (HTTP ${r.status}). Compruebe credenciales y permisos en el portal.`,
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        message: formatSgdeConnectionError(String((e as Error)?.message || e)),
+      };
+    }
   }
 }
+
+const SGDE_SERIE_TUTELA = 'Constitucional';
+const SGDE_SUBSERIE_TUTELA = 'Acciones Constitucionales de Tutela';
 
 export function getDefaultSgdeBaseUrl(): string {
   return (

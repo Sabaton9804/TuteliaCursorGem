@@ -1065,9 +1065,15 @@ async function startServer() {
       if (!nodeId) {
         return res.status(404).json({ error: 'No se encontró el expediente en SGDE para este radicado.' });
       }
+      const linkNow = new Date().toISOString();
       const { error: upErr } = await acc.admin
         .from('cases')
-        .update({ sgde_id: nodeId })
+        .update({
+          sgde_id: nodeId,
+          sgde_linked_at: linkNow,
+          sgde_sync_status: 'linked',
+          updated_at: linkNow,
+        })
         .eq('id', caseId)
         .eq('court_id', acc.caseRow.court_id);
       if (upErr) {

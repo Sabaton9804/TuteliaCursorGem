@@ -100,6 +100,9 @@ export interface Case {
   /** Motivo o referencia si se ajusta `deadline_at` a mano (suspensión, rectificación, etc.). */
   deadlineOverrideNote?: string;
   sgdeId?: string;
+  /** Fecha de vinculación con nodo raíz SGDE (`rama:expedientes`). */
+  sgdeLinkedAt?: string;
+  sgdeSyncStatus?: 'idle' | 'linked' | 'syncing' | 'error' | 'stale';
   sourceChannel?: string;
   summary?: string;
   subject?: string;
@@ -179,6 +182,9 @@ export interface Document {
   storagePath?: string;
   hash?: string;
   sgdeId?: string;
+  /** Ruta en SGDE (instancia / cuaderno). */
+  sgdeFolderPath?: string;
+  sgdeSyncStatus?: 'none' | 'linked' | 'local_only' | 'sgde_only';
   createdAt: string;
   content?: string;
   contentType?: string;

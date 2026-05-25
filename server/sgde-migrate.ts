@@ -1,6 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
-  flattenSgdePdfLeaves,
   sgdeLeafDisplayPath,
   type SgdeClient,
   type SgdePdfLeaf,
@@ -109,14 +108,18 @@ export async function preflightSgdeOriginExpediente(
       recommendedMissing: [],
       sampleFiles: [],
       message:
-        'El expediente está visible para usted en SGDE (Mis compartidos → Con el despacho), pero Tutelia aún no obtuvo el mismo registro por API — no significa que no exista. ' +
-        'Abra la fila del CUI en SGDE, pegue el UUID del nodo en el campo inferior y pulse Actualizar, o radique con el acta del correo.',
+        'Tutelia no pudo enlazar el expediente en SGDE (suele estar solo en Mis compartidos → Con el despacho, no en la grilla principal). ' +
+        'Pulse Actualizar de nuevo; si el acta del correo trae enlace a SGDE, se usará automáticamente. También puede radicar con el acta aunque el traslado digital quede pendiente.',
     };
   }
 
   const rootName = await client.getNodeName(rootId);
-  const tree = await client.buildTree(rootId, { maxDepth: 12, maxNodes: 800 });
-  const leaves = flattenSgdePdfLeaves(tree);
+  const leaves = await client.collectPdfLeavesForExpediente(rootId, {
+    maxDepth: 12,
+    maxNodes: 800,
+    maxSearchDocs: 600,
+    originRadicado,
+  });
   const { found, missing } = evaluateRecommended(leaves);
   const sampleFiles = leaves.slice(0, 12).map((l) => sgdeLeafDisplayPath(l));
   const folderCount = new Set(leaves.map((l) => l.folderPath).filter(Boolean)).size;
@@ -208,8 +211,12 @@ export async function migrateSgdeOriginToCase(opts: {
     }
   }
 
-  const tree = await client.buildTree(rootId, { maxDepth: 12, maxNodes: 800 });
-  const leaves = flattenSgdePdfLeaves(tree).slice(0, maxFiles);
+  const leaves = (
+    await client.collectPdfLeavesForExpediente(rootId, {
+      maxSearchDocs: maxFiles + 50,
+      originRadicado,
+    })
+  ).slice(0, maxFiles);
 
   let sortOrder = await nextSortOrderForCase(admin, caseId, notebookCode);
   const errors: string[] = [];
@@ -263,6 +270,9 @@ export async function migrateSgdeOriginToCase(opts: {
           is_from_link: false,
           sort_order: sortOrder++,
           notebook_code: notebookCode,
+          sgde_id: leaf.id,
+          sgde_folder_path: leaf.folderPath || null,
+          sgde_sync_status: 'linked',
         },
       ];
       const ins = await insertCaseDocumentRowsAdmin(admin, docRows);
@@ -280,9 +290,15 @@ export async function migrateSgdeOriginToCase(opts: {
     }
   }
 
+  const now = new Date().toISOString();
   await admin
     .from('cases')
-    .update({ sgde_id: rootId, updated_at: new Date().toISOString() })
+    .update({
+      sgde_id: rootId,
+      sgde_linked_at: now,
+      sgde_sync_status: 'linked',
+      updated_at: now,
+    })
     .eq('id', caseId);
 
   return {

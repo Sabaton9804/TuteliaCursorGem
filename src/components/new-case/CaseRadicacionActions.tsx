@@ -4,6 +4,7 @@ import { motion } from 'motion/react';
 import { AlertCircle, ArrowRight, Check, CheckCircle2, Edit2, Loader2, Sparkles } from 'lucide-react';
 import { COURT_CONSTANTS } from '../../constants';
 import { formatRadicado } from '../../lib/formatters';
+import { CUI_INSTANCE_PRIMERA, CUI_INSTANCE_SEGUNDA } from '../../lib/radicado-cui';
 import type { LegalAnalysis } from './new-case-types';
 
 export type CaseRadicacionConsecutivePanelProps = {
@@ -12,6 +13,13 @@ export type CaseRadicacionConsecutivePanelProps = {
   consecutiveLoading: boolean;
   consecutiveReady: boolean;
   radicadoConflict: { raw: string; existingCaseId: string } | null;
+  /** Segunda instancia: mismo CUI base; sufijo 01, 02… según vueltas (p. ej. tras nulidad). */
+  segundaInstancia?: {
+    originRadicado: string;
+    derivedRadicado: string | null;
+    suffixLoading?: boolean;
+    knownRadicados?: string[];
+  };
 };
 
 export function CaseRadicacionConsecutivePanel({
@@ -20,7 +28,96 @@ export function CaseRadicacionConsecutivePanel({
   consecutiveLoading,
   consecutiveReady,
   radicadoConflict,
+  segundaInstancia,
 }: CaseRadicacionConsecutivePanelProps) {
+  if (segundaInstancia) {
+    const originDigits = segundaInstancia.originRadicado.replace(/\D/g, '');
+    const originOk = originDigits.length === 23;
+    const derived = segundaInstancia.derivedRadicado;
+    const derivedFormatted = derived ? formatRadicado(derived) : null;
+    const suffixLoading = segundaInstancia.suffixLoading ?? false;
+    const derivedSuffix = derived?.replace(/\D/g, '').slice(21, 23) ?? '';
+    const priorSegunda = (segundaInstancia.knownRadicados ?? []).filter(
+      (r) => r.replace(/\D/g, '').slice(21, 23) !== '00'
+    );
+
+    return (
+      <motion.div layout className="rounded-lg border border-violet-200 bg-violet-50/40 px-3 py-2.5">
+        <motion.div layout className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[11px] text-slate-600">
+          <span className="font-medium text-violet-900 flex items-center gap-1">
+            Radicado segunda instancia (Ac. 201/1997 CSJ)
+          </span>
+          {suffixLoading ? (
+            <span className="inline-flex items-center gap-1 text-slate-400">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              Calculando sufijo…
+            </span>
+          ) : originOk && derived ? (
+            <span className="inline-flex items-center gap-1 text-emerald-600">
+              <Check className="w-3 h-3 shrink-0" />
+              Sufijo {derivedSuffix} propuesto
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-amber-700">
+              <AlertCircle className="w-3 h-3 shrink-0" />
+              Complete el radicado de origen (23 dígitos)
+            </span>
+          )}
+        </motion.div>
+
+        <p className="mt-2 text-[10px] leading-snug text-slate-600">
+          El proceso conserva los mismos 21 dígitos; el sufijo final marca la instancia o vuelta (
+          <span className="font-mono">{CUI_INSTANCE_PRIMERA}</span> primera,{' '}
+          <span className="font-mono">{CUI_INSTANCE_SEGUNDA}</span> primera llegada a segunda,{' '}
+          <span className="font-mono">02</span> si regresa tras nulidad, etc.).
+        </p>
+
+        {originOk && derivedFormatted ? (
+          <div className="mt-3 space-y-2">
+            <motion.div layout className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+              Origen (1.ª inst.)
+            </motion.div>
+            <p className="font-mono text-xs text-slate-700 tabular-nums">{formatRadicado(originDigits)}</p>
+            <div className="text-[10px] font-bold uppercase tracking-widest text-violet-700">Radicado en este despacho (2.ª inst.)</div>
+            <p className="font-mono text-sm font-bold text-violet-900 tabular-nums">{derivedFormatted}</p>
+            {priorSegunda.length > 0 ? (
+              <p className="text-[10px] text-violet-800/90 leading-snug">
+                Ya hay {priorSegunda.length} radicado(s) de segunda en Tutelia con esta base; por eso se propone{' '}
+                <span className="font-mono font-semibold">…{derivedSuffix}</span> y no{' '}
+                <span className="font-mono">{CUI_INSTANCE_SEGUNDA}</span>.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {radicadoConflict && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            className="mt-3 p-3 bg-red-50 border border-red-100 rounded-lg flex items-start gap-3 text-red-600 text-[10px] font-bold uppercase tracking-widest"
+          >
+            <AlertCircle className="w-5 h-5 shrink-0" />
+            <motion.div layout className="flex flex-col gap-2 max-w-full">
+              <span className="text-[11px] font-black">Conflicto de radicación detectado</span>
+              <p className="font-bold normal-case tracking-normal text-sm text-red-700/90 leading-snug">
+                El radicado <span className="font-mono">{formatRadicado(radicadoConflict.raw)}</span> ya está registrado
+                en este despacho.
+              </p>
+              <div className="flex flex-wrap gap-2 pt-1">
+                <Link
+                  to={`/case/${radicadoConflict.existingCaseId}`}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white border border-red-200 text-[11px] font-bold text-red-700 normal-case tracking-normal hover:bg-red-50"
+                >
+                  Abrir expediente existente
+                </Link>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </motion.div>
+    );
+  }
+
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2.5">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[11px] text-slate-500">

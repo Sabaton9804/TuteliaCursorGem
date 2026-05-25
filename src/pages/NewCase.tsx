@@ -17,13 +17,18 @@ import { PDFDocument } from 'pdf-lib';
 import { COURT_CONSTANTS, RIGHTS_LIST } from '../constants';
 import { formatRadicado } from '../lib/formatters';
 import {
+  buildRadicadoPrimeraInstancia,
+  cuiBase21,
+  deriveRadicadoSegundaInstancia,
+} from '../lib/radicado-cui';
+import {
   base64ToUint8Array,
   insertCaseDocumentRows,
   removeCaseDocumentObjects,
   uploadCaseAttachment,
 } from '../lib/case-document-storage';
 import { notebookCodeForCaseType, NOTEBOOK_SI_C01_PRINCIPAL } from '../lib/expediente-notebook';
-import { sgdeMigrateOriginToCase, type SgdePreflightResult } from '../lib/sgde-api';
+import { sgdeCreateExpediente, sgdeMigrateOriginToCase, sgdeSyncDocuments, type SgdePreflightResult } from '../lib/sgde-api';
 import {
   extractSegundaInstanciaFromParsedEmail,
   shouldUseSegundaInstanciaFlow,
@@ -287,6 +292,9 @@ export default function NewCase() {
   const [sgdePreflight, setSgdePreflight] = useState<SgdePreflightResult | null>(null);
   const [sgdeNodeIdHint, setSgdeNodeIdHint] = useState<string | null>(null);
   const [segundaPrefillNote, setSegundaPrefillNote] = useState<string | null>(null);
+  /** Radicados Tutelia con la misma base CUI (21 díg.) para calcular sufijo 01, 02… */
+  const [segundaKnownRadicados, setSegundaKnownRadicados] = useState<string[]>([]);
+  const [segundaSuffixLoading, setSegundaSuffixLoading] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -418,7 +426,51 @@ export default function NewCase() {
   }, [resetNewCaseWizard]);
 
   useEffect(() => {
-    if (!parsedData) return;
+    if (caseFlowType !== 'tutela_segunda') {
+      setSegundaKnownRadicados([]);
+      setSegundaSuffixLoading(false);
+      return;
+    }
+    const base = cuiBase21(originRadicado);
+    if (!base) {
+      setSegundaKnownRadicados([]);
+      setSegundaSuffixLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setSegundaSuffixLoading(true);
+    void (async () => {
+      try {
+        await ensureSupabaseSessionForWrites();
+        const res = await supabase.from('cases').select('radicado').like('radicado', `${base}%`);
+        if (cancelled) return;
+        if (res.error) throw res.error;
+        const list = (res.data ?? [])
+          .map((row) => String(row.radicado || '').replace(/\D/g, ''))
+          .filter((d) => d.length === 23 && d.startsWith(base));
+        setSegundaKnownRadicados(list);
+      } catch (e) {
+        if (!cancelled) {
+          console.warn('No se pudieron consultar radicados hermanos (segunda instancia)', e);
+          setSegundaKnownRadicados([]);
+        }
+      } finally {
+        if (!cancelled) setSegundaSuffixLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [caseFlowType, originRadicado]);
+
+  useEffect(() => {
+    if (caseFlowType === 'tutela_segunda') {
+      setConsecutiveLoading(false);
+    }
+  }, [caseFlowType]);
+
+  useEffect(() => {
+    if (!parsedData || caseFlowType === 'tutela_segunda') return;
     let cancelled = false;
     setConsecutiveLoading(true);
     void (async () => {
@@ -458,7 +510,7 @@ export default function NewCase() {
     return () => {
       cancelled = true;
     };
-  }, [parsedData, courtId]);
+  }, [parsedData, courtId, caseFlowType]);
 
   useEffect(() => {
     if (!parsedData || radicationResult) return;
@@ -547,14 +599,28 @@ export default function NewCase() {
     }
   };
 
-  const getFullRadicado = (cons: string) => {
-    const year = new Date().getFullYear().toString();
-    return `${COURT_CONSTANTS.CITY_CODE}${COURT_CONSTANTS.ENTITY_CODE}${COURT_CONSTANTS.SPECIALTY_CODE}${COURT_CONSTANTS.DESPACHO_CODE}${year}${cons.padStart(5, '0')}${COURT_CONSTANTS.INSTANCE_CODE}`;
-  };
+  const derivedSegundaRadicado = useMemo(
+    () =>
+      caseFlowType === 'tutela_segunda'
+        ? deriveRadicadoSegundaInstancia(originRadicado, segundaKnownRadicados)
+        : null,
+    [caseFlowType, originRadicado, segundaKnownRadicados]
+  );
+
+  const getFullRadicado = (cons: string) =>
+    buildRadicadoPrimeraInstancia(cons, {
+      cityCode: COURT_CONSTANTS.CITY_CODE,
+      entityCode: COURT_CONSTANTS.ENTITY_CODE,
+      specialtyCode: COURT_CONSTANTS.SPECIALTY_CODE,
+      despachoCode: COURT_CONSTANTS.DESPACHO_CODE,
+      instanceCode: COURT_CONSTANTS.INSTANCE_CODE,
+    });
 
   const consecutiveNum = parseInt(consecutive.replace(/\D/g, ''), 10);
-  const consecutiveReady =
-    !consecutiveLoading && consecutive.length > 0 && !Number.isNaN(consecutiveNum) && consecutiveNum >= 1;
+  const isSegundaFlow = caseFlowType === 'tutela_segunda';
+  const consecutiveReady = isSegundaFlow
+    ? !segundaSuffixLoading && Boolean(derivedSegundaRadicado)
+    : !consecutiveLoading && consecutive.length > 0 && !Number.isNaN(consecutiveNum) && consecutiveNum >= 1;
 
   const handleRadicate = async () => {
     console.log("Iniciando radicación...");
@@ -563,7 +629,11 @@ export default function NewCase() {
       return;
     }
     if (!consecutiveReady) {
-      setError('Espere el consecutivo sugerido o indique un número válido (1–99999).');
+      setError(
+        isSegundaFlow
+          ? 'Indique el radicado de origen de 23 dígitos para derivar el CUI de segunda instancia.'
+          : 'Espere el consecutivo sugerido o indique un número válido (1–99999).'
+      );
       return;
     }
 
@@ -611,8 +681,10 @@ export default function NewCase() {
         throw new Error('No hay sesión activa. Vuelva a iniciar sesión local o con Google para radicar.');
       }
 
-      const finalConsecutive = consecutive.replace(/\D/g, '').padStart(5, '0');
-      const radicadoFormatted = getFullRadicado(finalConsecutive);
+      const radicadoFormatted =
+        flow === 'tutela_segunda'
+          ? (derivedSegundaRadicado as string)
+          : getFullRadicado(consecutive.replace(/\D/g, '').padStart(5, '0'));
       console.log('Radicado generado:', radicadoFormatted);
 
       let dup;
@@ -639,7 +711,7 @@ export default function NewCase() {
 
       const { data: courtRow, error: courtFetchErr } = await supabase
         .from('courts')
-        .select('sustanciador_assignment_mode, sustanciador_rr_cursor')
+        .select('sustanciador_assignment_mode, sustanciador_rr_cursor, sgde_auto_create_on_radicacion')
         .eq('id', courtId)
         .maybeSingle();
       if (courtFetchErr) throw courtFetchErr;
@@ -838,6 +910,58 @@ export default function NewCase() {
         const { error: delErr } = await supabase.from('cases').delete().eq('id', caseId);
         if (delErr) console.error('No se pudo revertir el expediente tras fallo en anexos:', delErr);
         throw docErr;
+      }
+
+      if (flow === 'tutela_primera' && courtRow?.sgde_auto_create_on_radicacion !== false) {
+        try {
+          const sgdeRes = await sgdeCreateExpediente({ caseId, uploadDocuments: true });
+          const { data: u } = await supabase.auth.getUser();
+          const uname = u.user?.user_metadata?.full_name || u.user?.email || 'Sistema';
+          const sgdeAct = deepSanitizeForPostgresInsert({
+            case_id: caseId,
+            type: 'sgde_create',
+            description: sgdeRes.message || 'Expediente creado o enlazado en SGDE.',
+            user_id: u.user?.id ?? null,
+            user_name: String(uname),
+            metadata: {
+              sgde_root_id: sgdeRes.sgdeRootId,
+              ya_existe: sgdeRes.yaExiste ?? false,
+              uploaded: sgdeRes.uploaded,
+              upload_failed: sgdeRes.uploadFailed,
+            },
+          });
+          const { error: sgdeActErr } = await supabase.from('case_actions').insert(sgdeAct);
+          if (sgdeActErr) console.error('Actuación SGDE create:', sgdeActErr);
+          try {
+            const syncRes = await sgdeSyncDocuments({ caseId, uploadMissing: true });
+            const syncAct = deepSanitizeForPostgresInsert({
+              case_id: caseId,
+              type: 'sgde_sync',
+              description: syncRes.message || 'Sincronización documental con SGDE.',
+              user_id: u.user?.id ?? null,
+              user_name: String(uname),
+              metadata: {
+                linked: syncRes.linked,
+                local_only: syncRes.localOnly,
+                sgde_only: syncRes.sgdeOnly,
+                uploaded: syncRes.uploaded,
+              },
+            });
+            await supabase.from('case_actions').insert(syncAct);
+          } catch (syncErr) {
+            console.error('Sync SGDE tras radicación:', syncErr);
+          }
+        } catch (sgdeErr) {
+          console.error('Creación SGDE tras radicación:', sgdeErr);
+          try {
+            await supabase
+              .from('cases')
+              .update({ sgde_sync_status: 'error', updated_at: new Date().toISOString() })
+              .eq('id', caseId);
+          } catch {
+            /* columna sgde_sync_status puede no existir aún */
+          }
+        }
       }
 
       if (flow === 'tutela_segunda') {
@@ -1263,6 +1387,16 @@ export default function NewCase() {
               consecutiveLoading={consecutiveLoading}
               consecutiveReady={consecutiveReady}
               radicadoConflict={radicadoConflict}
+              segundaInstancia={
+                caseFlowType === 'tutela_segunda'
+                  ? {
+                      originRadicado,
+                      derivedRadicado: derivedSegundaRadicado,
+                      suffixLoading: segundaSuffixLoading,
+                      knownRadicados: segundaKnownRadicados,
+                    }
+                  : undefined
+              }
             />
           </div>
 

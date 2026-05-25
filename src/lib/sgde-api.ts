@@ -99,6 +99,92 @@ export async function deleteSgdeCredentials(): Promise<void> {
   if (!res.ok) throw new Error(body.error || 'No se pudieron eliminar las credenciales SGDE.');
 }
 
+export type CreateSgdeExpedienteResult = {
+  ok: boolean;
+  sgdeRootId: string;
+  yaExiste?: boolean;
+  uploaded: number;
+  uploadFailed: number;
+  uploadErrors: string[];
+  message: string;
+  error?: string;
+};
+
+export type SgdeDocumentSyncItem = {
+  status: 'linked' | 'local_only' | 'sgde_only';
+  name: string;
+  documentId?: string;
+  sgdeId?: string;
+  sgdeFolderPath?: string;
+  notebookCode?: string;
+};
+
+export type SgdeSyncDocumentsResult = {
+  ok: boolean;
+  linked: number;
+  localOnly: number;
+  sgdeOnly: number;
+  uploaded: number;
+  uploadFailed: number;
+  items: SgdeDocumentSyncItem[];
+  sgdeOnlyItems: SgdeDocumentSyncItem[];
+  errors: string[];
+  message: string;
+  sgdeRootId: string;
+};
+
+export async function sgdeSyncDocuments(opts: {
+  caseId: string;
+  uploadMissing?: boolean;
+}): Promise<SgdeSyncDocumentsResult> {
+  const res = await fetch('/api/sgde/sync-documents', {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify({
+      caseId: opts.caseId,
+      uploadMissing: opts.uploadMissing,
+    }),
+  });
+  const body = (await res.json().catch(() => ({}))) as SgdeSyncDocumentsResult & {
+    error?: string;
+    code?: string;
+  };
+  if (!res.ok) {
+    const msg =
+      body.code === 'USER_NOT_CONFIGURED'
+        ? 'Configure su usuario y contraseña SGDE en Ajustes.'
+        : body.error || `Error al sincronizar (${res.status})`;
+    throw new Error(msg);
+  }
+  return body;
+}
+
+export async function sgdeCreateExpediente(opts: {
+  caseId: string;
+  uploadDocuments?: boolean;
+}): Promise<CreateSgdeExpedienteResult> {
+  const res = await fetch('/api/sgde/create-expediente', {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify({
+      caseId: opts.caseId,
+      uploadDocuments: opts.uploadDocuments,
+    }),
+  });
+  const body = (await res.json().catch(() => ({}))) as CreateSgdeExpedienteResult & {
+    error?: string;
+    code?: string;
+  };
+  if (!res.ok) {
+    const msg =
+      body.code === 'USER_NOT_CONFIGURED'
+        ? 'Configure su usuario y contraseña SGDE en Ajustes.'
+        : body.error || `Error al crear expediente en SGDE (${res.status})`;
+    throw new Error(msg);
+  }
+  return body;
+}
+
 export async function sgdePreflightOrigin(
   originRadicado: string,
   sgdeNodeIdHint?: string | null
@@ -229,6 +315,44 @@ export function parseSegundaInstanciaClient(
     repartoSecuencia,
     sgdeNodeId,
   };
+}
+
+export type SgdeSignDocumentResult = {
+  ok: boolean;
+  message: string;
+  refreshed?: boolean;
+  portalBaseUrl?: string;
+  error?: string;
+  code?: string;
+};
+
+export async function sgdeSignDocument(opts: {
+  caseId: string;
+  documentId: string;
+  username?: string;
+  password?: string;
+  refreshLocal?: boolean;
+}): Promise<SgdeSignDocumentResult> {
+  const res = await fetch('/api/sgde/sign-document', {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify({
+      caseId: opts.caseId,
+      documentId: opts.documentId,
+      username: opts.username,
+      password: opts.password,
+      refreshLocal: opts.refreshLocal,
+    }),
+  });
+  const body = (await res.json().catch(() => ({}))) as SgdeSignDocumentResult;
+  if (!res.ok) {
+    const msg =
+      body.code === 'USER_NOT_CONFIGURED'
+        ? 'Configure su usuario y contraseña SGDE en Ajustes.'
+        : body.error || body.message || `Error al firmar (${res.status})`;
+    throw new Error(msg);
+  }
+  return body;
 }
 
 export const SGDE_RECOMMENDED_LABELS: Record<string, string> = {
