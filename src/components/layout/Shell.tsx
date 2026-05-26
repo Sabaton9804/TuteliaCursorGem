@@ -4,6 +4,7 @@ import { Scale, X, Menu, AlertTriangle, ChevronsLeft, ChevronsRight } from 'luci
 import { supabase, isSupabaseConfigured, assertSupabaseConfigured } from '../../lib/supabase';
 import { resolveCourtSeedLoginEmail } from '../../lib/court-seed-auth';
 import { getDevAdminEmail, resolveDevAdminPassword } from '../../lib/dev-admin-auth';
+import { isSuperuserLoginAlias, SUPERUSER_EMAIL } from '../../lib/superuser-auth';
 import { getSupabaseAuthErrorMessage, isLocalSupabaseAnonymousDisabled } from '../../lib/supabase-auth-errors';
 import { rowToUserProfile } from '../../lib/supabase-mappers';
 import { DEFAULT_DEMO_COURT_ID } from '../../lib/default-court';
@@ -237,6 +238,31 @@ export default function Shell({ children }: ShellProps) {
     try {
       assertSupabaseConfigured();
 
+      if (isSuperuserLoginAlias(loginUser)) {
+        const email = SUPERUSER_EMAIL;
+        const { data: signData, error: signErr } = await supabase.auth.signInWithPassword({
+          email,
+          password: loginPass,
+        });
+        if (signErr) throw signErr;
+        const su = signData.user;
+        if (!su) throw new Error('No se recibió usuario de Supabase tras el inicio de sesión.');
+        setLocalModeWithoutSupabase(false);
+        const mockUser = mapSessionUser(su);
+        localStorage.setItem('tutelia_mock_user', JSON.stringify(mockUser));
+        setUser(mockUser);
+        const { data: row } = await supabase.from('profiles').select('*').eq('id', su.id).maybeSingle();
+        if (row) {
+          setProfile(rowToUserProfile(row as Record<string, unknown>));
+        } else {
+          throw new Error(
+            'Superusuario sin perfil. Ejecute npm run seed:superuser y la migración 20260526120000_profiles_superuser.sql.'
+          );
+        }
+        setLoginError(null);
+        return;
+      }
+
       if (loginUser === 'admin' && loginPass === 'admin') {
         const email = getDevAdminEmail();
         const { data: signData, error: signErr } = await supabase.auth.signInWithPassword({
@@ -250,13 +276,35 @@ export default function Shell({ children }: ShellProps) {
         const mockUser = mapSessionUser(su);
         localStorage.setItem('tutelia_mock_user', JSON.stringify(mockUser));
         setUser(mockUser);
-        setProfile({
-          id: mockUser.uid,
-          email: mockUser.email || '',
-          name: mockUser.displayName,
-          role: 'admin',
-          courtId: DEFAULT_DEMO_COURT_ID,
-        });
+        const { data: row } = await supabase.from('profiles').select('*').eq('id', su.id).maybeSingle();
+        if (row) {
+          setProfile(rowToUserProfile(row as Record<string, unknown>));
+        } else {
+          const newProfile: UserProfile = {
+            id: su.id,
+            email: su.email || email,
+            name: mockUser.displayName,
+            role: 'admin',
+            courtId: DEFAULT_DEMO_COURT_ID,
+          };
+          const { error: profileErr } = await supabase.from('profiles').upsert(
+            {
+              id: newProfile.id,
+              email: newProfile.email,
+              name: newProfile.name,
+              role: newProfile.role,
+              court_id: newProfile.courtId,
+            },
+            { onConflict: 'id' }
+          );
+          if (profileErr) {
+            console.error('No se pudo crear perfil admin en Supabase:', profileErr);
+            throw new Error(
+              'Inició sesión en Auth pero no se pudo guardar el perfil (RLS). Ejecute npm run seed:dev-admin o cree la fila en public.profiles.'
+            );
+          }
+          setProfile(newProfile);
+        }
         setLoginError(null);
         return;
       }

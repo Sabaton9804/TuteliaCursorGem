@@ -40,14 +40,15 @@ function semaforoFromRow(row: ExpedienteViewRow) {
 }
 
 export default function Dashboard() {
-  const { courtId } = useSessionCourt();
+  const { courtId, profile } = useSessionCourt();
+  const allCourts = Boolean(profile?.isSuperuser);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const navigate = useNavigate();
 
   const { data: cases = [], isPending, error } = useQuery({
-    queryKey: courtCasesQueryKey(courtId, DASHBOARD_ORDER),
-    queryFn: () => fetchCourtCasesForList(courtId, DASHBOARD_ORDER),
+    queryKey: [...courtCasesQueryKey(courtId, DASHBOARD_ORDER), allCourts ? 'all-courts' : 'one-court'],
+    queryFn: () => fetchCourtCasesForList(courtId, DASHBOARD_ORDER, { allCourts }),
   });
 
   const { data: courtAssignmentMode } = useQuery({

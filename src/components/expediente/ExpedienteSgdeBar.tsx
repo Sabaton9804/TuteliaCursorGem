@@ -20,6 +20,7 @@ import {
   documentSgdeSyncStatus,
 } from '../../lib/expediente-sgde-sync';
 import type { Document } from '../../types';
+import { expedientePiezasParaLista } from '../../lib/expediente-viewer-doc';
 import type { SgdeTreeNodeJson } from './CaseSgdePanel';
 
 async function authHeaders(): Promise<HeadersInit> {
@@ -136,6 +137,7 @@ export function ExpedienteSgdeBar({
 
   const linkStatus = caseSgdeLinkStatus(caseItem);
   const syncSummary = countDocumentSyncSummary(docs);
+  const piezasCount = expedientePiezasParaLista(docs).length;
 
   const loadTree = useCallback(async () => {
     setErr(null);
@@ -276,7 +278,7 @@ export function ExpedienteSgdeBar({
             </p>
             <p className="text-sm font-semibold text-slate-800">{caseSgdeLinkLabel(linkStatus)}</p>
             <p className="text-[11px] text-slate-500">
-              {syncSummary.total} piezas
+              {piezasCount} pieza{piezasCount === 1 ? '' : 's'}
               {syncSummary.linked > 0 ? ` · ${syncSummary.linked} sincronizadas` : ''}
               {syncSummary.localOnly > 0 ? ` · ${syncSummary.localOnly} pendientes Tutelia→SGDE` : ''}
               {syncReport && syncReport.sgdeOnly > 0 ? ` · ${syncReport.sgdeOnly} solo SGDE` : ''}

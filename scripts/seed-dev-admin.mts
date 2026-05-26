@@ -68,7 +68,20 @@ const { data: created, error: createErr } = await admin.auth.admin.createUser({
 });
 
 if (!createErr && created.user) {
-  console.log(`Usuario creado: ${email} (id ${created.user.id}). Perfil: trigger handle_new_user si la migración está aplicada.`);
+  const { error: profileErr } = await admin.from('profiles').upsert(
+    {
+      id: created.user.id,
+      email,
+      name: 'Administrador',
+      role: 'admin',
+      court_id: 'court-1',
+    },
+    { onConflict: 'id' }
+  );
+  if (profileErr) {
+    console.warn('Usuario Auth creado; profiles:', profileErr.message);
+  }
+  console.log(`Usuario creado: ${email} (id ${created.user.id}).`);
   process.exit(0);
 }
 
@@ -99,6 +112,19 @@ if (msg.includes('already') || msg.includes('registered') || msg.includes('exist
   if (updErr) {
     console.error('Error al actualizar contraseña:', updErr.message);
     process.exit(1);
+  }
+  const { error: profileErr } = await admin.from('profiles').upsert(
+    {
+      id: found.id,
+      email,
+      name: 'Administrador',
+      role: 'admin',
+      court_id: 'court-1',
+    },
+    { onConflict: 'id' }
+  );
+  if (profileErr) {
+    console.warn('Contraseña OK; no se pudo upsert profiles:', profileErr.message);
   }
   console.log(`Usuario ya existía; contraseña actualizada para ${email}.`);
   process.exit(0);

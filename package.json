@@ -13,6 +13,8 @@
     "verify:supabase": "tsx scripts/verify-supabase.mts",
     "seed:dev-admin": "tsx scripts/seed-dev-admin.mts",
     "seed:court-users": "tsx scripts/seed-court-users.mts",
+    "seed:superuser": "tsx scripts/seed-superuser.mts",
+    "db:apply-sql": "tsx scripts/apply-sql-file.mts",
     "analyze:eml": "tsx scripts/analyze-eml.mts",
     "demo:segunda-eml": "tsx scripts/demo-segunda-instancia-eml.mts",
     "supabase:ensure-case-documents": "tsx scripts/ensure-case-documents-bucket.mts",

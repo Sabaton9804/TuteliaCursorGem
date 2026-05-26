@@ -42,6 +42,11 @@ function authorizeEndpoint(tenantId: string): string {
 
 export function buildOutlookAuthorizeUrl(userId: string, state: string): string {
   const { clientId, tenantId } = getOutlookCredentialEnv();
+  if (!clientId) {
+    throw new Error(
+      'Outlook no configurado: falta OUTLOOK_CLIENT_ID en .env del servidor. Reinicie npm run dev tras guardar.'
+    );
+  }
   const params = new URLSearchParams({
     client_id: clientId,
     response_type: 'code',

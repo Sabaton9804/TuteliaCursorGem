@@ -30,7 +30,7 @@ export function extractSegundaInstanciaFromParsedEmail(parsed: {
   const text = typeof parsed.text === 'string' ? parsed.text : '';
   const html = typeof parsed.html === 'string' ? parsed.html : '';
   const embedded = parsed.segundaInstancia as SegundaInstanciaEmailParse | undefined;
-  if (embedded?.isSegundaInstancia && embedded.originRadicado) {
+  if (embedded && (embedded.isSegundaInstancia || embedded.originRadicado)) {
     return {
       ...embedded,
       sgdeNodeId: embedded.sgdeNodeId ?? extractSgdeNodeIdFromText(`${subject}\n${text}\n${html}`),
@@ -41,4 +41,9 @@ export function extractSegundaInstanciaFromParsedEmail(parsed: {
 
 export function shouldUseSegundaInstanciaFlow(si: SegundaInstanciaEmailParse): boolean {
   return Boolean(si.isSegundaInstancia && si.originRadicado);
+}
+
+/** Correo de reparto / remisión / traslado con CUI listo para consultar SGDE. */
+export function shouldTriggerSgdeAfterEmailParse(si: SegundaInstanciaEmailParse): boolean {
+  return Boolean(si.originRadicado?.replace(/\D/g, '').length === 23);
 }

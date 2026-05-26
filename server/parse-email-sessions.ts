@@ -17,7 +17,7 @@ export type ParseSession = {
 };
 
 const parseSessions = new Map<string, ParseSession>();
-export const PARSE_SESSION_TTL_MS = 60 * 60 * 1000;
+export const PARSE_SESSION_TTL_MS = 4 * 60 * 60 * 1000;
 
 export function sweepParseSessions() {
   const now = Date.now();
@@ -29,6 +29,13 @@ export function sweepParseSessions() {
 export function getParseSession(sessionId: string): ParseSession | undefined {
   sweepParseSessions();
   return parseSessions.get(sessionId);
+}
+
+/** Extiende la sesión mientras el usuario revisa adjuntos en radicación. */
+export function touchParseSession(sessionId: string): void {
+  const session = parseSessions.get(sessionId);
+  if (!session) return;
+  parseSessions.set(sessionId, { ...session, createdAt: Date.now() });
 }
 
 export function createParseSession(attachments: ParseSessionRow[]): string {

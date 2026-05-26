@@ -165,6 +165,7 @@ export function rowToUserProfile(row: Record<string, unknown>): UserProfile {
     name: String(row.name ?? ''),
     role: parseUserRole(row.role),
     courtId: String(row.court_id ?? DEFAULT_DEMO_COURT_ID),
+    isSuperuser: row.is_superuser === true,
   };
 }
 

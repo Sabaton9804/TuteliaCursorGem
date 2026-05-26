@@ -28,17 +28,32 @@ import {
   uploadCaseAttachment,
 } from '../lib/case-document-storage';
 import { notebookCodeForCaseType, NOTEBOOK_SI_C01_PRINCIPAL } from '../lib/expediente-notebook';
-import { sgdeCreateExpediente, sgdeMigrateOriginToCase, sgdeSyncDocuments, type SgdePreflightResult } from '../lib/sgde-api';
+import {
+  sgdeCreateExpediente,
+  sgdeMigrateOriginToCase,
+  sgdePublishSegundaImpugnacion,
+  sgdeSyncDocuments,
+  type SgdePreflightResult,
+} from '../lib/sgde-api';
 import {
   extractSegundaInstanciaFromParsedEmail,
+  shouldTriggerSgdeAfterEmailParse,
   shouldUseSegundaInstanciaFlow,
 } from '../lib/segunda-instancia-email';
 import { CaseSgdeSegundaPreflightPanel } from '../components/new-case/CaseSgdeSegundaPreflightPanel';
 import { fetchParseSessionAttachment, uint8ArrayToBase64 } from '../lib/parse-session-attachment';
+import { filesToNewCaseAttachments } from '../lib/new-case-attachment';
+import {
+  buildEmailAsAttachment,
+  emailBodyToPdfBytes,
+  isEmailBodyAttachment,
+  isMergeableAttachment,
+} from '../lib/new-case-email-attachment';
 import { NEW_CASE_FRESH_EVENT, NEW_CASE_FRESH_NAV_FLAG } from '../lib/new-case-nav';
 import { guessDerechoTuteladoCodeFromText } from '../lib/sierju-case-codes';
 import { startOfLocalDay, tenthBusinessDayDeadline } from '../lib/business-days';
 import { useSessionCourt } from '../contexts/SessionCourtContext';
+import { assertRadicacionProfileAccess } from '../lib/radicacion-profile-access';
 import {
   computeInitialAssignedTo,
   parseSustanciadorAssignmentMode,
@@ -56,10 +71,11 @@ import { CaseEmailParser } from '../components/new-case/CaseEmailParser';
 import { CaseFormSegundaInstancia } from '../components/new-case/CaseFormSegundaInstancia';
 import { CaseFormConsultaDesacato } from '../components/new-case/CaseFormConsultaDesacato';
 import { CasePdfViewer } from '../components/new-case/CasePdfViewer';
+import { CaseEmailHtmlPreview } from '../components/new-case/CaseEmailHtmlPreview';
 import { CaseLegalAnalysisPanel } from '../components/new-case/CaseLegalAnalysisPanel';
 
 const NEW_CASE_DRAFT_KEY = 'tutelia_new_case_draft';
-const AI_ANALYSIS_CACHE_KEY = 'tutelia_ai_analysis_cache_v2';
+const AI_ANALYSIS_CACHE_KEY = 'tutelia_ai_analysis_cache_v4';
 
 function normalizeLegalAnalysis(raw: unknown): LegalAnalysis {
   const o = raw as Record<string, unknown>;
@@ -158,8 +174,16 @@ function getUserFriendlyAiError(err: any): string {
 }
 
 function getUserFriendlyRadicadoError(err: any): string {
-  const rawMessage = String(err?.message || '').toLowerCase();
-  const code = String(err?.code || '').toLowerCase();
+  let message = String(err?.message || '');
+  let code = String(err?.code || '').toLowerCase();
+  try {
+    const parsed = JSON.parse(message) as { error?: string; code?: string };
+    if (typeof parsed.error === 'string' && parsed.error.trim()) message = parsed.error;
+    if (typeof parsed.code === 'string') code = parsed.code.toLowerCase();
+  } catch {
+    /* mensaje plano */
+  }
+  const rawMessage = message.toLowerCase();
 
   if (typeof err?.code === 'string' && (err.code.startsWith('auth') || err.code === '42501')) {
     return getSupabaseAuthErrorMessage(err);
@@ -175,7 +199,12 @@ function getUserFriendlyRadicadoError(err: any): string {
     rawMessage.includes('insufficient') ||
     code === '42501'
   ) {
-    return 'Su usuario no tiene permisos en la base de datos. Verifique sesión y políticas RLS en Supabase.';
+    return (
+      'Su usuario no tiene permisos en la base de datos (RLS). Compruebe que exista su fila en public.profiles ' +
+      'con el mismo court_id que su despacho (p. ej. court-1), que haya iniciado sesión en Tutelia (no solo modo local) ' +
+      'y que en Supabase esté aplicada la migración supabase/migrations/20260518120000_core_tables_rls_by_court.sql ' +
+      'o que las políticas de cases permitan INSERT a su perfil.'
+    );
   }
 
   if (rawMessage.includes('bucket not found')) {
@@ -201,7 +230,7 @@ function getUserFriendlyRadicadoError(err: any): string {
     );
   }
 
-  return err?.message || 'Error desconocido al radicar expediente.';
+  return message || 'Error desconocido al radicar expediente.';
 }
 
 function NewCaseOriginFlowFields({
@@ -257,17 +286,18 @@ function NewCaseOriginFlowFields({
 }
 
 export default function NewCase() {
-  const { courtId } = useSessionCourt();
+  const { courtId, profile: sessionProfile } = useSessionCourt();
   const [file, setFile] = useState<File | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const [parsedData, setParsedData] = useState<any>(null);
   const [attachments, setAttachments] = useState<any[]>([]);
   const [parseSessionId, setParseSessionId] = useState<string | null>(null);
-  const [selectedDocIndex, setSelectedDocIndex] = useState<number>(-1); // -1 for CorreoReparto
+  const [selectedDocIndex, setSelectedDocIndex] = useState<number>(0);
   const [selectedForMerge, setSelectedForMerge] = useState<number[]>([]);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editingName, setEditingName] = useState('');
   const [isMerging, setIsMerging] = useState(false);
+  const [isAddingAttachments, setIsAddingAttachments] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<LegalAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -298,23 +328,64 @@ export default function NewCase() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  const applySegundaFieldsExtract = useCallback(
+    (extract: { appellant?: string | null; originRuling?: string | null } | null) => {
+      if (!extract) return;
+      if (extract.appellant === 'accionante' || extract.appellant === 'accionado') {
+        setAppellantSel(extract.appellant);
+      }
+      if (extract.originRuling === 'concedio' || extract.originRuling === 'nego') {
+        setOriginRulingSel(extract.originRuling);
+      }
+    },
+    []
+  );
+
+  const segundaEmailDigest = useMemo(() => {
+    if (!parsedData) return null;
+    const subject = String((parsedData as { subject?: unknown }).subject || '');
+    const text =
+      typeof (parsedData as { text?: unknown }).text === 'string'
+        ? (parsedData as { text: string }).text
+        : '';
+    const html =
+      typeof (parsedData as { html?: unknown }).html === 'string'
+        ? (parsedData as { html: string }).html
+        : '';
+    const combined = `${subject}\n${text}\n${html}`.trim();
+    return combined.length > 0 ? combined.slice(0, 120_000) : null;
+  }, [parsedData]);
+
   const applySegundaInstanciaPrefill = useCallback(
     (parsed: Record<string, unknown>, opts?: { forceFlowType?: boolean }) => {
       const si = extractSegundaInstanciaFromParsedEmail(parsed);
-      if (!shouldUseSegundaInstanciaFlow(si)) return false;
-      if (opts?.forceFlowType || !caseFlowType) {
+      const userChoseSegunda = opts?.forceFlowType || caseFlowType === 'tutela_segunda';
+      const autoSegunda = shouldUseSegundaInstanciaFlow(si);
+      if (!userChoseSegunda && !autoSegunda) return false;
+
+      if (autoSegunda || opts?.forceFlowType || !caseFlowType) {
         setCaseFlowType('tutela_segunda');
       }
       if (si.originRadicado) setOriginRadicado(si.originRadicado);
       if (si.originCourt) setOriginCourt(si.originCourt);
       if (si.sgdeNodeId) setSgdeNodeIdHint(si.sgdeNodeId);
-      setSegundaPrefillNote(
-        `Origen detectado en el correo: ${si.originCourt || 'juzgado en SGDE'} · CUI ${si.originRadicado}` +
-          (si.repartoSecuencia ? ` · Reparto ${si.repartoSecuencia}` : '')
-      );
-      return true;
+      applySegundaFieldsExtract(si);
+
+      if (autoSegunda && si.originRadicado) {
+        setSegundaPrefillNote(
+          `Origen detectado en el correo: ${si.originCourt || 'juzgado en SGDE'} · CUI ${si.originRadicado}` +
+            (si.repartoSecuencia ? ` · Reparto ${si.repartoSecuencia}` : '')
+        );
+      } else if (si.originRadicado) {
+        setSegundaPrefillNote(
+          `CUI ${si.originRadicado} extraído del correo (p. ej. traslado). Revise en SGDE y confirme que es el radicado de origen de 23 dígitos.`
+        );
+      } else {
+        setSegundaPrefillNote(null);
+      }
+      return Boolean(si.originRadicado || si.originCourt || si.sgdeNodeId);
     },
-    [caseFlowType]
+    [caseFlowType, applySegundaFieldsExtract]
   );
 
   useEffect(() => {
@@ -340,8 +411,10 @@ export default function NewCase() {
       };
       setParsedData(data);
       setParseSessionId(typeof data.parseSessionId === 'string' ? data.parseSessionId : null);
-      setAttachments(Array.isArray(data.attachments) ? data.attachments : []);
-      setSelectedDocIndex(-1);
+      const outlookAtt = Array.isArray(data.attachments) ? data.attachments : [];
+      const hasEmail = outlookAtt.some((a) => isEmailBodyAttachment(a as { type?: string }));
+      setAttachments(hasEmail ? outlookAtt : [buildEmailAsAttachment(data), ...outlookAtt]);
+      setSelectedDocIndex(0);
       setError(null);
       applySegundaInstanciaPrefill(data, { forceFlowType: true });
       sessionStorage.removeItem('tutelia_outlook_radicacion');
@@ -358,7 +431,7 @@ export default function NewCase() {
     setParsedData(null);
     setAttachments([]);
     setParseSessionId(null);
-    setSelectedDocIndex(-1);
+    setSelectedDocIndex(0);
     setSelectedForMerge([]);
     setEditingIndex(null);
     setEditingName('');
@@ -408,9 +481,19 @@ export default function NewCase() {
       }
       if (typeof draft.conductDescription === 'string') setConductDescription(draft.conductDescription);
       if (draft.parsedData) setParsedData(draft.parsedData);
-      if (Array.isArray(draft.attachments)) setAttachments(draft.attachments);
+      if (Array.isArray(draft.attachments)) {
+        const draftAtt = draft.attachments as Array<{ type?: string }>;
+        const hasEmail = draftAtt.some((a) => isEmailBodyAttachment(a));
+        setAttachments(
+          hasEmail
+            ? draft.attachments
+            : [buildEmailAsAttachment(draft.parsedData || {}), ...draft.attachments]
+        );
+      }
       setParseSessionId(typeof draft.parseSessionId === 'string' ? draft.parseSessionId : null);
-      if (typeof draft.selectedDocIndex === 'number') setSelectedDocIndex(draft.selectedDocIndex);
+      if (typeof draft.selectedDocIndex === 'number') {
+        setSelectedDocIndex(draft.selectedDocIndex < 0 ? 0 : draft.selectedDocIndex);
+      }
       if (Array.isArray(draft.selectedForMerge)) setSelectedForMerge(draft.selectedForMerge);
       if (draft.aiAnalysis) setAiAnalysis(normalizeLegalAnalysis(draft.aiAnalysis));
       if (typeof draft.consecutive === 'string') setConsecutive(draft.consecutive);
@@ -543,10 +626,19 @@ export default function NewCase() {
     return () => window.clearTimeout(t);
   }, [radicationResult, navigate]);
 
+  const clearSgdeOriginState = useCallback(() => {
+    setOriginRadicado('');
+    setOriginCourt('');
+    setSgdePreflight(null);
+    setSgdeNodeIdHint(null);
+    setSegundaPrefillNote(null);
+  }, []);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       setFile(e.target.files[0]);
       setError(null);
+      clearSgdeOriginState();
     }
   };
 
@@ -554,20 +646,18 @@ export default function NewCase() {
     e.preventDefault();
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       setFile(e.dataTransfer.files[0]);
+      clearSgdeOriginState();
     }
-  }, []);
+  }, [clearSgdeOriginState]);
 
   const parseEmail = async () => {
     if (!file) return;
-    if (!caseFlowType) {
-      setError('Seleccione primero el tipo de expediente (tarjeta superior).');
-      return;
-    }
 
     setIsParsing(true);
     setError(null);
     setRadicationResult(null);
     setParseSessionId(null);
+    clearSgdeOriginState();
 
     const formData = new FormData();
     formData.append('email', file);
@@ -586,10 +676,37 @@ export default function NewCase() {
         throw new Error(data.error || `Error al parsear el archivo (${response.status})`);
       }
       setParsedData(data);
-      setParseSessionId(typeof data.parseSessionId === 'string' ? data.parseSessionId : null);
-      setAttachments(data.attachments || []);
-      setSelectedDocIndex(-1);
-      if (caseFlowType === 'tutela_segunda' || extractSegundaInstanciaFromParsedEmail(data).isSegundaInstancia) {
+      const sid = typeof data.parseSessionId === 'string' ? data.parseSessionId : null;
+      setParseSessionId(sid);
+      const rawAttachments = Array.isArray(data.attachments) ? data.attachments : [];
+      let hydrated: typeof rawAttachments = [buildEmailAsAttachment(data, file?.name), ...rawAttachments];
+      if (sid && rawAttachments.some((a) => !String(a.content || '').trim() && typeof a.sessionIndex === 'number')) {
+        const hydratedRest = await Promise.all(
+          rawAttachments.map(async (att) => {
+            if (String(att.content || '').trim()) return att;
+            if (typeof att.sessionIndex !== 'number' || att.sessionIndex < 0) return att;
+            try {
+              const u8 = await fetchParseSessionAttachment(sid, att.sessionIndex);
+              return u8.length ? { ...att, content: uint8ArrayToBase64(u8) } : att;
+            } catch {
+              return att;
+            }
+          })
+        );
+        hydrated = [buildEmailAsAttachment(data, file?.name), ...hydratedRest];
+      }
+      setAttachments(hydrated);
+      setSelectedDocIndex(0);
+      const si = extractSegundaInstanciaFromParsedEmail(data);
+      if (shouldTriggerSgdeAfterEmailParse(si)) {
+        applySegundaInstanciaPrefill(data, { forceFlowType: true });
+      } else if (!caseFlowType) {
+        setError('Seleccione el tipo de expediente (el correo no trajo un CUI de 23 dígitos reconocible).');
+        setParsedData(null);
+        setParseSessionId(null);
+        setAttachments([]);
+        return;
+      } else if (caseFlowType === 'tutela_segunda') {
         applySegundaInstanciaPrefill(data, { forceFlowType: true });
       }
     } catch (err) {
@@ -680,6 +797,8 @@ export default function NewCase() {
       if (!authAfter.user) {
         throw new Error('No hay sesión activa. Vuelva a iniciar sesión local o con Google para radicar.');
       }
+
+      await assertRadicacionProfileAccess(supabase, authAfter.user.id, courtId, sessionProfile);
 
       const radicadoFormatted =
         flow === 'tutela_segunda'
@@ -776,13 +895,11 @@ export default function NewCase() {
         caseRow.origin_radicado = null;
         caseRow.appellant = null;
         caseRow.origin_ruling = null;
-        caseRow.conduct_description = null;
       } else if (flow === 'tutela_segunda') {
         caseRow.origin_court = originCourt.trim();
         caseRow.origin_radicado = originRadicado.trim();
         caseRow.appellant = appellantSel;
         caseRow.origin_ruling = originRulingSel;
-        caseRow.conduct_description = null;
       } else {
         caseRow.origin_court = originCourt.trim();
         caseRow.origin_radicado = originRadicado.trim();
@@ -814,33 +931,25 @@ export default function NewCase() {
         console.error('Etapas iniciales (RADICACION):', e);
       }
 
-      const correoOriginalName = file?.name?.trim() || 'Correo de reparto.eml';
-      const docRows: Array<Record<string, unknown>> = [
-        {
-          case_id: caseId,
-          name: 'CorreoReparto',
-          original_name: correoOriginalName,
-          type: 'email_body',
-          size: Math.round((parsedData.text?.length || 0) * 1.5),
-          sort_order: -1,
-          is_from_link: false,
-          notebook_code: notebookCode,
-        },
-      ];
+      const docRows: Array<Record<string, unknown>> = [];
 
       if (attachments.length > 0) {
         for (let i = 0; i < attachments.length; i++) {
           const att = attachments[i];
+          const isEmail = isEmailBodyAttachment(att);
           const hasInlineContent = typeof att.content === 'string' && att.content.length > 0;
           const canFetchSession =
-            parseSessionId && typeof att.sessionIndex === 'number' && !hasInlineContent;
+            !isEmail &&
+            parseSessionId &&
+            typeof att.sessionIndex === 'number' &&
+            !hasInlineContent;
 
-          if (!hasInlineContent && !canFetchSession) {
+          if (!isEmail && !hasInlineContent && !canFetchSession) {
             docRows.push({
               case_id: caseId,
               name: att.filename,
               original_name: att.originalName || att.filename,
-              type: 'attachment',
+              type: isEmail ? 'email_body' : 'attachment',
               size: att.size ?? 0,
               content_type: att.contentType,
               content: null,
@@ -853,7 +962,12 @@ export default function NewCase() {
           }
           let bytes: Uint8Array;
           try {
-            if (canFetchSession && parseSessionId) {
+            if (isEmail) {
+              bytes = await emailBodyToPdfBytes(
+                String(parsedData.subject || 'Correo de reparto'),
+                String(parsedData.text || '')
+              );
+            } else if (canFetchSession && parseSessionId) {
               bytes = await fetchParseSessionAttachment(parseSessionId, att.sessionIndex);
             } else {
               bytes = base64ToUint8Array(att.content);
@@ -863,7 +977,7 @@ export default function NewCase() {
               case_id: caseId,
               name: att.filename,
               original_name: att.originalName || att.filename,
-              type: 'attachment',
+              type: isEmail ? 'email_body' : 'attachment',
               size: att.size ?? 0,
               content_type: att.contentType,
               content: null,
@@ -890,9 +1004,9 @@ export default function NewCase() {
             case_id: caseId,
             name: att.filename,
             original_name: att.originalName || att.filename,
-            type: 'attachment',
+            type: isEmail ? 'email_body' : 'attachment',
             size: att.size ?? bytes.byteLength,
-            content_type: att.contentType,
+            content_type: isEmail ? 'application/pdf' : att.contentType,
             content: null,
             storage_path: up.path,
             is_from_link: !!att.isFromLink,
@@ -968,10 +1082,40 @@ export default function NewCase() {
         const originDigits = originRadicado.replace(/\D/g, '');
         if (
           originDigits.length === 23 &&
-          sgdePreflight &&
-          (sgdePreflight.status === 'listo' || sgdePreflight.status === 'incompleto') &&
-          sgdePreflight.pdfCount > 0
+          sgdePreflight?.sgdeRootId &&
+          (sgdePreflight.status === 'listo' || sgdePreflight.status === 'incompleto')
         ) {
+          try {
+            const pub = await sgdePublishSegundaImpugnacion({
+              caseId,
+              originRadicado: originDigits,
+              sgdeRootId: sgdePreflight.sgdeRootId,
+            });
+            const { data: u } = await supabase.auth.getUser();
+            const uname = u.user?.user_metadata?.full_name || u.user?.email || 'Sistema';
+            const actRow = deepSanitizeForPostgresInsert({
+              case_id: caseId,
+              type: 'sgde_publish_segunda',
+              description: pub.message,
+              user_id: u.user?.id ?? null,
+              user_name: String(uname),
+              metadata: {
+                origin_radicado: originDigits,
+                sgde_root_id: pub.sgdeRootId,
+                impugnacion_folder_id: pub.impugnacionFolderId,
+                uploaded: pub.uploaded,
+                upload_failed: pub.uploadFailed,
+              },
+            });
+            const { error: actErr } = await supabase.from('case_actions').insert(actRow);
+            if (actErr) console.error('Actuación publicación SGDE segunda:', actErr);
+            if (pub.uploadFailed > 0) {
+              console.warn('SGDE impugnación partial failures:', pub.uploadErrors);
+            }
+          } catch (pubErr) {
+            console.error('Publicación SGDE impugnación tras radicación:', pubErr);
+          }
+
           try {
             const mig = await sgdeMigrateOriginToCase({
               caseId,
@@ -986,7 +1130,7 @@ export default function NewCase() {
               const migRow = deepSanitizeForPostgresInsert({
                 case_id: caseId,
                 type: 'sgde_migrate',
-                description: `Migrados ${mig.migrated} PDF desde SGDE (origen ${originDigits}).`,
+                description: `Copiados ${mig.migrated} PDF de SGDE al expediente digital Tutelia.`,
                 user_id: u.user?.id ?? null,
                 user_name: String(uname),
                 metadata: {
@@ -996,14 +1140,10 @@ export default function NewCase() {
                   failed: mig.failed,
                 },
               });
-              const { error: migActErr } = await supabase.from('case_actions').insert(migRow);
-              if (migActErr) console.error('Actuación migración SGDE:', migActErr);
-            }
-            if (mig.failed > 0) {
-              console.warn('SGDE migrate partial failures:', mig.errors);
+              await supabase.from('case_actions').insert(migRow);
             }
           } catch (migErr) {
-            console.error('Migración SGDE tras radicación:', migErr);
+            console.error('Copia SGDE → Tutelia tras radicación:', migErr);
           }
         }
       }
@@ -1055,13 +1195,7 @@ export default function NewCase() {
         await removeCaseDocumentObjects(supabase, uploadedStoragePaths);
         uploadedStoragePaths = [];
       }
-      let errorMsg = getUserFriendlyRadicadoError(err);
-      try {
-        const parsed = JSON.parse(err.message);
-        if (parsed.error) errorMsg = parsed.error;
-      } catch (e) {
-        // keep friendly mapped message
-      }
+      const errorMsg = getUserFriendlyRadicadoError(err);
       setError(`Error de radicación: ${errorMsg}`);
     } finally {
       setIsRadicating(false);
@@ -1089,6 +1223,50 @@ export default function NewCase() {
     else if (selectedDocIndex === targetIdx) setSelectedDocIndex(idx);
   };
 
+  const handleAddAttachments = async (fileList: FileList) => {
+    const files = Array.from(fileList);
+    if (!files.length) return;
+    setIsAddingAttachments(true);
+    setError(null);
+    try {
+      const { added, errors } = await filesToNewCaseAttachments(files, attachments);
+      if (errors.length) {
+        setError(errors.join(' '));
+      }
+      if (!added.length) return;
+      const startIdx = attachments.length;
+      setAttachments((prev) => [...prev, ...added]);
+      setSelectedDocIndex(startIdx);
+      setSelectedForMerge([]);
+      setEditingIndex(null);
+    } catch {
+      setError('No se pudieron agregar los archivos seleccionados.');
+    } finally {
+      setIsAddingAttachments(false);
+    }
+  };
+
+  const handleRemoveAttachment = (idx: number) => {
+    const label = attachments[idx]?.filename ?? 'este documento';
+    if (!window.confirm(`¿Quitar «${label}» de la lista antes de radicar?`)) return;
+    const next = attachments.filter((_, i) => i !== idx);
+    setAttachments(next);
+    setSelectedForMerge((prev) =>
+      prev.filter((i) => i !== idx).map((i) => (i > idx ? i - 1 : i))
+    );
+    if (editingIndex === idx) {
+      setEditingIndex(null);
+      setEditingName('');
+    } else if (editingIndex !== null && editingIndex > idx) {
+      setEditingIndex(editingIndex - 1);
+    }
+    if (selectedDocIndex === idx) {
+      setSelectedDocIndex(next.length ? Math.min(idx, next.length - 1) : 0);
+    } else if (selectedDocIndex > idx) {
+      setSelectedDocIndex(selectedDocIndex - 1);
+    }
+  };
+
   const toggleSelectForMerge = (idx: number) => {
     setSelectedForMerge(prev => 
       prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]
@@ -1101,25 +1279,36 @@ export default function NewCase() {
       return;
     }
 
-    const itemsToMerge = selectedForMerge
-      .map(idx => attachments[idx])
-      .filter(att => att.contentType === 'application/pdf');
+    const itemsToMerge = selectedForMerge.map((idx) => attachments[idx]);
 
-    if (itemsToMerge.length !== selectedForMerge.length) {
-      setError('Solo se pueden unir archivos PDF.');
+    if (!itemsToMerge.every((att) => isMergeableAttachment(att))) {
+      setError('Solo se pueden unir archivos PDF o el correo de reparto.');
+      return;
+    }
+
+    if (!parsedData) {
+      setError('No hay datos del correo para incluir el documento de reparto en la unión.');
       return;
     }
 
     setIsMerging(true);
     try {
       const mergedPdf = await PDFDocument.create();
-      
+
       for (const att of itemsToMerge) {
-        const hasInline = typeof att.content === 'string' && att.content.length > 0;
-        const pdfBytes =
-          parseSessionId && typeof att.sessionIndex === 'number' && !hasInline
-            ? await fetchParseSessionAttachment(parseSessionId, att.sessionIndex)
-            : Uint8Array.from(atob(att.content), (c) => c.charCodeAt(0));
+        let pdfBytes: Uint8Array;
+        if (isEmailBodyAttachment(att)) {
+          pdfBytes = await emailBodyToPdfBytes(
+            String(parsedData.subject || 'Correo de reparto'),
+            String(parsedData.text || '')
+          );
+        } else {
+          const hasInline = typeof att.content === 'string' && att.content.length > 0;
+          pdfBytes =
+            parseSessionId && typeof att.sessionIndex === 'number' && !hasInline
+              ? await fetchParseSessionAttachment(parseSessionId, att.sessionIndex)
+              : base64ToUint8Array(att.content);
+        }
         const donorPdf = await PDFDocument.load(pdfBytes);
         const copiedPages = await mergedPdf.copyPages(donorPdf, donorPdf.getPageIndices());
         copiedPages.forEach((page) => mergedPdf.addPage(page));
@@ -1154,8 +1343,8 @@ export default function NewCase() {
   };
 
   const handleAIAnalysis = async () => {
-    const currentDoc = selectedDocIndex === -1 ? null : attachments[selectedDocIndex];
-    if (!currentDoc || currentDoc.contentType !== 'application/pdf') {
+    const currentDoc = attachments[selectedDocIndex];
+    if (!currentDoc || isEmailBodyAttachment(currentDoc) || currentDoc.contentType !== 'application/pdf') {
       setError('Por favor, seleccione un documento PDF (ej. el escrito) para analizar con IA.');
       return;
     }
@@ -1181,7 +1370,7 @@ export default function NewCase() {
       const rightsListText = RIGHTS_LIST.map(r => `Art. ${r.art} — ${r.title}`).join('\n');
 
       const prompt = `
-        Analiza este documento de tutela y extrae la siguiente información de manera muy precisa y breve:
+        Analiza este documento de tutela y extrae la siguiente información de manera precisa:
         - Accionantes: lista de TODOS los demandantes que figuren como tales (párrafo introductorio, encabezado «DE:», «accionantes», etc.). Cada uno con nombre completo, identificación (C.C. o NIT con número) y correo si consta; si no consta correo, deja email vacío.
         - Accionados: lista de TODAS las entidades o personas demandadas (EPS, aseguradora, FOMAT, hospital, etc.). Una entrada por cada accionado distinto. Misma regla de identificación y email.
         - Si hay varios accionantes o varios accionados, inclúyelos todos; no omitas coprocuradores ni codemandados.
@@ -1191,8 +1380,8 @@ export default function NewCase() {
         
         IMPORTANTE: Si el derecho mencionado no está exactamente en esa lista, identifícalo bajo el artículo más relacionado de esa lista específica (Arts 11 al 41).
         
-        - Hechos: Resumen extremadamente breve de lo ocurrido, máximo 2 frases.
-        - Pretensiones: Resumen extremadamente breve de lo que se pide, máximo 2 frases.
+        - Hechos: Redacta un resumen narrativo y completo de los hechos relevantes (mínimo 10 frases; apunta a entre 900 y 1.400 caracteres en un solo párrafo corrido). Debe servir como síntesis procesal para el despacho, no como lista telegráfica. Incluye, si constan en el PDF: quién actúa y contra quién; cronología con fechas aproximadas; actuación u omisión que motiva la tutela; perjuicio o afectación alegada; trámites previos o agotamiento cuando aplique. No inventes datos ajenos al documento.
+        - Pretensiones: SÍNTESIS en tercera persona para el despacho (4 a 6 frases, 400-700 caracteres). Resume qué se pide al juez y a cada accionado (órdenes, plazos, trámites) sin transcribir citas ni fórmulas de la demanda. PROHIBIDO copiar párrafos del escrito, usar comillas, ni redactar en primera persona («solicito», «ordene», «me amparen»). Ejemplo de tono: «La parte actora pide que se ordene a [entidad] resolver las medidas cautelares en 48 horas y que se profiera sentencia anticipada en el radicado indicado».
 
         Responde estrictamente en formato JSON según el esquema proporcionado.
       `;
@@ -1280,9 +1469,12 @@ export default function NewCase() {
               />
               {caseFlowType === 'tutela_segunda' ? (
                 <CaseSgdeSegundaPreflightPanel
+                  key={`sgde-pf-${originRadicado.replace(/\D/g, '') || 'none'}`}
                   originRadicado={originRadicado}
                   sgdeNodeIdHint={sgdeNodeIdHint}
+                  emailDigest={segundaEmailDigest}
                   onPreflightChange={setSgdePreflight}
+                  onSegundaExtract={applySegundaFieldsExtract}
                 />
               ) : null}
             </>
@@ -1374,10 +1566,13 @@ export default function NewCase() {
 
             {caseFlowType === 'tutela_segunda' ? (
               <CaseSgdeSegundaPreflightPanel
+                key={`sgde-pf-${originRadicado.replace(/\D/g, '') || 'none'}`}
                 originRadicado={originRadicado}
                 sgdeNodeIdHint={sgdeNodeIdHint}
+                emailDigest={segundaEmailDigest}
                 disabled={isRadicating}
                 onPreflightChange={setSgdePreflight}
+                onSegundaExtract={applySegundaFieldsExtract}
               />
             ) : null}
 
@@ -1407,8 +1602,7 @@ export default function NewCase() {
             onDismissAnalysis={() => setAiAnalysis(null)}
           />
 
-          {/* Main Grid: Actions & Viewer */}
-          <div className="lg:col-span-5 flex flex-col gap-6">
+          <div className="lg:col-span-12">
             <CaseRadicacionActions
               aiAnalysis={aiAnalysis}
               isRadicating={isRadicating}
@@ -1416,34 +1610,43 @@ export default function NewCase() {
               error={error}
               onRadicate={handleRadicate}
             />
-
-            <CaseLegalAnalysisPanel
-              section="metadata"
-              parsedData={parsedData}
-              attachments={attachments}
-              selectedDocIndex={selectedDocIndex}
-              onSelectDocIndex={setSelectedDocIndex}
-              mergeSelected={mergeSelected}
-              isMerging={isMerging}
-              selectedForMerge={selectedForMerge}
-              toggleSelectForMerge={toggleSelectForMerge}
-              editingIndex={editingIndex}
-              setEditingIndex={setEditingIndex}
-              editingName={editingName}
-              setEditingName={setEditingName}
-              handleRename={handleRename}
-              handleMove={handleMove}
-            />
           </div>
 
-          {/* Viewer Section */}
-          <div className="lg:col-span-7 card-modern overflow-hidden bg-white flex flex-col h-[750px] min-w-0">
-             <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+          {/* Metadatos y visor alineados en la misma fila */}
+          <div className="lg:col-span-12 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            <div className="lg:col-span-5 min-w-0">
+              <CaseLegalAnalysisPanel
+                section="metadata"
+                parsedData={parsedData}
+                attachments={attachments}
+                selectedDocIndex={selectedDocIndex}
+                onSelectDocIndex={setSelectedDocIndex}
+                mergeSelected={mergeSelected}
+                isMerging={isMerging}
+                selectedForMerge={selectedForMerge}
+                toggleSelectForMerge={toggleSelectForMerge}
+                editingIndex={editingIndex}
+                setEditingIndex={setEditingIndex}
+                editingName={editingName}
+                setEditingName={setEditingName}
+                handleRename={handleRename}
+                handleMove={handleMove}
+                onAddAttachments={handleAddAttachments}
+                onRemoveAttachment={handleRemoveAttachment}
+                isAddingAttachments={isAddingAttachments}
+              />
+            </div>
+
+            <div className="lg:col-span-7 card-modern overflow-hidden bg-white flex flex-col min-h-[min(78vh,820px)] max-h-[min(78vh,820px)] min-w-0">
+             <div className="shrink-0 px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-4">
                   <h2 className="text-sm font-bold text-slate-900 uppercase tracking-widest">
-                    {selectedDocIndex === -1 ? 'Vista Previa del Correo Judicial' : `Visor: ${attachments[selectedDocIndex]?.filename}`}
+                    {isEmailBodyAttachment(attachments[selectedDocIndex] || {})
+                      ? 'Vista Previa del Correo Judicial'
+                      : `Visor: ${attachments[selectedDocIndex]?.filename}`}
                   </h2>
-                  {selectedDocIndex !== -1 && attachments[selectedDocIndex]?.contentType === 'application/pdf' && (
+                  {attachments[selectedDocIndex]?.contentType === 'application/pdf' &&
+                    !isEmailBodyAttachment(attachments[selectedDocIndex] || {}) && (
                     <button 
                       onClick={handleAIAnalysis}
                       disabled={isAnalyzing}
@@ -1460,10 +1663,10 @@ export default function NewCase() {
                 </div>
              </div>
              
-             <div className="flex-1 overflow-hidden bg-white flex flex-col">
-               {selectedDocIndex === -1 ? (
+             <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
+               {isEmailBodyAttachment(attachments[selectedDocIndex] || {}) ? (
                  <>
-                   <div className="p-4 bg-slate-50 border-b border-slate-200 space-y-1 text-[10px]">
+                   <div className="shrink-0 space-y-1 border-b border-slate-200 bg-slate-50 p-4 text-[10px]">
                      <div className="flex gap-2">
                          <span className="font-bold text-slate-400 w-12 uppercase">De:</span>
                          <span className="text-slate-600 truncate">{parsedData.from}</span>
@@ -1472,30 +1675,13 @@ export default function NewCase() {
                          <span className="font-bold text-slate-400 w-12 uppercase">Fecha:</span>
                          <span className="text-slate-600">{parsedData.date ? new Date(parsedData.date).toLocaleString('es-CO') : 'Reciente'}</span>
                      </div>
+                     {parsedData.linkFound ? (
+                       <p className="pt-1 text-[10px] leading-snug text-blue-700">
+                         El expediente (demanda, acta, anexos) está en los documentos <strong>LINK</strong> o PDF de la lista, no en este aviso de reparto.
+                       </p>
+                     ) : null}
                    </div>
-                   <div className="flex-1 bg-white">
-                     {parsedData.html ? (
-                       <iframe 
-                         srcDoc={`
-                           <html>
-                             <head>
-                               <style>
-                                 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.5; color: #334155; padding: 20px; margin: 0; }
-                                 img { max-width: 100%; height: auto; }
-                               </style>
-                             </head>
-                             <body>${parsedData.html}</body>
-                           </html>
-                         `}
-                         className="w-full h-full border-none"
-                         title="Email Body"
-                       />
-                     ) : (
-                       <div className="p-10 font-sans text-sm text-slate-600 whitespace-pre-wrap">
-                         {parsedData.text}
-                       </div>
-                     )}
-                   </div>
+                   <CaseEmailHtmlPreview html={parsedData.html} text={parsedData.text} />
                  </>
                ) : (
                  <div className="flex-1 flex flex-col h-full bg-slate-100 min-h-0 overflow-hidden">
@@ -1510,10 +1696,12 @@ export default function NewCase() {
                          ? attachments[selectedDocIndex].sessionIndex
                          : null
                      }
+                     displayMode="scroll"
                    />
                  </div>
                )}
              </div>
+            </div>
           </div>
         </motion.div>
       )}

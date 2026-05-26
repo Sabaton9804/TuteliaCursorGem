@@ -1,5 +1,16 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { Eye, Download, Upload, Loader2, AlertCircle, FolderPlus, X, PenLine } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Eye,
+  Download,
+  Upload,
+  Loader2,
+  AlertCircle,
+  FolderPlus,
+  X,
+  PenLine,
+  Search,
+  ChevronRight,
+} from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { supabase } from '../../lib/supabase';
@@ -33,6 +44,13 @@ import { ExpedienteSignSgdeDialog } from './ExpedienteSignSgdeDialog';
 import type { Case } from '../../types';
 import { sanitizeExpedienteFilenameForDisplay } from '../../lib/sanitize-expediente-filename';
 import { caseDocumentRawLabel } from '../../lib/case-document-display-name';
+import {
+  expedientePiezasParaLista,
+  isCaseDocumentOpenableInViewer,
+  isExpedientePiezaListable,
+  tituloPiezaExpediente,
+} from '../../lib/expediente-viewer-doc';
+import { Link } from 'react-router-dom';
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
@@ -67,6 +85,8 @@ function rawFileLabel(doc: Document): string {
 
 /** Título legible en listado del expediente (sanitizado para pantalla). */
 function listaTituloDocumento(doc: Document): string {
+  const fijo = tituloPiezaExpediente(doc);
+  if (fijo) return fijo;
   const raw = rawFileLabel(doc);
   if (!raw) return 'Sin nombre';
   return sanitizeExpedienteFilenameForDisplay(raw);
@@ -187,8 +207,11 @@ type Props = {
   onRefetchCase: () => void | Promise<void>;
   docs: Document[];
   selectedDoc: Document | null;
-  onSelectDoc: (doc: Document) => void;
+  onSelectDoc: (doc: Document | null) => void;
   onRefetchDocs: () => void | Promise<void>;
+  /** Si hay visor o constancia a la derecha, la lista usa menos alto. */
+  visorAbierto?: boolean;
+  onVerConstanciaIngreso?: () => void;
 };
 
 function groupSectionsByInstancia(
@@ -216,6 +239,8 @@ export function ExpedienteDigitalPanel({
   selectedDoc,
   onSelectDoc,
   onRefetchDocs,
+  visorAbierto = false,
+  onVerConstanciaIngreso,
 }: Props) {
   const defaultNb = notebookCodeForCaseType(caseItem.caseType);
   const [selectedNb, setSelectedNb] = useState(defaultNb);
@@ -225,6 +250,8 @@ export function ExpedienteDigitalPanel({
   const [addCuadernoOpen, setAddCuadernoOpen] = useState(false);
   const [newCuadernoLabel, setNewCuadernoLabel] = useState('');
   const [signDoc, setSignDoc] = useState<Document | null>(null);
+  const [piezaBusqueda, setPiezaBusqueda] = useState('');
+  const [expandedNb, setExpandedNb] = useState<Set<string>>(() => new Set());
   const pickNbRef = useRef(DEFAULT_NOTEBOOK_CODE);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -246,8 +273,57 @@ export function ExpedienteDigitalPanel({
     sections.find((s) => s.code === defaultNb) ??
     sections[0];
   const activeCode = activeNb?.code ?? defaultNb;
-  const activeList = useMemo(() => filterByNotebook(docs, activeCode), [docs, activeCode]);
-  const activeMeta = NOTEBOOK_META[activeCode];
+  const piezasTotal = useMemo(() => expedientePiezasParaLista(docs).length, [docs]);
+  const piezasRadicacion = useMemo(
+    () => expedientePiezasParaLista(docs).filter((d) => d.type !== 'email_body'),
+    [docs]
+  );
+
+  useEffect(() => {
+    setPiezaBusqueda('');
+  }, [activeCode]);
+
+  useEffect(() => {
+    setExpandedNb(new Set([defaultNb]));
+  }, [caseId, defaultNb]);
+
+  useEffect(() => {
+    setExpandedNb((prev) => {
+      if (prev.has(activeCode)) return prev;
+      const next = new Set(prev);
+      next.add(activeCode);
+      return next;
+    });
+  }, [activeCode]);
+
+  const toggleCuaderno = (code: string) => {
+    setSelectedNb(code);
+    setExpandedNb((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  };
+
+  const piezasForNotebook = useCallback(
+    (code: string) => filterByNotebook(docs, code).filter(isExpedientePiezaListable),
+    [docs]
+  );
+
+  const piezasFiltradasFor = useCallback(
+    (code: string) => {
+      const list = piezasForNotebook(code);
+      const q = piezaBusqueda.trim().toLowerCase();
+      if (!q || code !== activeCode) return list;
+      return list.filter((d) => {
+        const titulo = listaTituloDocumento(d).toLowerCase();
+        const raw = caseDocumentRawLabel(d).toLowerCase();
+        return titulo.includes(q) || raw.includes(q);
+      });
+    },
+    [piezasForNotebook, piezaBusqueda, activeCode]
+  );
 
   const openFilePicker = (notebookCode: string) => {
     pickNbRef.current = notebookCode;
@@ -374,6 +450,8 @@ export function ExpedienteDigitalPanel({
       if (error) await handleDataPermissionError(error, 'update', 'cases');
       setAddCuadernoOpen(false);
       setNewCuadernoLabel('');
+      setSelectedNb(code);
+      setExpandedNb((prev) => new Set(prev).add(code));
       await onRefetchCase();
     } catch (e) {
       console.error(e);
@@ -407,7 +485,7 @@ export function ExpedienteDigitalPanel({
           pickNbRef.current = nb.code;
           void handleFiles(e.dataTransfer.files);
         }}
-        className="mt-3 flex w-full flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-slate-300 bg-white/80 px-3 py-4 text-center transition hover:border-accent/40 hover:bg-accent/[0.03] disabled:opacity-50"
+        className="flex w-full flex-col items-center justify-center gap-0.5 rounded-md border border-dashed border-slate-300 bg-white/80 px-2 py-2.5 text-center transition hover:border-accent/40 hover:bg-accent/[0.03] disabled:opacity-50"
       >
         {busy ? (
           <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
@@ -446,41 +524,47 @@ export function ExpedienteDigitalPanel({
             onSelectDoc(doc);
           }
         }}
-        className={`flex cursor-pointer items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-left shadow-sm transition hover:border-slate-300 ${
+        className={`flex cursor-pointer items-start gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-left shadow-sm transition hover:border-slate-300 ${
           sel ? 'ring-2 ring-accent/30 border-accent/40' : ''
         }`}
       >
-        <span className="w-6 shrink-0 text-center text-[11px] font-semibold tabular-nums text-slate-400">
-          {String(listIndex + 1).padStart(2, '0')}
-        </span>
-        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold ${extChipClass(ext)}`}>{ext}</span>
+        <div className="flex shrink-0 flex-col items-center gap-0.5 pt-0.5">
+          <span className="text-[10px] font-semibold tabular-nums text-slate-400">
+            {String(listIndex + 1).padStart(2, '0')}
+          </span>
+          <span className={`rounded px-1 py-0.5 text-[8px] font-bold ${extChipClass(ext)}`}>{ext}</span>
+        </div>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5 gap-y-0.5">
-            <span className="truncate text-sm font-semibold text-slate-800" title={displayName}>
-              {displayName}
-            </span>
-            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[8px] font-bold uppercase tracking-wide ${badge.className}`}>
+          <p
+            className="text-xs font-semibold leading-snug text-slate-800 break-words"
+            title={displayName}
+          >
+            {displayName}
+          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-1">
+            <span
+              className={`rounded-full px-1.5 py-0.5 text-[7px] font-bold uppercase tracking-wide ${badge.className}`}
+            >
               {badge.text}
             </span>
             {showSgdeChip ? (
               <span
-                className={`shrink-0 rounded-full px-2 py-0.5 text-[8px] font-bold uppercase tracking-wide ${sgdeSyncStyle}`}
+                className={`rounded-full px-1.5 py-0.5 text-[7px] font-bold uppercase tracking-wide ${sgdeSyncStyle}`}
                 title={doc.sgdeFolderPath || undefined}
               >
                 {sgdeSyncLabel}
               </span>
             ) : null}
           </div>
-          <p className="mt-0.5 text-[10px] text-slate-400">
-            {created} · {formatBytes(doc.size)} · orden reparto {ordenReparto}
-            {doc.sgdeFolderPath ? ` · ${doc.sgdeFolderPath}` : ''}
+          <p className="mt-0.5 text-[9px] leading-snug text-slate-400">
+            {created} · {formatBytes(doc.size)}
+            {doc.ingestError ? '' : ` · ord. ${ordenReparto}`}
           </p>
           {doc.ingestError ? (
-            <p className="mt-0.5 text-[10px] text-amber-700">{doc.ingestError}</p>
+            <p className="mt-0.5 text-[10px] leading-snug text-amber-700">{doc.ingestError}</p>
           ) : null}
         </div>
-        <span className="hidden shrink-0 text-[10px] text-slate-400 sm:inline">nº lista {listIndex + 1}</span>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 flex-col items-center gap-0.5 pt-0.5">
           {canSignInSgde(doc) ? (
             <button
               type="button"
@@ -497,11 +581,12 @@ export function ExpedienteDigitalPanel({
           <button
             type="button"
             title="Ver en el visor"
+            disabled={!isCaseDocumentOpenableInViewer(doc)}
             onClick={(e) => {
               e.stopPropagation();
-              onSelectDoc(doc);
+              if (isCaseDocumentOpenableInViewer(doc)) onSelectDoc(doc);
             }}
-            className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30"
           >
             <Eye className="h-4 w-4" />
           </button>
@@ -519,48 +604,114 @@ export function ExpedienteDigitalPanel({
     );
   };
 
-  const renderCuadernoNav = () => (
-    <nav className="flex w-full shrink-0 flex-col gap-3 sm:w-52 lg:w-56" aria-label="Cuadernos del expediente">
+  const renderCuadernoCuerpo = (nb: ExpedienteCuadernoExtra) => {
+    const code = nb.code;
+    const list = piezasForNotebook(code);
+    const filtradas = piezasFiltradasFor(code);
+    const meta = NOTEBOOK_META[code];
+    const busquedaActiva = code === activeCode && piezaBusqueda.trim().length > 0;
+
+    return (
+      <div className="border-t border-slate-200/90 bg-white/90 px-2 pb-2 pt-1.5">
+        {meta?.subtitle ? (
+          <p className="mb-1.5 px-1 text-[9px] text-slate-500">{meta.subtitle}</p>
+        ) : null}
+        {code === activeCode &&
+        piezasRadicacion.length === 0 &&
+        list.length === 0 ? (
+          <div className="mb-2 rounded-md border border-sky-200/90 bg-sky-50/90 px-2 py-1.5 text-[9px] leading-snug text-sky-950">
+            Sin demanda/anexos aquí. Suba PDF abajo o use SGDE /{' '}
+            <Link to="/correo/pendientes" className="font-semibold underline">
+              Correo pendientes
+            </Link>
+            .
+          </div>
+        ) : null}
+        {busquedaActiva ? (
+          <p className="mb-1 px-1 text-[9px] text-slate-500">
+            Mostrando {filtradas.length} de {list.length}
+          </p>
+        ) : null}
+        <div
+          className={`space-y-1 overflow-y-auto overscroll-contain ${
+            visorAbierto
+              ? 'min-h-[26rem] max-h-[min(calc(82vh-11rem),40rem)]'
+              : 'min-h-[34rem] max-h-[min(calc(80vh-12rem),42rem)]'
+          }`}
+        >
+          {list.length === 0 ? (
+            <p className="rounded-md border border-dashed border-slate-200 py-6 text-center text-[10px] text-slate-500">
+              Sin piezas en este cuaderno.
+            </p>
+          ) : filtradas.length === 0 ? (
+            <p className="py-4 text-center text-[10px] text-slate-500">Sin coincidencias.</p>
+          ) : (
+            filtradas.map((d, i) => renderRow(d, i))
+          )}
+        </div>
+        <div className="mt-1.5 border-t border-slate-100 pt-1.5">{renderDropZone(nb)}</div>
+      </div>
+    );
+  };
+
+  const renderCuadernosAcordeon = () => (
+    <nav className="w-full min-w-0 space-y-3" aria-label="Cuadernos del expediente">
       {instanciaGroups.map(({ instancia, notebooks }) => (
         <div key={instancia}>
-          <p className="mb-1.5 px-1 text-[9px] font-bold uppercase tracking-widest text-slate-400">
+          <p className="mb-1 px-0.5 text-[9px] font-bold uppercase tracking-widest text-slate-400">
             {INSTANCIA_LABELS[instancia]}
           </p>
-          <ul className="space-y-1">
+          <div className="space-y-1">
             {notebooks.map((nb) => {
-              const count = filterByNotebook(docs, nb.code).length;
-              const sel = nb.code === activeCode;
+              const count = piezasForNotebook(nb.code).length;
+              const abierto = expandedNb.has(nb.code);
+              const activo = nb.code === activeCode;
               const meta = NOTEBOOK_META[nb.code];
               return (
-                <li key={nb.code}>
+                <div
+                  key={nb.code}
+                  className={`overflow-hidden rounded-md border transition-colors ${
+                    activo ? 'border-emerald-300/80 ring-1 ring-emerald-200/60' : 'border-slate-200'
+                  }`}
+                >
                   <button
                     type="button"
-                    onClick={() => setSelectedNb(nb.code)}
-                    className={`w-full rounded-lg border px-3 py-2.5 text-left transition ${
-                      sel
-                        ? 'border-emerald-200 bg-emerald-50/90 shadow-sm'
-                        : 'border-transparent bg-white/60 hover:border-slate-200 hover:bg-white'
+                    onClick={() => toggleCuaderno(nb.code)}
+                    aria-expanded={abierto}
+                    className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition ${
+                      activo
+                        ? 'bg-emerald-50/95 hover:bg-emerald-50'
+                        : 'bg-slate-50/80 hover:bg-slate-100/90'
                     }`}
                   >
-                    <span className="block text-xs font-semibold text-slate-800">{nb.label}</span>
-                    {meta?.subtitle ? (
-                      <span className="mt-0.5 block text-[10px] leading-snug text-slate-500">{meta.subtitle}</span>
+                    <ChevronRight
+                      className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition-transform ${
+                        abierto ? 'rotate-90' : ''
+                      }`}
+                      aria-hidden
+                    />
+                    <span className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-800">
+                      {nb.label}
+                    </span>
+                    {meta?.shortLabel ? (
+                      <span className="hidden shrink-0 text-[9px] text-slate-400 sm:inline">{meta.shortLabel}</span>
                     ) : null}
-                    <span className="mt-1 inline-block text-[10px] font-medium tabular-nums text-slate-400">
+                    <span className="shrink-0 tabular-nums text-[10px] font-medium text-slate-500">
                       {count} pieza{count === 1 ? '' : 's'}
                     </span>
                   </button>
-                </li>
+                  {abierto ? renderCuadernoCuerpo(nb) : null}
+                </div>
               );
             })}
-          </ul>
+          </div>
         </div>
       ))}
     </nav>
   );
 
   return (
-    <div id="panel-documentos" className="scroll-mt-24 space-y-4">
+    <div id="panel-documentos" className="scroll-mt-24 flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
       <ExpedienteSignSgdeDialog
         open={Boolean(signDoc)}
         caseId={caseId}
@@ -571,7 +722,6 @@ export function ExpedienteDigitalPanel({
           void onRefetchCase();
         }}
       />
-      <ExpedienteSgdeBar caseId={caseId} caseItem={caseItem} docs={docs} onRefetchCase={onRefetchCase} />
       <input
         ref={fileInputRef}
         type="file"
@@ -581,29 +731,50 @@ export function ExpedienteDigitalPanel({
         onChange={(e) => void handleFiles(e.target.files)}
       />
 
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-        {renderCuadernoNav()}
-        <div className="min-w-0 flex-1">
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-800">{activeNb?.label ?? 'Cuaderno'}</h3>
-          {activeMeta?.subtitle ? (
-            <p className="text-[11px] text-slate-500">{activeMeta.subtitle}</p>
-          ) : null}
-        </div>
-        <span className="text-[10px] text-slate-400">{activeList.length} en este cuaderno · {docs.length} total</span>
+      <div className="shrink-0">
+        <ExpedienteSgdeBar caseId={caseId} caseItem={caseItem} docs={docs} onRefetchCase={onRefetchCase} />
       </div>
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200/80 pb-2">
+        <div className="relative min-w-[8rem] flex-1">
+          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+          <input
+            type="search"
+            value={piezaBusqueda}
+            onChange={(e) => setPiezaBusqueda(e.target.value)}
+            placeholder="Buscar en cuaderno activo…"
+            className="w-full rounded-md border border-slate-200 bg-white py-1.5 pl-7 pr-2 text-[11px] text-slate-800 placeholder:text-slate-400 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30"
+            aria-label="Buscar pieza en el cuaderno activo"
+          />
+        </div>
+        <span className="shrink-0 tabular-nums text-[9px] font-semibold text-slate-500">
+          {piezasTotal} piezas
+        </span>
         <button
           type="button"
           disabled={addingNb}
           onClick={openAddCuadernoDialog}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-600 hover:border-accent/40 hover:text-accent disabled:opacity-50"
+          title="Añadir cuaderno (incidente u otro)"
+          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[9px] font-bold uppercase tracking-wide text-slate-600 hover:border-accent/40 hover:text-accent disabled:opacity-50"
         >
-          {addingNb ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderPlus className="h-3.5 w-3.5" />}
-          Añadir cuaderno (incidente u otro)
+          {addingNb ? <Loader2 className="h-3 w-3 animate-spin" /> : <FolderPlus className="h-3 w-3" />}
+          <span className="hidden sm:inline">Cuaderno</span>
         </button>
+        {!visorAbierto && onVerConstanciaIngreso ? (
+          <button
+            type="button"
+            onClick={onVerConstanciaIngreso}
+            className="inline-flex shrink-0 items-center rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[9px] font-semibold text-slate-600 hover:border-accent/40 hover:text-accent"
+          >
+            Constancia correo
+          </button>
+        ) : null}
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden pt-2">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5">
+          {renderCuadernosAcordeon()}
+        </div>
       </div>
 
       {addCuadernoOpen ? (
@@ -691,24 +862,11 @@ export function ExpedienteDigitalPanel({
       ) : null}
 
       {uploadErr ? (
-        <div className="mb-3 flex items-start gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[11px] text-red-700">
+        <div className="mt-2 flex shrink-0 items-start gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[11px] text-red-700">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
           {uploadErr}
         </div>
       ) : null}
-
-      <div className="space-y-2">
-        {activeList.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-slate-200 py-10 text-center text-[11px] text-slate-400">
-            Sin piezas en este cuaderno. Arrastre archivos abajo o impórtelos desde SGDE.
-          </p>
-        ) : (
-          activeList.map((d, i) => renderRow(d, i))
-        )}
-      </div>
-      {activeNb ? renderDropZone(activeNb) : null}
-        </div>
-      </div>
     </div>
   );
 }

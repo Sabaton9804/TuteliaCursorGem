@@ -10,7 +10,11 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { parseJudicialEmailFromBuffer } from '../server/parse-judicial-email.ts';
-import { parseSegundaInstanciaFromEmail } from '../server/sgde-segunda-instancia-parse.ts';
+import {
+  digestPdfAttachmentsForSegundaInstancia,
+  parseSegundaInstanciaFromEmail,
+} from '../server/sgde-segunda-instancia-parse.ts';
+import { getParseSession } from '../server/parse-email-sessions.ts';
 import { sgdePlatformState } from '../server/sgde-integration.ts';
 import { sgdeEncryptionAvailable } from '../server/sgde-crypto.ts';
 
@@ -19,7 +23,7 @@ dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 const RECOMMENDED_LABELS: Record<string, string> = {
   sentencia_fallo: 'Sentencia / fallo de origen',
-  apelacion_memorial: 'Memorial / recurso de apelación',
+  impugnacion_memorial: 'Escrito / memorial de impugnación',
   notificacion: 'Notificaciones / constancias',
 };
 
@@ -41,7 +45,13 @@ async function main() {
   const text = typeof parsed.text === 'string' ? parsed.text : '';
   const html = typeof parsed.html === 'string' ? parsed.html : '';
 
-  const si = parseSegundaInstanciaFromEmail(String(parsed.subject || ''), text, html);
+  const session = getParseSession(parsed.parseSessionId);
+  let pdfDigest = '';
+  if (session?.attachments?.length) {
+    pdfDigest = await digestPdfAttachmentsForSegundaInstancia(session.attachments);
+    console.log('Texto extraído de PDFs (primeros 400 chars):', pdfDigest.slice(0, 400).replace(/\s+/g, ' '));
+  }
+  const si = parseSegundaInstanciaFromEmail(String(parsed.subject || ''), `${text}\n${pdfDigest}`, html);
 
   console.log('--- 1) Correo parseado (Tutelia) ---');
   console.log('Asunto:', parsed.subject);

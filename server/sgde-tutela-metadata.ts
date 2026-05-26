@@ -62,3 +62,26 @@ export function uploadOrderPriority(name: string, docType?: string): number {
   if (n.includes('demanda')) return 4;
   return 50;
 }
+
+/** Tipo documental en carpeta Impugnación (segunda instancia / traslado). */
+export function tipoDocumentalSgdeSegundaFromFileName(name: string, docType?: string): string {
+  const n = (name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (docType === 'email_body' || (n.includes('correo') && !n.includes('circuito'))) {
+    return 'Correo de reparto';
+  }
+  if (n.includes('acta') && n.includes('reparto')) return 'Acta de reparto';
+  if (n.includes('secuencia')) return 'Secuencia de reparto';
+  if (n.includes('ingreso') && n.includes('despacho')) return 'Ingreso a despacho';
+  if (n.includes('impugn')) return 'Memorial de impugnación';
+  if (n.includes('memorial')) return 'Memorial';
+  return tipoDocumentalSgdeFromFileName(name, docType);
+}
+
+export function uploadOrderPrioritySegunda(name: string, docType?: string): number {
+  const n = (name || '').toLowerCase();
+  if (docType === 'email_body' || n.includes('correoreparto')) return 1;
+  if (n.includes('acta') && n.includes('reparto')) return 2;
+  if (n.includes('secuencia')) return 3;
+  if (n.includes('ingreso')) return 4;
+  return uploadOrderPriority(name, docType);
+}

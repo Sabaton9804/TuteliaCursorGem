@@ -1,3 +1,5 @@
+import { extractExplicitCuiFromText } from './src/lib/reparto-origin-cui.ts';
+
 /**
  * Detecta «acta de reparto» / «acta individual de reparto» aunque el nombre del archivo sea críptico
  * (p. ej. 12456 J51CCTO.PDF). Usado al parsear correos en server.ts.
@@ -70,4 +72,43 @@ export function filenameSuggestsActaReparto(filenameLower: string): boolean {
     filenameLower.includes('reparto') ||
     filenameLower.includes('secuencia')
   );
+}
+
+/** Texto legible de las primeras páginas (acta de reparto, autos, etc.). */
+export async function extractPlainTextFromPdfBuffer(
+  buf: Buffer | null | undefined,
+  maxPages = 4
+): Promise<string> {
+  if (!buf || buf.length < 100 || !isPdfMagic(buf)) return '';
+  try {
+    const pdfjs = await import('pdfjs-dist/build/pdf.mjs');
+    const loadingTask = pdfjs.getDocument({
+      data: new Uint8Array(buf),
+      useSystemFonts: true,
+      standardFontDataUrl: undefined,
+    });
+    const pdf = await loadingTask.promise;
+    const pages = Math.min(pdf.numPages, maxPages);
+    let acc = '';
+    for (let i = 1; i <= pages; i++) {
+      const page = await pdf.getPage(i);
+      const tc = await page.getTextContent();
+      for (const item of tc.items) {
+        if (item && typeof item === 'object' && 'str' in item && typeof (item as { str: string }).str === 'string') {
+          acc += `${(item as { str: string }).str} `;
+        }
+      }
+      acc += '\n';
+    }
+    return acc.trim();
+  } catch {
+    return '';
+  }
+}
+
+/** CUI solo si el texto del PDF trae un 11001… válido (no secuencias binarias espurias). */
+export async function extractRadicado23FromPdfBuffer(buf: Buffer | null | undefined): Promise<string | null> {
+  const plain = await extractPlainTextFromPdfBuffer(buf, 4);
+  if (!plain) return null;
+  return extractExplicitCuiFromText(plain);
 }

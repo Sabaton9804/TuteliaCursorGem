@@ -7,6 +7,7 @@ import {
   Check,
   ChevronRight,
   ClipboardList,
+  Eye,
   Loader2,
   Mail,
   X,
@@ -15,10 +16,14 @@ import {
 } from 'lucide-react';
 import {
   approveOutlookReview,
+  fetchOutlookAttachmentBytes,
   fetchOutlookReviews,
   rejectOutlookReview,
+  type OutlookAttachmentMeta,
   type OutlookMessageReview,
+  type OutlookProposedIngestPiece,
 } from '../lib/outlook-api';
+import { CasePdfViewer } from '../components/new-case/CasePdfViewer';
 import { formatRadicado } from '../lib/formatters';
 import {
   etiquetaVinculo,
@@ -49,6 +54,137 @@ function formatReviewDate(iso: string | null): string {
   }
 }
 
+function manifestForAttachmentPiece(
+  review: OutlookMessageReview,
+  piece: OutlookProposedIngestPiece & { kind: 'attachment' }
+): OutlookAttachmentMeta | undefined {
+  const byName = review.attachment_manifest.find(
+    (a) => a.name === piece.name || a.name === piece.label
+  );
+  if (byName) return byName;
+  const proposedAtts = review.proposed_ingest.filter((p) => p.kind === 'attachment');
+  const idx = proposedAtts.findIndex((p) => p.sessionIndex === piece.sessionIndex);
+  return idx >= 0 ? review.attachment_manifest[idx] : undefined;
+}
+
+function CorreoIngestPiecePreview({
+  review,
+  piece,
+}: {
+  review: OutlookMessageReview;
+  piece: OutlookProposedIngestPiece;
+}) {
+  const [outlookBytes, setOutlookBytes] = useState<Uint8Array | null>(null);
+  const [outlookLoading, setOutlookLoading] = useState(false);
+  const [outlookError, setOutlookError] = useState<string | null>(null);
+
+  const bodyPreview = review.classification?.body_preview?.trim() || '';
+
+  useEffect(() => {
+    if (piece.kind !== 'attachment') {
+      setOutlookBytes(null);
+      setOutlookError(null);
+      setOutlookLoading(false);
+      return;
+    }
+    if (review.parse_session_id) {
+      setOutlookBytes(null);
+      setOutlookError(null);
+      setOutlookLoading(false);
+      return;
+    }
+    const manifest = manifestForAttachmentPiece(review, piece);
+    if (!manifest) {
+      setOutlookError('No se encontró el adjunto en el manifiesto del correo.');
+      return;
+    }
+    let cancelled = false;
+    setOutlookLoading(true);
+    setOutlookError(null);
+    void (async () => {
+      try {
+        const bytes = await fetchOutlookAttachmentBytes(review.outlook_message_id, manifest);
+        if (!cancelled) setOutlookBytes(bytes);
+      } catch (e) {
+        if (!cancelled) {
+          setOutlookError(e instanceof Error ? e.message : 'No se pudo descargar el adjunto.');
+        }
+      } finally {
+        if (!cancelled) setOutlookLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [piece, review.id, review.outlook_message_id, review.parse_session_id]);
+
+  if (piece.kind === 'email_body') {
+    return (
+      <div className="rounded-xl border border-slate-100 bg-white p-3">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+          Constancia del correo
+        </p>
+        {bodyPreview ? (
+          <pre className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-slate-700">
+            {bodyPreview.slice(0, 12000)}
+          </pre>
+        ) : (
+          <p className="mt-2 text-xs text-slate-500">
+            Se generará al aprobar el ingreso (metadatos y cuerpo del mensaje).
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  if (!review.parse_session_id) {
+    if (outlookLoading) {
+      return (
+        <p className="flex items-center gap-2 rounded-xl border border-slate-100 bg-slate-50 p-4 text-xs text-slate-500">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Descargando adjunto desde Outlook…
+        </p>
+      );
+    }
+    if (outlookError) {
+      return (
+        <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          {outlookError}
+        </p>
+      );
+    }
+    if (outlookBytes?.length) {
+      return (
+        <div className="h-72 overflow-hidden rounded-xl border border-slate-100 bg-slate-50">
+          <CasePdfViewer
+            pdfBytes={outlookBytes}
+            contentType={piece.contentType}
+            filename={piece.label || piece.name}
+            displayMode="scroll"
+          />
+        </div>
+      );
+    }
+    return (
+      <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+        Sesión de análisis no disponible. Vuelva a «Correo» y use «Analizar con IA» en este mensaje.
+      </p>
+    );
+  }
+
+  return (
+    <div className="h-72 overflow-hidden rounded-xl border border-slate-100 bg-slate-50">
+      <CasePdfViewer
+        parseSessionId={review.parse_session_id}
+        sessionIndex={piece.sessionIndex}
+        contentType={piece.contentType}
+        filename={piece.label || piece.name}
+        displayMode="scroll"
+      />
+    </div>
+  );
+}
+
 export default function CorreoPendientes() {
   const navigate = useNavigate();
   const [reviews, setReviews] = useState<OutlookMessageReview[]>([]);
@@ -58,6 +194,7 @@ export default function CorreoPendientes() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
+  const [previewPieceIndex, setPreviewPieceIndex] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -81,6 +218,10 @@ export default function CorreoPendientes() {
   }, [load]);
 
   const selected = reviews.find((r) => r.id === selectedId) ?? null;
+
+  useEffect(() => {
+    setPreviewPieceIndex(0);
+  }, [selectedId]);
 
   useEffect(() => {
     if (!selected) {
@@ -354,27 +495,40 @@ export default function CorreoPendientes() {
                   <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
                     Propuesta de ingreso ({selected.proposed_ingest.length} piezas)
                   </p>
+                  <p className="mt-1 text-[10px] text-slate-400">
+                    Pulse una pieza para verla antes de aprobar el ingreso.
+                  </p>
                   <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50/80 p-2">
                     {selected.proposed_ingest.map((p, i) => (
-                      <li
-                        key={`${p.kind}-${i}`}
-                        className="flex items-center gap-2 rounded-lg bg-white px-2 py-1.5 text-xs text-slate-700"
-                      >
-                        <FileText className="h-3.5 w-3.5 shrink-0 text-violet-600" />
-                        <span className="truncate">{p.label}</span>
+                      <li key={`${p.kind}-${i}`}>
+                        <button
+                          type="button"
+                          onClick={() => setPreviewPieceIndex(i)}
+                          className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition ${
+                            previewPieceIndex === i
+                              ? 'bg-violet-100 text-violet-950 ring-1 ring-violet-200'
+                              : 'bg-white text-slate-700 hover:bg-violet-50/80'
+                          }`}
+                        >
+                          {previewPieceIndex === i ? (
+                            <Eye className="h-3.5 w-3.5 shrink-0 text-violet-700" aria-hidden />
+                          ) : (
+                            <FileText className="h-3.5 w-3.5 shrink-0 text-violet-600" aria-hidden />
+                          )}
+                          <span className="truncate">{p.label}</span>
+                        </button>
                       </li>
                     ))}
                   </ul>
+                  {selected.proposed_ingest[previewPieceIndex] ? (
+                    <div className="mt-3">
+                      <CorreoIngestPiecePreview
+                        review={selected}
+                        piece={selected.proposed_ingest[previewPieceIndex]}
+                      />
+                    </div>
+                  ) : null}
                 </div>
-
-                {selected.classification?.body_preview ? (
-                  <details className="text-xs">
-                    <summary className="cursor-pointer font-bold text-slate-500">Vista previa del cuerpo</summary>
-                    <pre className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-slate-700">
-                      {selected.classification.body_preview.slice(0, 4000)}
-                    </pre>
-                  </details>
-                ) : null}
               </div>
 
               <div className="mt-auto flex flex-wrap gap-2 border-t border-slate-50 p-5">

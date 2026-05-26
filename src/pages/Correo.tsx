@@ -192,9 +192,11 @@ export default function Correo() {
       void loadStatus();
     } else if (outlook === 'error') {
       const raw = searchParams.get('message') || 'Error al conectar Outlook.';
-      const friendly = raw.includes('status code 401')
-        ? 'Microsoft rechazó la autenticación (401). Revise OUTLOOK_CLIENT_SECRET: debe ser el valor del secreto en Azure (no el ID). Reinicie npm run dev y vuelva a conectar.'
-        : raw;
+      const friendly = raw.includes('AADSTS900144') || /client_id/i.test(raw)
+        ? 'Microsoft no recibió el Client ID. Configure OUTLOOK_CLIENT_ID y OUTLOOK_CLIENT_SECRET en .env, reinicie npm run dev y vuelva a conectar.'
+        : raw.includes('status code 401')
+          ? 'Microsoft rechazó la autenticación (401). Revise OUTLOOK_CLIENT_SECRET: debe ser el valor del secreto en Azure (no el ID). Reinicie npm run dev y vuelva a conectar.'
+          : raw;
       setError(friendly);
       setSearchParams({}, { replace: true });
     }

@@ -17,6 +17,8 @@ export interface UserProfile {
   name: string;
   role: UserRole;
   courtId: string;
+  /** Bypass RLS multi-despacho (administración de plataforma). */
+  isSuperuser?: boolean;
 }
 
 export type CaseStatus = 'received' | 'admitted' | 'transfer' | 'judgment' | 'archived';

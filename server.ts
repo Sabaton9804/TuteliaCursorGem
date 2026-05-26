@@ -18,9 +18,12 @@ import type { DocumentTemplateTipo } from './src/types.ts';
 import { detectActaRepartoInPdfBuffer } from './pdf-acta-detect';
 import { createPrecedentsFileRouter } from './precedents-routes';
 import { SgdeClient, getDefaultSgdeBaseUrl } from './server/sgde-client';
-import { getParseSession, sweepParseSessions } from './server/parse-email-sessions';
+import { getParseSession, sweepParseSessions, touchParseSession } from './server/parse-email-sessions';
 import { parseJudicialEmailFromBuffer } from './server/parse-judicial-email';
-import { parseSegundaInstanciaFromEmail } from './server/sgde-segunda-instancia-parse';
+import {
+  digestPdfAttachmentsForSegundaInstancia,
+  parseSegundaInstanciaFromEmail,
+} from './server/sgde-segunda-instancia-parse';
 import { registerOutlookRoutes } from './server/outlook-routes';
 import { registerSgdeRoutes } from './server/sgde-routes';
 import { createLoggedInSgdeClientForUser, sgdePlatformState } from './server/sgde-integration';
@@ -1098,9 +1101,11 @@ async function startServer() {
     const session = getParseSession(sessionId);
     if (!session) {
       return res.status(404).json({
-        error: 'Sesión de parseo expirada o inexistente. Vuelva a cargar el archivo .eml.',
+        error:
+          'Sesión de parseo expirada o inexistente (p. ej. reinicio del servidor). Vuelva a cargar el archivo .eml.',
       });
     }
+    touchParseSession(sessionId);
     const row =
       session.attachments.find((a) => a.sessionIndex === i) ?? session.attachments[i];
     if (!row?.buffer?.length) {
@@ -1130,11 +1135,20 @@ async function startServer() {
       const result = await parseJudicialEmailFromBuffer(multerReq.file.buffer);
       const text = typeof result.text === 'string' ? result.text : '';
       const html = typeof result.html === 'string' ? result.html : '';
+      let pdfDigest = '';
+      const session = getParseSession(result.parseSessionId);
+      if (session?.attachments?.length) {
+        try {
+          pdfDigest = await digestPdfAttachmentsForSegundaInstancia(session.attachments);
+        } catch (pdfDigErr) {
+          console.warn('digest PDF segunda instancia:', pdfDigErr);
+        }
+      }
       let segundaInstancia;
       try {
         segundaInstancia = parseSegundaInstanciaFromEmail(
           String(result.subject || ''),
-          text,
+          `${text}\n${pdfDigest}`,
           html
         );
       } catch (siErr) {
@@ -1147,6 +1161,8 @@ async function startServer() {
           sentenciaFecha: null,
           repartoSecuencia: null,
           sgdeNodeId: null,
+          appellant: null,
+          originRuling: null,
         };
       }
       res.json({ ...result, segundaInstancia });
@@ -1234,13 +1250,18 @@ FORMATO DE SALIDA (USAR MARKDOWN):
         required: ['accionantes', 'accionados', 'derechoTutelado', 'hechos', 'pretensiones'],
       };
 
+      const lengthHint = `
+Instrucciones obligatorias para los campos de texto:
+- "hechos": párrafo narrativo extenso (mínimo 900 caracteres si el documento lo permite), con cronología y contexto procesal; no menos de 10 frases; tercera persona; no transcribir.
+- "pretensiones": síntesis en tercera persona (4 a 6 frases); resume órdenes y plazos sin copiar el escrito ni usar primera persona ni comillas.
+`;
       const result = await openai.responses.create({
         model,
         input: [
           {
             role: 'user',
             content: [
-              { type: 'input_text', text: prompt },
+              { type: 'input_text', text: `${String(prompt).trim()}\n${lengthHint}` },
               {
                 type: 'input_file',
                 filename: 'documento.pdf',

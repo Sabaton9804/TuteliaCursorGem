@@ -13,19 +13,26 @@ type PdfViewerZoom = 'fit' | (typeof PDF_VIEWER_ZOOM_SCALES)[number];
 
 export type CasePdfViewerProps = {
   content?: string;
+  /** PDF ya decodificado (evita base64 + atob en el navegador). */
+  pdfBytes?: Uint8Array | null;
   contentType?: string;
   filename: string;
   parseSessionId?: string | null;
   sessionIndex?: number | null;
+  /** scroll: todas las páginas en columna con desplazamiento vertical */
+  displayMode?: 'scroll' | 'paginated';
 };
 
 export function CasePdfViewer({
   content,
+  pdfBytes,
   contentType,
   filename,
   parseSessionId,
   sessionIndex,
+  displayMode = 'scroll',
 }: CasePdfViewerProps) {
+  const scrollAllPages = displayMode === 'scroll';
   const [numPages, setNumPages] = useState<number | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [zoom, setZoom] = useState<PdfViewerZoom>('fit');
@@ -42,8 +49,14 @@ export function CasePdfViewer({
   const pdfOpenedRef = useRef(false);
   const pdfDebugOpenTsRef = useRef(0);
 
+  const hasInlinePayload = Boolean(
+    (typeof content === 'string' && content.length > 0) || (pdfBytes && pdfBytes.length > 0)
+  );
   const useSession =
-    Boolean(parseSessionId) && typeof sessionIndex === 'number' && sessionIndex >= 0;
+    !hasInlinePayload &&
+    Boolean(parseSessionId) &&
+    typeof sessionIndex === 'number' &&
+    sessionIndex >= 0;
 
   useEffect(() => {
     if (!useSession || !parseSessionId) {
@@ -75,6 +88,7 @@ export function CasePdfViewer({
 
   const decodedBytes = useMemo(() => {
     if (useSession) return remoteBytes;
+    if (pdfBytes?.length) return pdfBytes;
     if (!content) return null;
     try {
       const binary = atob(content);
@@ -85,7 +99,7 @@ export function CasePdfViewer({
     } catch {
       return null;
     }
-  }, [useSession, remoteBytes, content]);
+  }, [useSession, remoteBytes, pdfBytes, content]);
 
   useEffect(() => {
     setPdfJsError(null);
@@ -188,10 +202,10 @@ export function CasePdfViewer({
       });
     }
     setNumPages(numPages);
-    setPageNumber(1);
+    if (!scrollAllPages) setPageNumber(1);
   }
 
-  const legacyNoPayload = !useSession && !content;
+  const legacyNoPayload = !useSession && !content && !(pdfBytes && pdfBytes.length > 0);
   if (legacyNoPayload) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-12 text-center space-y-6">
@@ -206,7 +220,7 @@ export function CasePdfViewer({
         </div>
         <div className="w-full max-w-md h-64 bg-white/50 border border-slate-200 border-dashed rounded-2xl flex items-center justify-center">
           <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">
-            Documento Protegido (Vista Cifrada)
+            Sin vista previa (adjunto no cargado)
           </span>
         </div>
       </div>
@@ -229,7 +243,9 @@ export function CasePdfViewer({
         <AlertCircle className="w-10 h-10 text-amber-500" />
         <p className="text-sm font-bold text-slate-800">No se pudo cargar el adjunto</p>
         <p className="text-xs text-slate-500">{remoteError}</p>
-        <p className="text-[10px] text-slate-400">Vuelva a cargar el archivo .eml si la sesión expiró (aprox. 1 h).</p>
+        <p className="text-[10px] text-slate-400">
+          Vuelva a cargar el archivo .eml (sobre todo si reinició el servidor o pasaron varias horas).
+        </p>
       </div>
     );
   }
@@ -301,10 +317,12 @@ export function CasePdfViewer({
     <div className="flex-1 flex flex-col h-full bg-slate-100 overflow-hidden min-w-0">
       <div
         ref={viewportRef}
-        className="flex-1 overflow-auto p-4 flex justify-center min-w-0"
+        className="flex-1 overflow-y-auto overflow-x-hidden p-4 flex justify-center min-w-0"
       >
         {pdfBlob ? (
-          <div className="shadow-2xl max-w-full">
+          <div
+            className={`max-w-full ${scrollAllPages ? 'flex flex-col items-center gap-4 pb-2' : 'shadow-2xl'}`}
+          >
             <Document
               file={pdfBlob}
               onLoadSuccess={onDocumentLoadSuccess}
@@ -350,14 +368,28 @@ export function CasePdfViewer({
                 </div>
               }
             >
-              <Page
-                pageNumber={pageNumber}
-                width={pageWidthProp}
-                scale={pageScaleProp}
-                renderTextLayer={false}
-                renderAnnotationLayer={false}
-                className="max-w-full"
-              />
+              {scrollAllPages && numPages
+                ? Array.from({ length: numPages }, (_, i) => (
+                    <Page
+                      key={`page-${i + 1}`}
+                      pageNumber={i + 1}
+                      width={pageWidthProp}
+                      scale={pageScaleProp}
+                      renderTextLayer={false}
+                      renderAnnotationLayer={false}
+                      className="max-w-full shadow-lg rounded-sm bg-white"
+                    />
+                  ))
+                : (
+                    <Page
+                      pageNumber={pageNumber}
+                      width={pageWidthProp}
+                      scale={pageScaleProp}
+                      renderTextLayer={false}
+                      renderAnnotationLayer={false}
+                      className="max-w-full"
+                    />
+                  )}
             </Document>
           </div>
         ) : (
@@ -367,29 +399,35 @@ export function CasePdfViewer({
         )}
       </div>
 
-      <div className="p-4 bg-white border-t border-slate-200 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <button
-              disabled={pageNumber <= 1}
-              onClick={() => setPageNumber((prev) => prev - 1)}
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-400 hover:text-accent hover:bg-blue-50 disabled:opacity-30 disabled:hover:bg-transparent"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest w-24 text-center">
-              PÁGINA {pageNumber} / {numPages || '?'}
+      <div className="shrink-0 p-3 bg-white border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          {scrollAllPages ? (
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+              {numPages ? `${numPages} página${numPages === 1 ? '' : 's'}` : 'Cargando…'} · desplácese para ver todo
             </span>
-            <button
-              disabled={numPages === null || pageNumber >= numPages}
-              onClick={() => setPageNumber((prev) => prev + 1)}
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-400 hover:text-accent hover:bg-blue-50 disabled:opacity-30 disabled:hover:bg-transparent"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                disabled={pageNumber <= 1}
+                onClick={() => setPageNumber((prev) => prev - 1)}
+                className="p-1.5 rounded-lg border border-slate-200 text-slate-400 hover:text-accent hover:bg-blue-50 disabled:opacity-30 disabled:hover:bg-transparent"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest w-24 text-center">
+                PÁGINA {pageNumber} / {numPages || '?'}
+              </span>
+              <button
+                disabled={numPages === null || pageNumber >= numPages}
+                onClick={() => setPageNumber((prev) => prev + 1)}
+                className="p-1.5 rounded-lg border border-slate-200 text-slate-400 hover:text-accent hover:bg-blue-50 disabled:opacity-30 disabled:hover:bg-transparent"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
 
-          <div className="h-4 w-px bg-slate-200 mx-2" />
+          <div className="h-4 w-px bg-slate-200 hidden sm:block" />
 
           <select
             value={zoom === 'fit' ? 'fit' : String(zoom)}

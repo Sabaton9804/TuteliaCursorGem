@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import { FileText, ChevronLeft, ChevronRight, ExternalLink, Loader2 } from 'lucide-react';
+import { FileText, ExternalLink, Loader2, ZoomIn, ZoomOut } from 'lucide-react';
 import { Document, Page } from 'react-pdf';
 import { supabase } from '../../lib/supabase';
 import { looksLikePdf } from '../../lib/pdf-sniff';
@@ -14,6 +14,10 @@ import { ExpedienteDigitalPanel } from './ExpedienteDigitalPanel';
 import { ExpedienteDocxPreview } from './ExpedienteDocxPreview';
 import { isCaseDocumentDocx } from '../../lib/expediente-docx';
 import type { Case, Document as CaseDoc } from '../../types';
+import {
+  isCaseDocumentOpenableInViewer,
+  primeraPiezaParaAbrir,
+} from '../../lib/expediente-viewer-doc';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
@@ -30,8 +34,22 @@ function base64ToBytes(b64: string): Uint8Array | null {
   }
 }
 
-const PDF_VIEWER_ZOOM_SCALES = [0.5, 0.75, 1.0, 1.25, 1.5] as const;
+const PDF_VIEWER_ZOOM_SCALES = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0] as const;
 type PdfViewerZoom = 'fit' | (typeof PDF_VIEWER_ZOOM_SCALES)[number];
+
+function stepPdfZoom(current: PdfViewerZoom, direction: -1 | 1): PdfViewerZoom {
+  if (current === 'fit') return direction > 0 ? 1.0 : 0.75;
+  const idx = PDF_VIEWER_ZOOM_SCALES.indexOf(current);
+  if (idx < 0) return 1.0;
+  const next = idx + direction;
+  if (next < 0) return PDF_VIEWER_ZOOM_SCALES[0];
+  if (next >= PDF_VIEWER_ZOOM_SCALES.length) return PDF_VIEWER_ZOOM_SCALES[PDF_VIEWER_ZOOM_SCALES.length - 1];
+  return PDF_VIEWER_ZOOM_SCALES[next];
+}
+
+function pdfZoomLabel(zoom: PdfViewerZoom): string {
+  return zoom === 'fit' ? 'Ajustar ancho' : `${Math.round(zoom * 100)}%`;
+}
 
 function PdfViewer({
   content,
@@ -50,7 +68,6 @@ function PdfViewer({
   storagePath?: string;
 }) {
   const [numPages, setNumPages] = useState<number | null>(null);
-  const [pageNumber, setPageNumber] = useState(1);
   const [zoom, setZoom] = useState<PdfViewerZoom>('fit');
   const viewportRef = useRef<HTMLDivElement>(null);
   const [fitWidthPx, setFitWidthPx] = useState(() =>
@@ -73,7 +90,6 @@ function PdfViewer({
   useEffect(() => {
     setPdfJsError(null);
     setNumPages(null);
-    setPageNumber(1);
     setZoom('fit');
   }, [content, storagePath]);
 
@@ -207,12 +223,11 @@ function PdfViewer({
       });
     }
     setNumPages(n);
-    setPageNumber(1);
   }
 
   if (!hasStorage && !hasContent) {
     return (
-      <div className="p-12 flex flex-col items-center justify-center text-center space-y-6 flex-1 min-h-[600px] max-w-lg mx-auto">
+      <div className="p-12 flex flex-col items-center justify-center text-center space-y-6 flex-1 min-h-0 max-w-lg mx-auto">
         <div className="w-20 h-20 bg-white rounded-2xl shadow-sm flex items-center justify-center">
             <FileText className="w-10 h-10 text-slate-300" />
         </div>
@@ -235,7 +250,7 @@ function PdfViewer({
 
   if (hasStorage && signError) {
     return (
-      <div className="p-10 flex flex-col items-center justify-center text-center space-y-4 flex-1 min-h-[600px] max-w-lg mx-auto">
+      <div className="p-10 flex flex-col items-center justify-center text-center space-y-4 flex-1 min-h-0 max-w-lg mx-auto">
         <p className="text-sm font-bold text-slate-800">No se pudo cargar el archivo desde Supabase Storage</p>
         <p className="text-xs text-slate-500 leading-relaxed">{signError}</p>
         <p className="text-[11px] text-slate-400 font-mono break-all">{pathTrim}</p>
@@ -263,7 +278,7 @@ function PdfViewer({
 
   if (!hasStorage && hasContent && !bytes) {
     return (
-      <div className="p-12 flex flex-col items-center justify-center text-center space-y-4 flex-1 min-h-[600px]">
+      <div className="p-12 flex flex-col items-center justify-center text-center space-y-4 flex-1 min-h-0">
         <p className="text-sm font-bold text-slate-700">No se pudo decodificar el archivo (base64 inválido o corrupto).</p>
         <p className="text-xs text-slate-500">{filename}</p>
         <button
@@ -286,7 +301,7 @@ function PdfViewer({
 
   if (isInvalidPdfPayload) {
     return (
-      <div className="p-10 flex flex-col items-center justify-center text-center space-y-4 flex-1 min-h-[600px] max-w-lg mx-auto">
+      <div className="p-10 flex flex-col items-center justify-center text-center space-y-4 flex-1 min-h-0 max-w-lg mx-auto">
         <p className="text-sm font-bold text-slate-800">El adjunto no es un PDF válido</p>
         <p className="text-xs text-slate-500 leading-relaxed">
           Los enlaces de Outlook (Safelinks) a veces devuelven una página HTML en lugar del archivo. Descargue el PDF
@@ -326,7 +341,7 @@ function PdfViewer({
       );
     }
     return (
-      <div className="flex-1 overflow-auto bg-slate-200 p-8 flex items-center justify-center min-h-[600px]">
+      <div className="flex-1 overflow-auto bg-slate-200 p-8 flex items-center justify-center min-h-0">
         <img 
           src={imageUrl} 
           alt={filename} 
@@ -341,7 +356,7 @@ function PdfViewer({
 
   if (pdfJsError) {
     return (
-      <div className="p-10 flex flex-col items-center justify-center text-center space-y-4 flex-1 min-h-[600px] max-w-lg mx-auto">
+      <div className="p-10 flex flex-col items-center justify-center text-center space-y-4 flex-1 min-h-0 max-w-lg mx-auto">
         <p className="text-sm font-bold text-slate-800">No se pudo mostrar el PDF en el navegador</p>
         <p className="text-xs text-slate-500 leading-relaxed">{pdfJsError}</p>
         <p className="text-[11px] text-slate-400">
@@ -391,12 +406,12 @@ function PdfViewer({
   const pageScaleProp = zoom === 'fit' ? 1 : zoom;
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-100 min-h-[600px] overflow-hidden min-w-0">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-slate-100 min-w-0">
       <div
         ref={viewportRef}
         className="flex-1 overflow-auto p-4 flex justify-center min-w-0"
       >
-        <div className="shadow-2xl max-w-full">
+        <div className="flex w-full max-w-full flex-col items-center gap-3 shadow-2xl">
           <Document
             file={documentFile}
             onLoadSuccess={onDocumentLoadSuccess}
@@ -447,58 +462,64 @@ function PdfViewer({
               </div>
             }
           >
-            <Page
-              pageNumber={pageNumber}
-              width={pageWidthProp}
-              scale={pageScaleProp}
-              renderTextLayer={false}
-              renderAnnotationLayer={false}
-              className="max-w-full"
-            />
+            {numPages
+              ? Array.from({ length: numPages }, (_, i) => (
+                  <Page
+                    key={`page-${i + 1}`}
+                    pageNumber={i + 1}
+                    width={pageWidthProp}
+                    scale={pageScaleProp}
+                    renderTextLayer={false}
+                    renderAnnotationLayer={false}
+                    className="mb-3 max-w-full shadow-md last:mb-0"
+                  />
+                ))
+              : null}
           </Document>
         </div>
       </div>
 
-      <div className="p-4 bg-white border-t border-slate-200 flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-white p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+            {numPages ? `${numPages} pág. · scroll` : 'Cargando…'}
+          </span>
+          <div className="h-4 w-px bg-slate-200" />
+          <div className="flex items-center gap-1">
             <button
-              disabled={pageNumber <= 1}
-              onClick={() => setPageNumber(prev => prev - 1)}
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-400 hover:text-accent hover:bg-blue-50 disabled:opacity-30 disabled:hover:bg-transparent"
+              type="button"
+              title="Alejar"
+              onClick={() => setZoom((z) => stepPdfZoom(z, -1))}
+              className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:bg-slate-50 hover:text-accent"
             >
-              <ChevronLeft className="w-4 h-4" />
+              <ZoomOut className="h-4 w-4" />
             </button>
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest w-24 text-center">
-              PÁGINA {pageNumber} / {numPages || '?'}
-            </span>
+            <select
+              value={zoom === 'fit' ? 'fit' : String(zoom)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setZoom(v === 'fit' ? 'fit' : (Number(v) as PdfViewerZoom));
+              }}
+              className="max-w-[7rem] cursor-pointer rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold text-slate-600"
+              title="Nivel de zoom"
+            >
+              <option value="fit">Ajustar ancho</option>
+              {PDF_VIEWER_ZOOM_SCALES.map((s) => (
+                <option key={s} value={s}>
+                  {Math.round(s * 100)}%
+                </option>
+              ))}
+            </select>
             <button
-              disabled={numPages === null || pageNumber >= numPages}
-              onClick={() => setPageNumber(prev => prev + 1)}
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-400 hover:text-accent hover:bg-blue-50 disabled:opacity-30 disabled:hover:bg-transparent"
+              type="button"
+              title="Acercar"
+              onClick={() => setZoom((z) => stepPdfZoom(z, 1))}
+              className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:bg-slate-50 hover:text-accent"
             >
-              <ChevronRight className="w-4 h-4" />
+              <ZoomIn className="h-4 w-4" />
             </button>
+            <span className="hidden text-[9px] text-slate-400 sm:inline">{pdfZoomLabel(zoom)}</span>
           </div>
-          
-          <div className="h-4 w-px bg-slate-200 mx-2" />
-          
-          <select
-            value={zoom === 'fit' ? 'fit' : String(zoom)}
-            onChange={(e) => {
-              const v = e.target.value;
-              setZoom(v === 'fit' ? 'fit' : (Number(v) as PdfViewerZoom));
-            }}
-            className="text-[10px] font-bold text-slate-500 uppercase bg-transparent border-none focus:ring-0 cursor-pointer max-w-[11rem]"
-            title="Ajustar ancho encaja hojas horizontales en el panel"
-          >
-            <option value="fit">Ajustar ancho</option>
-            {PDF_VIEWER_ZOOM_SCALES.map((s) => (
-              <option key={s} value={s}>
-                {Math.round(s * 100)}%
-              </option>
-            ))}
-          </select>
         </div>
 
         {signedUrl ? (
@@ -546,11 +567,93 @@ export function CaseExpedienteDigitalPanel({
   onRefetchCase,
   onRefetchDocs,
 }: CaseExpedienteDigitalPanelProps) {
+  const [constanciaAbierta, setConstanciaAbierta] = useState(false);
+  const autoAbrirVisorRef = useRef(false);
+  const visorPieza = Boolean(selectedDoc && isCaseDocumentOpenableInViewer(selectedDoc));
+  const panelDerechoAbierto = visorPieza || constanciaAbierta;
+
+  useEffect(() => {
+    autoAbrirVisorRef.current = false;
+  }, [caseId]);
+
+  useEffect(() => {
+    if (!docsLoaded || autoAbrirVisorRef.current) return;
+    const first = primeraPiezaParaAbrir(docs);
+    if (!first) return;
+    autoAbrirVisorRef.current = true;
+    if (!visorPieza) {
+      setConstanciaAbierta(false);
+      onSelectDoc(first);
+    }
+  }, [docsLoaded, docs, visorPieza, onSelectDoc]);
+
+  const cerrarPanelDerecho = () => {
+    setConstanciaAbierta(false);
+    onSelectDoc(null);
+  };
+
+  const seleccionarPieza = (doc: CaseDoc | null) => {
+    setConstanciaAbierta(false);
+    onSelectDoc(doc);
+  };
+
+  const splitHostRef = useRef<HTMLDivElement>(null);
+  const dragSplitRef = useRef(false);
+  const [listaRatio, setListaRatio] = useState(0.44);
+  const SPLIT_MIN_LISTA_PX = 280;
+  const SPLIT_MIN_VISOR_PX = 320;
+
+  useEffect(() => {
+    setListaRatio(0.44);
+  }, [caseId]);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragSplitRef.current || !splitHostRef.current) return;
+      const rect = splitHostRef.current.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const minR = SPLIT_MIN_LISTA_PX / rect.width;
+      const maxR = (rect.width - SPLIT_MIN_VISOR_PX) / rect.width;
+      const r = (e.clientX - rect.left) / rect.width;
+      setListaRatio(Math.min(maxR, Math.max(minR, r)));
+    };
+    const onUp = () => {
+      if (!dragSplitRef.current) return;
+      dragSplitRef.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
+  const iniciarArrastreSeparador = () => {
+    dragSplitRef.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+
   return (
-          <div className="flex w-full min-w-0 flex-col gap-6 xl:flex-row xl:items-stretch">
-            <div className="card-modern w-full min-w-0 overflow-hidden p-6 md:p-8 xl:max-w-[min(100%,480px)] xl:shrink-0">
+          <div
+            ref={splitHostRef}
+            className={`flex w-full min-w-0 flex-col gap-4 xl:h-[clamp(32rem,82vh,54rem)] ${
+              panelDerechoAbierto ? 'xl:flex-row xl:gap-0' : ''
+            }`}
+          >
+            <div
+              className={`card-modern flex min-h-0 min-w-0 flex-col overflow-hidden p-4 md:p-5 xl:h-full ${
+                panelDerechoAbierto
+                  ? 'min-h-[min(70vh,40rem)] shrink-0 rounded-r-none border-r-0'
+                  : 'mx-auto min-h-[min(70vh,40rem)] w-full xl:max-w-4xl'
+              }`}
+              style={panelDerechoAbierto ? { width: `${Math.round(listaRatio * 1000) / 10}%` } : undefined}
+            >
             {!docsLoaded ? (
-              <div className="flex items-center justify-center gap-2 py-12 text-slate-400">
+              <div className="flex flex-1 items-center justify-center gap-2 text-slate-400">
                 <Loader2 className="h-5 w-5 animate-spin" />
                 <span className="text-xs font-medium">Cargando documentos del expediente…</span>
               </div>
@@ -562,37 +665,84 @@ export function CaseExpedienteDigitalPanel({
                 onRefetchCase={onRefetchCase}
                 docs={docs}
                 selectedDoc={selectedDoc}
-                onSelectDoc={onSelectDoc}
+                onSelectDoc={seleccionarPieza}
                 onRefetchDocs={onRefetchDocs}
+                visorAbierto={panelDerechoAbierto}
+                onVerConstanciaIngreso={() => {
+                  onSelectDoc(null);
+                  setConstanciaAbierta(true);
+                }}
               />
             )}
             </div>
 
-            {/* Constancia de ingreso / visor de piezas — panel lateral en escritorio */}
-            <div className="card-modern flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            <div className="px-8 py-5 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400 flex items-center gap-2">
-                <FileText className="w-4 h-4 text-accent" />
-                {selectedDoc && selectedDoc.name !== 'CorreoReparto'
-                  ? `Visor: ${sanitizeExpedienteFilenameForDisplay(caseDocumentRawLabel(selectedDoc))}`
-                  : 'Constancia de ingreso (cuerpo del correo)'}
-              </h3>
-              {selectedDoc && (
-                <button 
-                  onClick={() => onSelectDoc(null)}
-                  className="text-[10px] font-bold text-slate-400 hover:text-accent uppercase tracking-widest"
-                >
-                  Cerrar Visor
-                </button>
-              )}
+            {panelDerechoAbierto ? (
+            <>
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Ajustar ancho entre lista y visor"
+              title="Arrastre para cambiar el tamaño"
+              onMouseDown={iniciarArrastreSeparador}
+              className="relative z-10 hidden shrink-0 cursor-col-resize bg-slate-200/90 hover:bg-accent/25 active:bg-accent/35 xl:flex xl:w-2 xl:flex-col xl:items-center xl:justify-center"
+            >
+              <div className="pointer-events-none flex h-12 w-1 flex-col items-center justify-center gap-0.5 rounded-full bg-white/90 shadow-sm ring-1 ring-slate-300/80">
+                <span className="block h-1 w-1 rounded-full bg-slate-400" />
+                <span className="block h-1 w-1 rounded-full bg-slate-400" />
+                <span className="block h-1 w-1 rounded-full bg-slate-400" />
+              </div>
             </div>
-            <div className="p-8">
-              {!selectedDoc || selectedDoc.name === 'CorreoReparto' ? (
-                <div className="bg-white border border-slate-200 shadow-sm rounded-lg overflow-hidden">
-                  {caseItem && caseItem.emailMetadata && (
-                    <details className="border-b border-slate-200 bg-slate-50/90 text-[10px] text-slate-600">
+            <div className="card-modern flex h-[min(52vh,32rem)] min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-l-none xl:h-full">
+            <div className="flex shrink-0 flex-col gap-1 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between md:px-5">
+              <div className="min-w-0">
+                <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400">
+                  <FileText className="h-4 w-4 shrink-0 text-accent" />
+                  {visorPieza && selectedDoc
+                    ? `Visor: ${sanitizeExpedienteFilenameForDisplay(caseDocumentRawLabel(selectedDoc))}`
+                    : 'Constancia de ingreso (correo)'}
+                </h3>
+                <p className="mt-0.5 text-[10px] text-slate-500">
+                  Cierre el visor para ampliar la lista de piezas (estilo explorador de archivos).
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={cerrarPanelDerecho}
+                className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-600 hover:border-accent/40 hover:text-accent"
+              >
+                Cerrar visor
+              </button>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 md:p-5">
+              {visorPieza && selectedDoc ? (
+                isCaseDocumentDocx(selectedDoc) ? (
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-slate-100 p-2 sm:p-3">
+                  <ExpedienteDocxPreview
+                    key={selectedDoc.id}
+                    storagePath={selectedDoc.storagePath}
+                    filename={sanitizeExpedienteFilenameForDisplay(caseDocumentRawLabel(selectedDoc))}
+                    onBack={cerrarPanelDerecho}
+                  />
+                </div>
+              ) : (
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
+                  <PdfViewer
+                    key={selectedDoc.id}
+                    content={selectedDoc.content}
+                    contentType={selectedDoc.contentType}
+                    filename={sanitizeExpedienteFilenameForDisplay(caseDocumentRawLabel(selectedDoc))}
+                    ingestError={selectedDoc.ingestError}
+                    storagePath={selectedDoc.storagePath}
+                    onBack={cerrarPanelDerecho}
+                  />
+                </div>
+              )
+              ) : (
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+                  {caseItem.emailMetadata ? (
+                    <details className="shrink-0 border-b border-slate-200 bg-slate-50/90 text-[10px] text-slate-600">
                       <summary className="cursor-pointer px-3 py-2 font-semibold text-slate-500 hover:bg-slate-100/80">
-                        Metadatos del correo (De / Para / Asunto) — pulse para desplegar
+                        Metadatos del correo — pulse para desplegar
                       </summary>
                       <div className="space-y-1.5 border-t border-slate-100 px-3 py-2 leading-snug break-words">
                         <p>
@@ -605,63 +755,32 @@ export function CaseExpedienteDigitalPanel({
                         </p>
                         <p>
                           <span className="font-bold text-slate-400">Asunto</span>{' '}
-                          <span className="font-medium text-slate-800">{String(caseItem.emailMetadata.subject ?? '')}</span>
+                          <span className="font-medium text-slate-800">
+                            {String(caseItem.emailMetadata.subject ?? '')}
+                          </span>
                         </p>
-                        {caseItem.emailMetadata.linkFound ? (
-                          <p className="text-sky-700 break-all">{String(caseItem.emailMetadata.linkUrl ?? '')}</p>
-                        ) : null}
                       </div>
                     </details>
-                  )}
-
-                  <div className="p-0 max-h-[700px] bg-white">
+                  ) : null}
+                  <div className="min-h-0 flex-1 overflow-auto bg-white">
                     {caseItem.rawHtml ? (
-                      <iframe 
-                        srcDoc={`
-                          <html>
-                            <head>
-                              <style>
-                                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.5; color: #334155; padding: 20px; }
-                                img { max-width: 100%; height: auto; }
-                              </style>
-                            </head>
-                            <body>${caseItem.rawHtml}</body>
-                          </html>
-                        `}
-                        className="w-full min-h-[600px] border-none"
-                        title="Email Body Detailed"
+                      <iframe
+                        srcDoc={`<html><head><style>body{font-family:system-ui,sans-serif;line-height:1.5;color:#334155;padding:20px}img{max-width:100%}</style></head><body>${caseItem.rawHtml}</body></html>`}
+                        className="h-full min-h-[12rem] w-full border-none"
+                        title="Constancia de ingreso"
                       />
                     ) : (
-                      <div className="p-10 font-sans text-sm leading-relaxed text-slate-500 whitespace-pre-wrap">
+                      <div className="p-6 text-sm leading-relaxed whitespace-pre-wrap text-slate-500">
                         {caseItem.rawText || 'No hay contenido disponible.'}
                       </div>
                     )}
                   </div>
                 </div>
-              ) : isCaseDocumentDocx(selectedDoc) ? (
-                <div className="flex min-h-[600px] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-slate-100 p-3 sm:p-4">
-                  <ExpedienteDocxPreview
-                    key={selectedDoc.id}
-                    storagePath={selectedDoc.storagePath}
-                    filename={sanitizeExpedienteFilenameForDisplay(caseDocumentRawLabel(selectedDoc))}
-                    onBack={() => onSelectDoc(null)}
-                  />
-                </div>
-              ) : (
-                <div className="flex min-h-[600px] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-slate-100">
-                  <PdfViewer
-                    key={selectedDoc.id}
-                    content={selectedDoc.content}
-                    contentType={selectedDoc.contentType}
-                    filename={sanitizeExpedienteFilenameForDisplay(caseDocumentRawLabel(selectedDoc))}
-                    ingestError={selectedDoc.ingestError}
-                    storagePath={selectedDoc.storagePath}
-                    onBack={() => onSelectDoc(null)}
-                  />
-                </div>
               )}
             </div>
           </div>
+            </>
+            ) : null}
           </div>
   );
 }

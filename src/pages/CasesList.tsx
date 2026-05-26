@@ -65,7 +65,8 @@ const ASSIGNEE_SELECT_OPTIONS = SUSTANCIADORES.map((a) => ({
 }));
 
 export default function CasesList() {
-  const { courtId } = useSessionCourt();
+  const { courtId, profile: sessionCourtProfile } = useSessionCourt();
+  const allCourts = Boolean(sessionCourtProfile?.isSuperuser);
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const tutelasFilter: TutelasListFilter = useMemo(
@@ -142,8 +143,8 @@ export default function CasesList() {
   const orderCol = useMemo(() => casesListSortToOrderColumn(sortBy), [sortBy]);
 
   const { data: cases = [], isPending, error } = useQuery({
-    queryKey: courtCasesQueryKey(courtId, orderCol),
-    queryFn: () => fetchCourtCasesForList(courtId, orderCol),
+    queryKey: [...courtCasesQueryKey(courtId, orderCol), allCourts ? 'all-courts' : 'one-court'],
+    queryFn: () => fetchCourtCasesForList(courtId, orderCol, { allCourts }),
   });
 
   const { data: courtAssignmentMode } = useQuery({

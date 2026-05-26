@@ -1,16 +1,15 @@
 import type { Express, Request } from 'express';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { requireAuthenticatedCaller } from './outlook-auth';
-import {
-  createLoggedInSgdeClientForUser,
-  sgdePlatformState,
-} from './sgde-integration';
+import { sgdePlatformState } from './sgde-integration';
+import { getLoggedInSgdeClientForUser, invalidateSgdeSession } from './sgde-session-cache';
 import {
   deleteUserSgdeCredentials,
   getUserSgdeCredentialsMeta,
   saveUserSgdeCredentials,
 } from './sgde-credentials';
 import { migrateSgdeOriginToCase, preflightSgdeOriginExpediente } from './sgde-migrate';
+import { publishSegundaTrasladoToSgdeImpugnacion } from './sgde-segunda-impugnacion';
 import { createExpedienteInSgde } from './sgde-create-expediente';
 import { syncDocumentsWithSgde } from './sgde-sync-documents';
 import { signCaseDocumentInSgde } from './sgde-sign-document';
@@ -37,7 +36,7 @@ async function sgdeClientForRequest(
       code: 'PLATFORM_UNAVAILABLE',
     };
   }
-  const logged = await createLoggedInSgdeClientForUser(auth.admin, auth.userId);
+  const logged = await getLoggedInSgdeClientForUser(auth.admin, auth.userId);
   if ('error' in logged) {
     const status = logged.code === 'USER_NOT_CONFIGURED' ? 403 : 502;
     return { ok: false as const, status, message: logged.error, code: logged.code };
@@ -52,7 +51,7 @@ async function sgdeClientForRequest(
 
 export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => SupabaseClient): void {
   console.info(
-    `[tutelia] SGDE API (${SGDE_API_BUILD}): status, credentials, case-tree, link, preflight-origin, migrate-origin-to-case, create-expediente, sync-documents, sign-document`
+    `[tutelia] SGDE API (${SGDE_API_BUILD}): status, credentials, case-tree, link, preflight-origin, preview-node, migrate-origin-to-case, create-expediente, sync-documents, sign-document`
   );
 
   app.get('/api/sgde/status', async (req, res) => {
@@ -119,6 +118,7 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
     if (saved.error) {
       return res.status(500).json({ error: saved.error });
     }
+    invalidateSgdeSession(auth.userId);
 
     const meta = await getUserSgdeCredentialsMeta(auth.admin, auth.userId);
     return res.json({
@@ -132,13 +132,19 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
     const auth = await requireAuthenticatedCaller(req, getSupabaseAdmin);
     if (auth.ok === false) return res.status(auth.status).json({ error: auth.message });
     await deleteUserSgdeCredentials(auth.admin, auth.userId);
+    invalidateSgdeSession(auth.userId);
     return res.json({ ok: true });
   });
 
   app.post('/api/sgde/preflight-origin', async (req, res) => {
-    const body = (req.body ?? {}) as { originRadicado?: string; sgdeNodeIdHint?: string };
+    const body = (req.body ?? {}) as {
+      originRadicado?: string;
+      sgdeNodeIdHint?: string;
+      emailDigest?: string;
+    };
     const originRadicado = String(body.originRadicado || '').trim();
     const sgdeNodeIdHint = String(body.sgdeNodeIdHint || '').trim() || null;
+    const emailDigest = String(body.emailDigest || '').trim() || null;
     if (!originRadicado) {
       return res.status(400).json({ error: 'originRadicado es requerido (23 dígitos).' });
     }
@@ -156,10 +162,93 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
     try {
       const result = await preflightSgdeOriginExpediente(sess.client, originRadicado, {
         sgdeNodeIdHint,
+        emailDigest,
       });
       return res.json({ ...result, portalBaseUrl: sess.portalBaseUrl });
     } catch (e) {
       console.error('sgde/preflight-origin:', e);
+      return res.status(500).json({ error: String((e as Error)?.message || e) });
+    }
+  });
+
+  app.post('/api/sgde/preview-node', async (req, res) => {
+    const nodeId = String((req.body as { nodeId?: string })?.nodeId || '').trim();
+    if (!nodeId || !/^[0-9a-f-]{36}$/i.test(nodeId)) {
+      return res.status(400).json({ error: 'nodeId (UUID) es requerido.' });
+    }
+
+    const sess = await sgdeClientForRequest(req, getSupabaseAdmin);
+    if (sess.ok === false) {
+      return res.status(sess.status).json({ error: sess.message, code: sess.code });
+    }
+
+    const t0 = Date.now();
+    try {
+      const downloaded = await sess.client.downloadNodeContent(nodeId);
+      if (!downloaded?.buffer?.length) {
+        return res.status(404).json({ error: 'No se pudo descargar el documento desde SGDE.' });
+      }
+      const ct = downloaded.contentType || 'application/pdf';
+      res.setHeader('Content-Type', ct);
+      res.setHeader('Content-Length', String(downloaded.buffer.length));
+      res.setHeader('Cache-Control', 'private, max-age=600');
+      res.setHeader('X-Sgde-Node-Id', nodeId);
+      res.setHeader('X-Sgde-Preview-Ms', String(Date.now() - t0));
+      return res.send(downloaded.buffer);
+    } catch (e) {
+      console.error('sgde/preview-node:', e);
+      return res.status(500).json({ error: String((e as Error)?.message || e) });
+    }
+  });
+
+  app.post('/api/sgde/publish-segunda-impugnacion', async (req, res) => {
+    const body = (req.body ?? {}) as {
+      caseId?: string;
+      originRadicado?: string;
+      sgdeRootId?: string;
+    };
+    const caseId = String(body.caseId || '').trim();
+    const originRadicado = String(body.originRadicado || '').replace(/\D/g, '');
+    const sgdeRootId = String(body.sgdeRootId || '').trim();
+    if (!caseId) return res.status(400).json({ error: 'caseId es requerido.' });
+    if (originRadicado.length !== 23) {
+      return res.status(400).json({ error: 'originRadicado debe tener 23 dígitos (CUI de origen en SGDE).' });
+    }
+
+    const sess = await sgdeClientForRequest(req, getSupabaseAdmin);
+    if (sess.ok === false) {
+      return res.status(sess.status).json({ error: sess.message, code: sess.code });
+    }
+
+    const { data: caseRow, error: caseErr } = await sess.auth.admin
+      .from('cases')
+      .select('id, court_id')
+      .eq('id', caseId)
+      .maybeSingle();
+    if (caseErr || !caseRow?.id) {
+      return res.status(404).json({ error: 'Expediente no encontrado.' });
+    }
+
+    const { data: prof } = await sess.auth.admin
+      .from('profiles')
+      .select('court_id')
+      .eq('id', sess.auth.userId)
+      .maybeSingle();
+    if (!prof?.court_id || String(prof.court_id) !== String(caseRow.court_id)) {
+      return res.status(403).json({ error: 'No autorizado para este expediente.' });
+    }
+
+    try {
+      const result = await publishSegundaTrasladoToSgdeImpugnacion({
+        client: sess.client,
+        admin: sess.auth.admin,
+        caseId,
+        sgdeRootId,
+        originRadicado23: originRadicado,
+      });
+      return res.json({ ...result, portalBaseUrl: sess.portalBaseUrl });
+    } catch (e) {
+      console.error('sgde/publish-segunda-impugnacion:', e);
       return res.status(500).json({ error: String((e as Error)?.message || e) });
     }
   });

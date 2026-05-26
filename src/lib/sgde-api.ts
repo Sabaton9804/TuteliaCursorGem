@@ -1,5 +1,8 @@
 import { supabase } from './supabase';
+import { resolveOriginRadicadoFromRepartoEmail } from './reparto-origin-cui';
+import { extractSegundaFieldsFromText } from './segunda-instancia-extract';
 import { ensureSupabaseSessionForWrites } from './supabase-write-auth';
+import type { CaseAppellant, CaseOriginRuling } from '../types';
 
 export type SgdePreflightStatus =
   | 'listo'
@@ -8,6 +11,25 @@ export type SgdePreflightStatus =
   | 'no_encontrado'
   | 'solo_compartidos'
   | 'error_login';
+
+export type SgdePreflightPdfFile = {
+  id: string;
+  name: string;
+  path: string;
+};
+
+export type SgdePreflightTreeNode = {
+  id: string;
+  name: string;
+  kind: 'folder' | 'file';
+  children?: SgdePreflightTreeNode[];
+};
+
+export type SegundaFieldsExtract = {
+  appellant: CaseAppellant | null;
+  originRuling: CaseOriginRuling | null;
+  sources: string[];
+};
 
 export type SgdePreflightResult = {
   ok: boolean;
@@ -19,6 +41,9 @@ export type SgdePreflightResult = {
   recommendedFound: string[];
   recommendedMissing: string[];
   sampleFiles: string[];
+  pdfFiles?: SgdePreflightPdfFile[];
+  documentTree?: SgdePreflightTreeNode[];
+  segundaExtract?: SegundaFieldsExtract | null;
   message: string;
   portalBaseUrl?: string;
   error?: string;
@@ -45,6 +70,8 @@ export type SegundaInstanciaEmailParse = {
   sentenciaFecha: string | null;
   repartoSecuencia: string | null;
   sgdeNodeId?: string | null;
+  appellant?: CaseAppellant | null;
+  originRuling?: CaseOriginRuling | null;
 };
 
 export type MigrateSgdeOriginResult = {
@@ -55,6 +82,17 @@ export type MigrateSgdeOriginResult = {
   failed: number;
   errors: string[];
   documentIds: string[];
+  error?: string;
+};
+
+export type PublishSegundaImpugnacionResult = {
+  ok: boolean;
+  sgdeRootId: string;
+  impugnacionFolderId: string;
+  uploaded: number;
+  uploadFailed: number;
+  uploadErrors: string[];
+  message: string;
   error?: string;
 };
 
@@ -187,12 +225,17 @@ export async function sgdeCreateExpediente(opts: {
 
 export async function sgdePreflightOrigin(
   originRadicado: string,
-  sgdeNodeIdHint?: string | null
+  sgdeNodeIdHint?: string | null,
+  emailDigest?: string | null
 ): Promise<SgdePreflightResult> {
   const res = await fetch('/api/sgde/preflight-origin', {
     method: 'POST',
     headers: await authHeaders(),
-    body: JSON.stringify({ originRadicado, sgdeNodeIdHint: sgdeNodeIdHint || undefined }),
+    body: JSON.stringify({
+      originRadicado,
+      sgdeNodeIdHint: sgdeNodeIdHint || undefined,
+      emailDigest: emailDigest?.trim() || undefined,
+    }),
   });
   const body = (await res.json().catch(() => ({}))) as SgdePreflightResult & {
     error?: string;
@@ -213,10 +256,70 @@ export async function sgdePreflightOrigin(
       recommendedFound: [],
       recommendedMissing: [],
       sampleFiles: [],
+      pdfFiles: [],
+      documentTree: [],
+      segundaExtract: null,
       message: msg,
       error: body.error,
       code: body.code,
     };
+  }
+  return body;
+}
+
+export async function sgdePreviewNodeBytes(nodeId: string): Promise<{
+  bytes: Uint8Array;
+  contentType: string;
+  size: number;
+}> {
+  const headers = await authHeaders();
+  const res = await fetch('/api/sgde/preview-node', {
+    method: 'POST',
+    headers: { ...headers, Accept: 'application/pdf' },
+    body: JSON.stringify({ nodeId }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+    const msg =
+      body.code === 'USER_NOT_CONFIGURED'
+        ? 'Configure su usuario y contraseña SGDE en Ajustes.'
+        : body.error || `Error al obtener vista previa (${res.status})`;
+    throw new Error(msg);
+  }
+  const buf = await res.arrayBuffer();
+  if (!buf.byteLength) throw new Error('SGDE no devolvió contenido del documento.');
+  const ct = res.headers.get('content-type') || 'application/pdf';
+  return {
+    bytes: new Uint8Array(buf),
+    contentType: ct.split(';')[0].trim(),
+    size: buf.byteLength,
+  };
+}
+
+export async function sgdePublishSegundaImpugnacion(opts: {
+  caseId: string;
+  originRadicado: string;
+  sgdeRootId?: string | null;
+}): Promise<PublishSegundaImpugnacionResult> {
+  const res = await fetch('/api/sgde/publish-segunda-impugnacion', {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify({
+      caseId: opts.caseId,
+      originRadicado: opts.originRadicado.replace(/\D/g, ''),
+      sgdeRootId: opts.sgdeRootId || undefined,
+    }),
+  });
+  const body = (await res.json().catch(() => ({}))) as PublishSegundaImpugnacionResult & {
+    error?: string;
+    code?: string;
+  };
+  if (!res.ok) {
+    const msg =
+      body.code === 'USER_NOT_CONFIGURED'
+        ? 'Configure su usuario y contraseña SGDE en Ajustes.'
+        : body.error || `Error al publicar en SGDE (${res.status})`;
+    throw new Error(msg);
   }
   return body;
 }
@@ -260,23 +363,26 @@ export function parseSegundaInstanciaClient(
       .replace(/\s+/g, ' ')
       .trim();
   const combined = `${subject}\n${text}\n${html ? stripHtml(html) : ''}`;
+  // “Apelación” en correos/SGDE: solo heurística; etiquetas visibles = impugnación.
   const isSegundaInstancia =
     /\bAPELACI[ÓO]N\b/i.test(combined) ||
+    /\brecurso\s+de\s+apelaci[oó]n\b/i.test(combined) ||
     /\bACTA\s+DE\s+REPARTO\b/i.test(combined) ||
     /\befecto\s+SUSPENSIVO\b/i.test(combined) ||
+    /\bREMISI[ÓO]N\s+(?:EXPEDIENTE|DEL\s+EXPEDIENTE)\b/i.test(combined) ||
+    (/\bREMISI[ÓO]N\b/i.test(combined) && /\bTUTELA\b/i.test(combined)) ||
+    /\bIMPUGNACI[ÓO]N\b/i.test(combined) ||
+    /\bSolicitud\s+de\s+traslado\b/i.test(combined) ||
+    /\btraslado\s+del\s+proceso\s+judicial\b/i.test(combined) ||
     /\bExpediente:\s*\d{23}/i.test(combined);
 
-  let originRadicado: string | null = null;
-  const exp = combined.match(/Expediente:\s*(\d{23})/i);
-  if (exp) originRadicado = exp[1];
-  if (!originRadicado) {
-    const sub = subject.match(/\b(\d{23})\b/);
-    if (sub) originRadicado = sub[1];
+  const reparto = resolveOriginRadicadoFromRepartoEmail(subject, combined);
+  let originRadicado: string | null = reparto.originRadicado;
+  let originCourt: string | null = reparto.originCourt;
+  if (!originCourt) {
+    const court = combined.match(/Despacho\s+custodio:\s*([^\n\r]+)/i);
+    if (court) originCourt = court[1].trim();
   }
-
-  let originCourt: string | null = null;
-  const court = combined.match(/Despacho\s+custodio:\s*([^\n\r]+)/i);
-  if (court) originCourt = court[1].trim();
 
   let motivo: string | null = null;
   const mot = combined.match(/Motivo:\s*([^\n\r_]+)/i);
@@ -289,6 +395,10 @@ export function parseSegundaInstanciaClient(
   let repartoSecuencia: string | null = null;
   const seq = combined.match(/REPARTO\s+SECUENCIA:\s*(\d+)/i);
   if (seq) repartoSecuencia = seq[1];
+  if (!repartoSecuencia) {
+    const subjSeq = subject.match(/\bSECUENCIA\s+(\d{1,6})\b/i);
+    if (subjSeq) repartoSecuencia = subjSeq[1];
+  }
 
   const sgdeNodeId = (() => {
     const decoded = combined.replace(/&amp;/g, '&').replace(/%2F/gi, '/');
@@ -306,6 +416,8 @@ export function parseSegundaInstanciaClient(
     return null;
   })();
 
+  const fields = extractSegundaFieldsFromText(combined, 'Cuerpo del correo');
+
   return {
     isSegundaInstancia,
     originRadicado,
@@ -314,6 +426,8 @@ export function parseSegundaInstanciaClient(
     sentenciaFecha,
     repartoSecuencia,
     sgdeNodeId,
+    appellant: fields.appellant,
+    originRuling: fields.originRuling,
   };
 }
 
@@ -357,6 +471,6 @@ export async function sgdeSignDocument(opts: {
 
 export const SGDE_RECOMMENDED_LABELS: Record<string, string> = {
   sentencia_fallo: 'Sentencia / fallo de origen',
-  apelacion_memorial: 'Memorial / recurso de apelación',
+  impugnacion_memorial: 'Escrito / memorial de impugnación',
   notificacion: 'Notificaciones / constancias',
 };

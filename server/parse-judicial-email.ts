@@ -301,7 +301,14 @@ export async function parseJudicialEmailFromBuffer(buffer: Buffer): Promise<Pars
   });
 
   const parseSessionId = createParseSession(sessionAttachments);
-  const publicAttachments = sessionAttachments.map(({ buffer: _buf, ...meta }) => meta);
+  /** Límite por adjunto en JSON (el cliente usa esto para el visor sin depender solo de la sesión en RAM). */
+  const MAX_INLINE_ATTACHMENT_BYTES = 14 * 1024 * 1024;
+  const publicAttachments = sessionAttachments.map(({ buffer, ...meta }) => ({
+    ...meta,
+    ...(buffer.length > 0 && buffer.length <= MAX_INLINE_ATTACHMENT_BYTES
+      ? { content: buffer.toString('base64') }
+      : {}),
+  }));
 
   return {
     subject: parsed.subject,

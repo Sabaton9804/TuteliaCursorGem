@@ -1,10 +1,17 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
+  flattenSgdePdfLeaves,
   sgdeLeafDisplayPath,
   type SgdeClient,
   type SgdePdfLeaf,
   type SgdeTreeNode,
 } from './sgde-client';
+import { extractSegundaFieldsFromSgdeLeaves, type SegundaFieldsExtract } from './sgde-segunda-extract';
+import {
+  buildPreflightTreeFromPdfLeaves,
+  sgdeTreeToPreflightDocumentTree,
+  type SgdePreflightTreeNode,
+} from './sgde-preflight-tree';
 import {
   insertCaseDocumentRowsAdmin,
   nextSortOrderForCase,
@@ -20,6 +27,14 @@ export type SgdePreflightStatus =
   | 'solo_compartidos'
   | 'error_login';
 
+export type SgdePreflightPdfFile = {
+  id: string;
+  name: string;
+  path: string;
+};
+
+export type { SgdePreflightTreeNode };
+
 export type SgdePreflightResult = {
   ok: boolean;
   status: SgdePreflightStatus;
@@ -30,12 +45,24 @@ export type SgdePreflightResult = {
   recommendedFound: string[];
   recommendedMissing: string[];
   sampleFiles: string[];
+  pdfFiles: SgdePreflightPdfFile[];
+  documentTree: SgdePreflightTreeNode[];
+  segundaExtract: SegundaFieldsExtract | null;
   message: string;
 };
 
 const RECOMMENDED_HINTS: Array<{ key: string; patterns: RegExp[] }> = [
   { key: 'sentencia_fallo', patterns: [/sentencia/i, /fallo/i, /providencia/i] },
-  { key: 'apelacion_memorial', patterns: [/apelaci[oó]n/i, /memorial/i, /impugn/i] },
+  {
+    key: 'impugnacion_memorial',
+    patterns: [
+      /impugn/i,
+      /memorial/i,
+      /AutoConcedeImpugnacion/i,
+      /escrito.*impugn/i,
+      /apelaci[oó]n/i, // nombre erróneo en SGDE/juzgado; no se muestra al usuario
+    ],
+  },
   { key: 'notificacion', patterns: [/notific/i, /constancia/i] },
 ];
 
@@ -75,7 +102,7 @@ export function sgdeFilenameToProtocolName(raw: string, orden?: string): string 
 export async function preflightSgdeOriginExpediente(
   client: SgdeClient,
   originRadicadoRaw: string,
-  opts?: { sgdeNodeIdHint?: string | null }
+  opts?: { sgdeNodeIdHint?: string | null; emailDigest?: string | null }
 ): Promise<SgdePreflightResult> {
   const originRadicado = originRadicadoRaw.replace(/\D/g, '');
   if (originRadicado.length !== 23) {
@@ -89,6 +116,9 @@ export async function preflightSgdeOriginExpediente(
       recommendedFound: [],
       recommendedMissing: RECOMMENDED_HINTS.map((h) => h.key),
       sampleFiles: [],
+      pdfFiles: [],
+      documentTree: [],
+      segundaExtract: null,
       message: 'El radicado de origen debe tener 23 dígitos (CUI nacional).',
     };
   }
@@ -96,10 +126,15 @@ export async function preflightSgdeOriginExpediente(
   const rootId = await client.buscarExpedienteNodeId(originRadicado, {
     nodeIdHint: opts?.sgdeNodeIdHint,
   });
+  if (rootId) {
+    console.info(`[sgde/preflight] CUI ${originRadicado} → nodo ${rootId.slice(0, 8)}…`);
+  } else {
+    console.info(`[sgde/preflight] CUI ${originRadicado} → sin nodo en SGDE`);
+  }
   if (!rootId) {
     return {
       ok: false,
-      status: 'solo_compartidos',
+      status: 'no_encontrado',
       originRadicado,
       sgdeRootId: null,
       rootName: null,
@@ -107,22 +142,47 @@ export async function preflightSgdeOriginExpediente(
       recommendedFound: [],
       recommendedMissing: [],
       sampleFiles: [],
+      pdfFiles: [],
+      documentTree: [],
+      segundaExtract: null,
       message:
-        'Tutelia no pudo enlazar el expediente en SGDE (suele estar solo en Mis compartidos → Con el despacho, no en la grilla principal). ' +
-        'Pulse Actualizar de nuevo; si el acta del correo trae enlace a SGDE, se usará automáticamente. También puede radicar con el acta aunque el traslado digital quede pendiente.',
+        `No se encontró en SGDE el CUI ${originRadicado}. Si lo ve en la grilla del portal, pulse Actualizar de nuevo o pegue abajo el enlace al abrir ese expediente en SGDE. ` +
+        'Si solo está en Mis compartidos → Con el despacho, use el mismo enlace desde allí.',
     };
   }
 
   const rootName = await client.getNodeName(rootId);
-  const leaves = await client.collectPdfLeavesForExpediente(rootId, {
+  const { leaves, tree: sgdeTree } = await client.collectExpedienteForPreflight(rootId, {
     maxDepth: 12,
     maxNodes: 800,
     maxSearchDocs: 600,
     originRadicado,
   });
+  const documentTree =
+    flattenSgdePdfLeaves(sgdeTree).length > 0
+      ? sgdeTreeToPreflightDocumentTree(sgdeTree)
+      : buildPreflightTreeFromPdfLeaves(leaves);
   const { found, missing } = evaluateRecommended(leaves);
-  const sampleFiles = leaves.slice(0, 12).map((l) => sgdeLeafDisplayPath(l));
+  const pdfFiles: SgdePreflightPdfFile[] = leaves.map((l) => ({
+    id: l.id,
+    name: l.name,
+    path: sgdeLeafDisplayPath(l),
+  }));
+  const sampleFiles = pdfFiles.slice(0, 12).map((f) => f.path);
   const folderCount = new Set(leaves.map((l) => l.folderPath).filter(Boolean)).size;
+
+  let segundaExtract: SegundaFieldsExtract | null = null;
+  if (leaves.length > 0) {
+    try {
+      segundaExtract = await extractSegundaFieldsFromSgdeLeaves(
+        client,
+        leaves,
+        opts?.emailDigest || undefined
+      );
+    } catch (e) {
+      console.warn('[sgde/preflight] extract segunda fields:', e);
+    }
+  }
 
   if (leaves.length === 0) {
     return {
@@ -135,12 +195,15 @@ export async function preflightSgdeOriginExpediente(
       recommendedFound: found,
       recommendedMissing: missing,
       sampleFiles,
+      pdfFiles,
+      documentTree,
+      segundaExtract,
       message:
         'El expediente existe en SGDE pero no hay PDF en las carpetas visitadas (revise cuadernos como 01CdoPrincipal dentro de Primera Instancia).',
     };
   }
 
-  const incompleto = missing.includes('sentencia_fallo') || missing.includes('apelacion_memorial');
+  const incompleto = missing.includes('sentencia_fallo') || missing.includes('impugnacion_memorial');
   const status: SgdePreflightStatus = incompleto ? 'incompleto' : 'listo';
   return {
     ok: status === 'listo',
@@ -152,6 +215,9 @@ export async function preflightSgdeOriginExpediente(
     recommendedFound: found,
     recommendedMissing: missing,
     sampleFiles,
+    pdfFiles,
+    documentTree,
+    segundaExtract,
     message:
       status === 'listo'
         ? `SGDE listo: ${leaves.length} PDF en ${folderCount || 'varias'} carpeta(s) (p. ej. Primera Instancia / cuaderno principal).`

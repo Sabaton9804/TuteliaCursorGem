@@ -2,6 +2,17 @@
  * Extracción heurística de datos de correo de reparto / SGDE para segunda instancia.
  */
 
+import {
+  extractPlainTextFromPdfBuffer,
+  filenameSuggestsActaReparto,
+} from '../pdf-acta-detect';
+import {
+  extractExplicitCuiFromText,
+  resolveOriginRadicadoFromRepartoEmail,
+} from '../src/lib/reparto-origin-cui.ts';
+import { extractSegundaFieldsFromText } from '../src/lib/segunda-instancia-extract.ts';
+import type { CaseAppellant, CaseOriginRuling } from '../src/types.ts';
+
 export type SegundaInstanciaEmailParse = {
   isSegundaInstancia: boolean;
   originRadicado: string | null;
@@ -11,6 +22,8 @@ export type SegundaInstanciaEmailParse = {
   repartoSecuencia: string | null;
   /** Nodo Alfresco si el correo trae enlace SGDE (compartidos / usuario-interno). */
   sgdeNodeId: string | null;
+  appellant: CaseAppellant | null;
+  originRuling: CaseOriginRuling | null;
 };
 
 const UUID_RE =
@@ -34,8 +47,6 @@ export function extractSgdeNodeIdFromText(text: string): string | null {
   return null;
 }
 
-const CUI_REGEX = /\b(\d{23})\b/g;
-
 function stripHtml(html: string): string {
   return html
     .replace(/<br\s*\/?>/gi, '\n')
@@ -56,32 +67,44 @@ export function parseSegundaInstanciaFromEmail(
   const htmlPlain = bodyHtml ? stripHtml(bodyHtml) : '';
   const combined = `${subject}\n${bodyText || ''}\n${htmlPlain}`;
 
+  // Incluye “apelación” solo como señal de detección (juzgados la usan mal); la UI dice impugnación.
   const cuesSegunda = [
     /\bAPELACI[ÓO]N\b/i,
+    /\brecurso\s+de\s+apelaci[oó]n\b/i,
     /\bsegunda\s+instancia\b/i,
     /\befecto\s+SUSPENSIVO\b/i,
-    /\brecurso\s+de\s+apelaci[oó]n\b/i,
     /\bsentencia\s+de\s+fecha\b/i,
     /\bremite.*competente\b/i,
     /\bACTA\s+DE\s+REPARTO\b/i,
+    /\bREMISI[ÓO]N\s+(?:EXPEDIENTE|DEL\s+EXPEDIENTE)\b/i,
+    /\bACCION\s+DE\s+TUTELA\b/i,
+    /\bIMPUGNACI[ÓO]N\b/i,
+    /\bAutoConcedeImpugnacion\b/i,
+    /\bSolicitud\s+de\s+traslado\b/i,
+    /\btraslado\s+del\s+proceso\s+judicial\b/i,
+    /\baceptaci[oó]n\s+o\s+rechazo\b/i,
+    /\bREPARTO\s+SECUENCIA\b/i,
+    /\bSECUENCIA\s+\d+\s+RV:/i,
   ];
-  const isSegundaInstancia = cuesSegunda.some((re) => re.test(combined));
+  const isSegundaInstancia =
+    cuesSegunda.some((re) => re.test(combined)) ||
+    (/\bREMISI[ÓO]N\b/i.test(combined) && /\bTUTELA\b/i.test(combined));
 
-  let originRadicado: string | null = null;
-  const expMatch = combined.match(/Expediente:\s*(\d{23})/i);
-  if (expMatch) originRadicado = expMatch[1];
+  const repartoResolved = resolveOriginRadicadoFromRepartoEmail(subject, `${bodyText || ''}\n${htmlPlain}`);
+  let originRadicado: string | null = repartoResolved.originRadicado;
+  let originCourt: string | null = repartoResolved.originCourt;
+
   if (!originRadicado) {
-    const subjMatch = subject.match(/\b(\d{23})\b/);
-    if (subjMatch) originRadicado = subjMatch[1];
+    const expMatch = combined.match(/Expediente:\s*(\d{23})/i);
+    if (expMatch) originRadicado = expMatch[1];
   }
   if (!originRadicado) {
-    const all = [...combined.matchAll(CUI_REGEX)].map((m) => m[1]);
-    if (all.length) originRadicado = all[0];
+    originRadicado = extractExplicitCuiFromText(combined);
   }
-
-  let originCourt: string | null = null;
-  const courtMatch = combined.match(/Despacho\s+custodio:\s*([^\n\r]+)/i);
-  if (courtMatch) originCourt = courtMatch[1].trim();
+  if (!originCourt) {
+    const courtMatch = combined.match(/Despacho\s+custodio:\s*([^\n\r]+)/i);
+    if (courtMatch) originCourt = courtMatch[1].trim();
+  }
 
   let motivo: string | null = null;
   const motivoMatch = combined.match(/Motivo:\s*([^\n\r]+(?:\n[^\n\r_]+)?)/i);
@@ -96,8 +119,13 @@ export function parseSegundaInstanciaFromEmail(
   let repartoSecuencia: string | null = null;
   const seqMatch = combined.match(/REPARTO\s+SECUENCIA:\s*(\d+)/i);
   if (seqMatch) repartoSecuencia = seqMatch[1];
+  if (!repartoSecuencia) {
+    const subjSeq = subject.match(/\bSECUENCIA\s+(\d{1,6})\b/i);
+    if (subjSeq) repartoSecuencia = subjSeq[1];
+  }
 
   const sgdeNodeId = extractSgdeNodeIdFromText(combined);
+  const fields = extractSegundaFieldsFromText(combined, 'Cuerpo del correo');
 
   return {
     isSegundaInstancia,
@@ -107,5 +135,42 @@ export function parseSegundaInstanciaFromEmail(
     sentenciaFecha,
     repartoSecuencia,
     sgdeNodeId,
+    appellant: fields.appellant,
+    originRuling: fields.originRuling,
   };
+}
+
+function pdfAttachmentPriority(filename: string): number {
+  const lower = filename.toLowerCase();
+  if (lower.includes('actareparto') || filenameSuggestsActaReparto(lower)) return 1;
+  if (lower.includes('impugnacion')) return 2;
+  if (lower.includes('auto')) return 3;
+  return 9;
+}
+
+/** Lee adjuntos PDF del correo (acta de reparto primero) para obtener Expediente / CUI de 23 dígitos. */
+export async function digestPdfAttachmentsForSegundaInstancia(
+  attachments: { buffer: Buffer; filename: string; contentType?: string }[]
+): Promise<string> {
+  const pdfs = attachments
+    .filter((a) => {
+      const ct = (a.contentType || '').toLowerCase();
+      const fn = a.filename.toLowerCase();
+      return ct.includes('pdf') || fn.endsWith('.pdf');
+    })
+    .sort((a, b) => pdfAttachmentPriority(a.filename) - pdfAttachmentPriority(b.filename));
+
+  let digest = '';
+  for (const att of pdfs) {
+    const plain = await extractPlainTextFromPdfBuffer(att.buffer, 3);
+    if (plain.trim()) {
+      digest += `\n${plain}\n`;
+      const cui = extractExplicitCuiFromText(plain);
+      if (cui) {
+        digest += `\nExpediente: ${cui}\n`;
+        return digest;
+      }
+    }
+  }
+  return digest;
 }
