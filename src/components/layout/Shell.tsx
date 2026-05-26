@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Scale, X, Menu, AlertTriangle, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { supabase, isSupabaseConfigured, assertSupabaseConfigured } from '../../lib/supabase';
+import { resolveCourtSeedLoginEmail } from '../../lib/court-seed-auth';
 import { getDevAdminEmail, resolveDevAdminPassword } from '../../lib/dev-admin-auth';
 import { getSupabaseAuthErrorMessage, isLocalSupabaseAnonymousDisabled } from '../../lib/supabase-auth-errors';
 import { rowToUserProfile } from '../../lib/supabase-mappers';
@@ -230,13 +231,17 @@ export default function Shell({ children }: ShellProps) {
 
   const handleLocalLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (localCredentials.user === 'admin' && localCredentials.pass === 'admin') {
-      try {
-        assertSupabaseConfigured();
+    const loginUser = localCredentials.user.trim();
+    const loginPass = localCredentials.pass;
+
+    try {
+      assertSupabaseConfigured();
+
+      if (loginUser === 'admin' && loginPass === 'admin') {
         const email = getDevAdminEmail();
         const { data: signData, error: signErr } = await supabase.auth.signInWithPassword({
           email,
-          password: resolveDevAdminPassword(localCredentials.pass),
+          password: resolveDevAdminPassword(loginPass),
         });
         if (signErr) throw signErr;
         const su = signData.user;
@@ -253,31 +258,56 @@ export default function Shell({ children }: ShellProps) {
           courtId: DEFAULT_DEMO_COURT_ID,
         });
         setLoginError(null);
-      } catch (err) {
-        if (isLocalSupabaseAnonymousDisabled(err)) {
-          const mockUser = {
-            uid: `local-${crypto.randomUUID()}`,
-            email: 'admin@tutelia.gov.co',
-            displayName: 'Administrador Local',
-          };
-          localStorage.setItem('tutelia_mock_user', JSON.stringify(mockUser));
-          setUser(mockUser);
-          setProfile({
-            id: mockUser.uid,
-            email: mockUser.email,
-            name: mockUser.displayName,
-            role: 'admin',
-            courtId: DEFAULT_DEMO_COURT_ID,
-          });
-          setLocalModeWithoutSupabase(true);
-          setLoginError(null);
-          return;
-        }
-        console.error('Local login failed at auth level', err);
-        setLoginError(getSupabaseAuthErrorMessage(err));
+        return;
       }
-    } else {
-      setLoginError('Credenciales locales incorrectas. Use admin / admin.');
+
+      const email = resolveCourtSeedLoginEmail(loginUser);
+      const { data: signData, error: signErr } = await supabase.auth.signInWithPassword({
+        email,
+        password: loginPass,
+      });
+      if (signErr) throw signErr;
+      const su = signData.user;
+      if (!su) throw new Error('No se recibió usuario de Supabase tras el inicio de sesión.');
+      setLocalModeWithoutSupabase(false);
+      const mapped = mapSessionUser(su);
+      localStorage.setItem('tutelia_mock_user', JSON.stringify(mapped));
+      setUser(mapped);
+      const { data: row } = await supabase.from('profiles').select('*').eq('id', su.id).maybeSingle();
+      if (row) {
+        setProfile(rowToUserProfile(row as Record<string, unknown>));
+      } else {
+        setProfile({
+          id: su.id,
+          email: su.email || email,
+          name: mapped.displayName,
+          role: 'escribiente',
+          courtId: DEFAULT_DEMO_COURT_ID,
+        });
+      }
+      setLoginError(null);
+    } catch (err) {
+      if (loginUser === 'admin' && loginPass === 'admin' && isLocalSupabaseAnonymousDisabled(err)) {
+        const mockUser = {
+          uid: `local-${crypto.randomUUID()}`,
+          email: 'admin@tutelia.gov.co',
+          displayName: 'Administrador Local',
+        };
+        localStorage.setItem('tutelia_mock_user', JSON.stringify(mockUser));
+        setUser(mockUser);
+        setProfile({
+          id: mockUser.uid,
+          email: mockUser.email,
+          name: mockUser.displayName,
+          role: 'admin',
+          courtId: DEFAULT_DEMO_COURT_ID,
+        });
+        setLocalModeWithoutSupabase(true);
+        setLoginError(null);
+        return;
+      }
+      console.error('Local login failed at auth level', err);
+      setLoginError(getSupabaseAuthErrorMessage(err));
     }
   };
 
@@ -378,17 +408,17 @@ export default function Shell({ children }: ShellProps) {
           ) : (
             <form onSubmit={handleLocalLogin} className="space-y-4 pt-4">
               <p className="text-[11px] text-slate-500 leading-relaxed">
-                Use <span className="font-mono font-semibold text-slate-700">admin</span> /{' '}
-                <span className="font-mono font-semibold text-slate-700">admin</span> contra el usuario email{' '}
-                <span className="font-mono text-slate-700">{getDevAdminEmail()}</span> (registrado en Auth, no en .env).
-                Créelo una vez con <span className="font-mono">npm run seed:dev-admin</span> (service role solo en esa
-                orden, no en el front). Escriba contraseña <span className="font-mono">admin</span> (cumple el mínimo de 6
-                caracteres de Supabase en desarrollo). OAuth opcional.
+                Funcionarios del despacho: usuario corto (p. ej.{' '}
+                <span className="font-mono font-semibold text-slate-700">Paola.Martinez</span>) y contraseña del seed.
+                Administrador: <span className="font-mono font-semibold text-slate-700">admin</span> /{' '}
+                <span className="font-mono font-semibold text-slate-700">admin</span> (
+                <span className="font-mono text-slate-700">{getDevAdminEmail()}</span>,{' '}
+                <span className="font-mono">npm run seed:dev-admin</span>). OAuth opcional.
               </p>
               <div className="space-y-3">
                 <input
                   type="text"
-                  placeholder="Usuario (admin)"
+                  placeholder="Usuario (Paola.Martinez)"
                   className="input-modern"
                   value={localCredentials.user}
                   onChange={(e) => setLocalCredentials({ ...localCredentials, user: e.target.value })}
@@ -396,7 +426,7 @@ export default function Shell({ children }: ShellProps) {
                 />
                 <input
                   type="password"
-                  placeholder="Contraseña (admin)"
+                  placeholder="Contraseña"
                   className="input-modern"
                   value={localCredentials.pass}
                   onChange={(e) => setLocalCredentials({ ...localCredentials, pass: e.target.value })}

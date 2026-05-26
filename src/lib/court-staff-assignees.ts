@@ -75,7 +75,7 @@ export const DESPACHO_STAFF: readonly ExpedienteAssignee[] = [
     ring: 'ring-orange-200',
     bg: 'bg-orange-100',
     text: 'text-orange-900',
-    emails: ['lina.martinez.orjuela@tutelia-despacho.seed'],
+    emails: ['paola.martinez@tutelia-despacho.seed'],
     courtRole: 'escribiente',
   },
   {

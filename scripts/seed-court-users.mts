@@ -54,7 +54,7 @@ const SEED_USERS: readonly { name: string; email: string; role: UserRole }[] = [
   { name: 'Diego Enrique Guarin Vega', email: 'diego.guarin.vega@tutelia-despacho.seed', role: 'sustanciador' },
   { name: 'Myriam Francesa Fonseca Alvarez', email: 'myriam.fonseca.alvarez@tutelia-despacho.seed', role: 'sustanciador' },
   { name: 'Yeiner Giovanny Osorio Florez', email: 'yeiner.osorio.florez@tutelia-despacho.seed', role: 'escribiente' },
-  { name: 'Lina Paola Martinez Orjuela', email: 'lina.martinez.orjuela@tutelia-despacho.seed', role: 'escribiente' },
+  { name: 'Lina Paola Martinez Orjuela', email: 'paola.martinez@tutelia-despacho.seed', role: 'escribiente' },
   { name: 'Edisson James Cantor Burgos', email: 'edisson.cantor.burgos@tutelia-despacho.seed', role: 'asistente_judicial' },
 ];
 
