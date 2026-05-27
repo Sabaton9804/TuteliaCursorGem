@@ -21,6 +21,7 @@ import {
   FilePenLine,
   Shield,
   ShieldAlert,
+  Scale,
 } from 'lucide-react';
 import { format, isValid, parseISO } from 'date-fns';
 import { summarizeCase } from '../services/geminiService';
@@ -870,7 +871,10 @@ export default function CaseDetail() {
                 : 'border-transparent text-slate-400 hover:text-slate-600'
             }`}
           >
-            Síntesis cognitiva
+            <span className="inline-flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5" aria-hidden />
+              Síntesis cognitiva
+            </span>
           </button>
           <button
             type="button"
@@ -885,7 +889,10 @@ export default function CaseDetail() {
                 : 'border-transparent text-slate-400 hover:text-slate-600'
             }`}
           >
-            Expediente digital
+            <span className="inline-flex items-center gap-1.5">
+              <FileText className="h-3.5 w-3.5" aria-hidden />
+              Expediente digital
+            </span>
           </button>
           <button
             type="button"
@@ -909,6 +916,25 @@ export default function CaseDetail() {
           <button
             type="button"
             role="tab"
+            id="tab-documentos"
+            aria-selected={activeTab === 'documentos'}
+            aria-controls="panel-documentos"
+            title="Documentos posteriores a la radicación: informe de secretaría y auto del despacho"
+            onClick={() => setActiveTab('documentos')}
+            className={`shrink-0 border-b-2 px-3 py-3.5 text-[11px] font-bold uppercase tracking-widest transition-colors sm:px-5 ${
+              activeTab === 'documentos'
+                ? 'border-accent text-accent'
+                : 'border-transparent text-slate-400 hover:text-slate-600'
+            }`}
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <FolderOutput className="h-3.5 w-3.5" aria-hidden />
+              Generar documentos
+            </span>
+          </button>
+          <button
+            type="button"
+            role="tab"
             id="tab-actuaciones"
             aria-selected={activeTab === 'actuaciones'}
             aria-controls="panel-actuaciones"
@@ -919,7 +945,10 @@ export default function CaseDetail() {
                 : 'border-transparent text-slate-400 hover:text-slate-600'
             }`}
           >
-            Actuaciones
+            <span className="inline-flex items-center gap-1.5">
+              <Scale className="h-3.5 w-3.5" aria-hidden />
+              Actuaciones
+            </span>
           </button>
           <button
             type="button"
@@ -938,25 +967,6 @@ export default function CaseDetail() {
             <span className="inline-flex items-center gap-1.5">
               <Shield className="h-3.5 w-3.5" aria-hidden />
               Historial
-            </span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            id="tab-documentos"
-            aria-selected={activeTab === 'documentos'}
-            aria-controls="panel-documentos"
-            title="Documentos posteriores a la radicación: informe de secretaría y auto del despacho"
-            onClick={() => setActiveTab('documentos')}
-            className={`shrink-0 border-b-2 px-3 py-3.5 text-[11px] font-bold uppercase tracking-widest transition-colors sm:px-5 ${
-              activeTab === 'documentos'
-                ? 'border-accent text-accent'
-                : 'border-transparent text-slate-400 hover:text-slate-600'
-            }`}
-          >
-            <span className="inline-flex items-center gap-1.5">
-              <FolderOutput className="h-3.5 w-3.5" aria-hidden />
-              Generar documentos
             </span>
           </button>
           {esPrimeraInstancia ? (

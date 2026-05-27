@@ -44,6 +44,7 @@ import {
   PRECEDENT_RADICADO_PENDIENTE,
 } from './server/precedent-radicado.js';
 import { createOpenAiTlsInsecureFetch } from './server/openai-insecure-fetch.js';
+import { analyzeCaseDocumentPiece } from './server/analyze-piece-service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1213,6 +1214,74 @@ FORMATO DE SALIDA (USAR MARKDOWN):
       return res.json({ text: result.output_text || '' });
     } catch (error: any) {
       console.error('OpenAI summarize error:', error);
+      const mapped = mapAiError(error);
+      return res.status(mapped.status).json({ error: mapped.message });
+    }
+  });
+
+  app.post('/api/ai/analyze-piece', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const caseId = String(body.caseId || '').trim();
+      const caseDocumentId = String(body.caseDocumentId || '').trim();
+      const forceRefresh = Boolean(body.forceRefresh);
+
+      if (!caseId || !caseDocumentId) {
+        return res.status(400).json({ error: 'caseId y caseDocumentId son requeridos' });
+      }
+
+      const acc = await requireCaseAccessForCaller(req, caseId);
+      if (acc.ok === false) {
+        return res.status(acc.status).json({ error: acc.message });
+      }
+
+      const authHdr = String(req.headers.authorization || '');
+      const m = /^Bearer\s+(.+)$/i.exec(authHdr);
+      const token = m?.[1]?.trim();
+      if (!token) {
+        return res.status(401).json({ error: 'Se requiere sesión (Authorization: Bearer).' });
+      }
+      const { data: authData, error: authErr } = await acc.admin.auth.getUser(token);
+      if (authErr || !authData?.user?.id) {
+        return res.status(401).json({ error: 'Sesión inválida o expirada.' });
+      }
+
+      const uid = authData.user.id;
+      const meta = authData.user.user_metadata as Record<string, unknown> | undefined;
+      const userName =
+        (typeof meta?.full_name === 'string' && meta.full_name.trim()) ||
+        authData.user.email ||
+        'Sistema';
+
+      const openai = getOpenAiClient();
+      const out = await analyzeCaseDocumentPiece({
+        admin: acc.admin,
+        openai,
+        userId: uid,
+        userName: String(userName),
+        caseId,
+        caseDocumentId,
+        forceRefresh,
+      });
+
+      return res.json({
+        cached: out.cached,
+        contentHash: out.contentHash,
+        pageCountSent: out.pageCountSent,
+        analysisData: out.analysisData,
+        summaryMarkdown: out.summaryMarkdown,
+        analyzedAt: out.analyzedAt,
+      });
+    } catch (error: unknown) {
+      const status = typeof (error as { status?: number }).status === 'number'
+        ? (error as { status: number }).status
+        : 500;
+      const message =
+        error instanceof Error ? error.message : 'Error al analizar la pieza procesal.';
+      if (status >= 500) console.error('OpenAI analyze-piece error:', error);
+      if (status < 500) {
+        return res.status(status).json({ error: message });
+      }
       const mapped = mapAiError(error);
       return res.status(mapped.status).json({ error: mapped.message });
     }

@@ -8,8 +8,12 @@ import {
   FolderPlus,
   X,
   PenLine,
+  Pencil,
+  Trash2,
+  MoreVertical,
   Search,
   ChevronRight,
+  Sparkles,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -19,9 +23,17 @@ import { handleDataPermissionError } from '../../lib/error-handler';
 import {
   uploadCaseAttachment,
   insertCaseDocumentRows,
+  removeCaseDocumentObjects,
   CASE_DOCUMENTS_BUCKET,
   CASE_DOCUMENT_SIGNED_URL_TTL_SEC,
 } from '../../lib/case-document-storage';
+import { pieceAiEligibility } from '../../lib/piece-ai-analysis';
+import {
+  canDeleteExpedientePieza,
+  canRenameExpedientePieza,
+  canSignExpedientePiezaInSgde,
+  type PiezaActionGate,
+} from '../../lib/expediente-document-actions';
 import type { Document } from '../../types';
 import {
   DEFAULT_NOTEBOOK_CODE,
@@ -39,7 +51,6 @@ import {
   DOCUMENT_SGDE_SYNC_STYLES,
   documentSgdeSyncStatus,
 } from '../../lib/expediente-sgde-sync';
-import { ExpedienteSgdeBar } from './ExpedienteSgdeBar';
 import { ExpedienteSignSgdeDialog } from './ExpedienteSignSgdeDialog';
 import type { Case } from '../../types';
 import { sanitizeExpedienteFilenameForDisplay } from '../../lib/sanitize-expediente-filename';
@@ -200,6 +211,207 @@ async function signedDownloadUrl(storagePath: string): Promise<string | null> {
   return data.signedUrl;
 }
 
+type PiezaRowMenuProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  canView: boolean;
+  canDownload: boolean;
+  deleting: boolean;
+  signGate: PiezaActionGate;
+  renameGate: PiezaActionGate;
+  delGate: PiezaActionGate;
+  aiGate: PiezaActionGate;
+  onView: () => void;
+  onDownload: (e: React.MouseEvent) => void;
+  onLecturaRapida: () => void;
+  onRename: () => void;
+  onSign: () => void;
+  onDelete: () => void;
+};
+
+function PiezaRowMenu({
+  open,
+  onOpenChange,
+  canView,
+  canDownload,
+  deleting,
+  signGate,
+  renameGate,
+  delGate,
+  aiGate,
+  onView,
+  onDownload,
+  onLecturaRapida,
+  onRename,
+  onSign,
+  onDelete,
+}: PiezaRowMenuProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setMenuPos(null);
+      return;
+    }
+    const place = () => {
+      const btn = btnRef.current;
+      if (!btn) return;
+      const r = btn.getBoundingClientRect();
+      const w = 200;
+      let left = r.right - w;
+      left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+      setMenuPos({ top: r.bottom + 4, left });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onOpenChange(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open, onOpenChange]);
+
+  const itemClass = (opts?: { danger?: boolean; disabled?: boolean }) =>
+    `flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] transition ${
+      opts?.disabled
+        ? 'cursor-not-allowed text-slate-300'
+        : opts?.danger
+          ? 'text-red-600 hover:bg-red-50'
+          : 'text-slate-700 hover:bg-slate-50'
+    }`;
+
+  const run = (fn: () => void, allowed = true) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!allowed) return;
+    fn();
+    onOpenChange(false);
+  };
+
+  return (
+    <div ref={ref} className="relative shrink-0 self-center">
+      <button
+        ref={btnRef}
+        type="button"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label="Opciones de la pieza"
+        title="Opciones"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenChange(!open);
+        }}
+        className={`rounded-full p-1.5 transition ${
+          open ? 'bg-slate-100 text-slate-700' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-700'
+        }`}
+      >
+        <MoreVertical className="h-4 w-4" />
+      </button>
+      {open && menuPos ? (
+        <div
+          role="menu"
+          style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, width: '12.5rem' }}
+          className="z-[100] overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg ring-1 ring-black/5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!canView}
+            title={canView ? undefined : 'Sin archivo para visualizar'}
+            className={itemClass({ disabled: !canView })}
+            onClick={run(onView, canView)}
+          >
+            <Eye className="h-3.5 w-3.5 shrink-0" />
+            Ver en visor
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!canDownload}
+            title={canDownload ? undefined : 'Sin archivo en Storage'}
+            className={itemClass({ disabled: !canDownload })}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!canDownload) return;
+              onDownload(e);
+              onOpenChange(false);
+            }}
+          >
+            <Download className="h-3.5 w-3.5 shrink-0" />
+            Descargar
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!aiGate.allowed}
+            title={aiGate.reason}
+            className={itemClass({ disabled: !aiGate.allowed })}
+            onClick={run(onLecturaRapida, aiGate.allowed)}
+          >
+            <Sparkles className="h-3.5 w-3.5 shrink-0" />
+            Lectura rápida con IA
+          </button>
+          <div className="my-1 border-t border-slate-100" role="separator" />
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!renameGate.allowed}
+            title={renameGate.reason}
+            className={itemClass({ disabled: !renameGate.allowed })}
+            onClick={run(onRename, renameGate.allowed)}
+          >
+            <Pencil className="h-3.5 w-3.5 shrink-0" />
+            Renombrar
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!signGate.allowed}
+            title={signGate.reason}
+            className={itemClass({ disabled: !signGate.allowed })}
+            onClick={run(onSign, signGate.allowed)}
+          >
+            <PenLine className="h-3.5 w-3.5 shrink-0" />
+            Firmar en SGDE
+          </button>
+          <div className="my-1 border-t border-slate-100" role="separator" />
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!delGate.allowed || deleting}
+            title={delGate.reason}
+            className={itemClass({ danger: true, disabled: !delGate.allowed || deleting })}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!delGate.allowed || deleting) return;
+              onDelete();
+              onOpenChange(false);
+            }}
+          >
+            {deleting ? (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5 shrink-0" />
+            )}
+            Eliminar
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 type Props = {
   caseId: string;
   caseItem: Case;
@@ -212,6 +424,10 @@ type Props = {
   /** Si hay visor o constancia a la derecha, la lista usa menos alto. */
   visorAbierto?: boolean;
   onVerConstanciaIngreso?: () => void;
+  /** Páginas del PDF en visor (solo pieza seleccionada); para habilitar IA. */
+  pdfPageCount?: number | null;
+  /** Abre la pieza en el visor y dispara lectura rápida con IA. */
+  onLecturaRapidaPieza?: (doc: Document) => void;
 };
 
 function groupSectionsByInstancia(
@@ -241,6 +457,8 @@ export function ExpedienteDigitalPanel({
   onRefetchDocs,
   visorAbierto = false,
   onVerConstanciaIngreso,
+  pdfPageCount = null,
+  onLecturaRapidaPieza,
 }: Props) {
   const defaultNb = notebookCodeForCaseType(caseItem.caseType);
   const [selectedNb, setSelectedNb] = useState(defaultNb);
@@ -250,17 +468,15 @@ export function ExpedienteDigitalPanel({
   const [addCuadernoOpen, setAddCuadernoOpen] = useState(false);
   const [newCuadernoLabel, setNewCuadernoLabel] = useState('');
   const [signDoc, setSignDoc] = useState<Document | null>(null);
+  const [renameDoc, setRenameDoc] = useState<Document | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [renameSaving, setRenameSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [piezaMenuId, setPiezaMenuId] = useState<string | null>(null);
   const [piezaBusqueda, setPiezaBusqueda] = useState('');
   const [expandedNb, setExpandedNb] = useState<Set<string>>(() => new Set());
   const pickNbRef = useRef(DEFAULT_NOTEBOOK_CODE);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const canSignInSgde = (doc: Document): boolean => {
-    if (!doc.sgdeId?.trim()) return false;
-    const nm = (doc.name || '').toLowerCase();
-    const ct = (doc.contentType || '').toLowerCase();
-    return nm.endsWith('.pdf') || ct.includes('pdf');
-  };
 
   const sections = useMemo(
     () => buildNotebookSections(extraNotebooks, docs, caseItem.caseType),
@@ -299,10 +515,8 @@ export function ExpedienteDigitalPanel({
   const toggleCuaderno = (code: string) => {
     setSelectedNb(code);
     setExpandedNb((prev) => {
-      const next = new Set(prev);
-      if (next.has(code)) next.delete(code);
-      else next.add(code);
-      return next;
+      if (prev.has(code) && prev.size === 1) return new Set<string>();
+      return new Set([code]);
     });
   };
 
@@ -469,6 +683,73 @@ export function ExpedienteDigitalPanel({
     if (url) window.open(url, '_blank', 'noopener,noreferrer');
   };
 
+  const openRenameDialog = (doc: Document) => {
+    setRenameDoc(doc);
+    setRenameValue(doc.name || '');
+    setUploadErr(null);
+  };
+
+  const confirmRenamePieza = async () => {
+    if (!renameDoc) return;
+    const name = renameValue.trim();
+    if (!name) {
+      setUploadErr('Escriba un nombre para la pieza.');
+      return;
+    }
+    setRenameSaving(true);
+    setUploadErr(null);
+    try {
+      await ensureSupabaseSessionForWrites();
+      const { error } = await supabase
+        .from('case_documents')
+        .update({ name })
+        .eq('id', renameDoc.id)
+        .eq('case_id', caseId);
+      if (error) {
+        await handleDataPermissionError(error, 'update', 'case_documents');
+        throw error;
+      }
+      setRenameDoc(null);
+      setRenameValue('');
+      await onRefetchDocs();
+    } catch (e) {
+      setUploadErr(e instanceof Error ? e.message : 'No se pudo renombrar la pieza.');
+    } finally {
+      setRenameSaving(false);
+    }
+  };
+
+  const deletePieza = async (doc: Document) => {
+    const gate = canDeleteExpedientePieza(doc, caseItem);
+    if (!gate.allowed) {
+      setUploadErr(gate.reason || 'No se puede eliminar esta pieza.');
+      return;
+    }
+    const titulo = listaTituloDocumento(doc);
+    const extra = gate.reason ? `\n\n${gate.reason}` : '';
+    if (!window.confirm(`¿Eliminar «${titulo}» del expediente digital?${extra}`)) return;
+
+    setDeletingId(doc.id);
+    setUploadErr(null);
+    try {
+      await ensureSupabaseSessionForWrites();
+      const path = doc.storagePath?.trim();
+      if (path) await removeCaseDocumentObjects(supabase, [path]);
+      const { error } = await supabase.from('case_documents').delete().eq('id', doc.id).eq('case_id', caseId);
+      if (error) {
+        await handleDataPermissionError(error, 'delete', 'case_documents');
+        throw error;
+      }
+      if (selectedDoc?.id === doc.id) onSelectDoc(null);
+      await onRefetchDocs();
+      await onRefetchCase();
+    } catch (e) {
+      setUploadErr(e instanceof Error ? e.message : 'No se pudo eliminar la pieza.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const renderDropZone = (nb: ExpedienteCuadernoExtra) => {
     const busy = uploadingNb === nb.code;
     return (
@@ -509,6 +790,8 @@ export function ExpedienteDigitalPanel({
     const showSgdeChip = Boolean(caseItem.sgdeId?.trim()) || sgdeSync !== 'none';
     const created = doc.createdAt ? format(new Date(doc.createdAt), 'd MMM', { locale: es }) : '—';
     const canDownload = Boolean(doc.storagePath?.trim()) && !doc.ingestError;
+    const pageHint = selectedDoc?.id === doc.id ? pdfPageCount : null;
+    const aiGate = pieceAiEligibility(doc, pageHint);
     const ordenReparto =
       typeof doc.order === 'number' && !Number.isNaN(doc.order) ? String(doc.order) : '—';
 
@@ -524,7 +807,7 @@ export function ExpedienteDigitalPanel({
             onSelectDoc(doc);
           }
         }}
-        className={`flex cursor-pointer items-start gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-left shadow-sm transition hover:border-slate-300 ${
+        className={`flex cursor-pointer items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-left shadow-sm transition hover:border-slate-300 ${
           sel ? 'ring-2 ring-accent/30 border-accent/40' : ''
         }`}
       >
@@ -564,42 +847,23 @@ export function ExpedienteDigitalPanel({
             <p className="mt-0.5 text-[10px] leading-snug text-amber-700">{doc.ingestError}</p>
           ) : null}
         </div>
-        <div className="flex shrink-0 flex-col items-center gap-0.5 pt-0.5">
-          {canSignInSgde(doc) ? (
-            <button
-              type="button"
-              title="Firmar en SGDE (expediente Rama)"
-              onClick={(e) => {
-                e.stopPropagation();
-                setSignDoc(doc);
-              }}
-              className="rounded-full p-1.5 text-violet-600 hover:bg-violet-50 hover:text-violet-800"
-            >
-              <PenLine className="h-4 w-4" />
-            </button>
-          ) : null}
-          <button
-            type="button"
-            title="Ver en el visor"
-            disabled={!isCaseDocumentOpenableInViewer(doc)}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (isCaseDocumentOpenableInViewer(doc)) onSelectDoc(doc);
-            }}
-            className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30"
-          >
-            <Eye className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            title="Descargar"
-            disabled={!canDownload}
-            onClick={(e) => void onDownload(e, doc)}
-            className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30"
-          >
-            <Download className="h-4 w-4" />
-          </button>
-        </div>
+        <PiezaRowMenu
+          open={piezaMenuId === doc.id}
+          onOpenChange={(open) => setPiezaMenuId(open ? doc.id : null)}
+          canView={isCaseDocumentOpenableInViewer(doc)}
+          canDownload={canDownload}
+          deleting={deletingId === doc.id}
+          signGate={canSignExpedientePiezaInSgde(doc)}
+          renameGate={canRenameExpedientePieza(doc)}
+          delGate={canDeleteExpedientePieza(doc, caseItem)}
+          aiGate={aiGate}
+          onView={() => onSelectDoc(doc)}
+          onDownload={(e) => void onDownload(e, doc)}
+          onLecturaRapida={() => onLecturaRapidaPieza?.(doc)}
+          onRename={() => openRenameDialog(doc)}
+          onSign={() => setSignDoc(doc)}
+          onDelete={() => void deletePieza(doc)}
+        />
       </div>
     );
   };
@@ -612,14 +876,14 @@ export function ExpedienteDigitalPanel({
     const busquedaActiva = code === activeCode && piezaBusqueda.trim().length > 0;
 
     return (
-      <div className="border-t border-slate-200/90 bg-white/90 px-2 pb-2 pt-1.5">
+      <div className="flex min-h-0 flex-1 flex-col border-t border-slate-200/90 bg-white/90 px-2 pb-2 pt-1.5">
         {meta?.subtitle ? (
-          <p className="mb-1.5 px-1 text-[9px] text-slate-500">{meta.subtitle}</p>
+          <p className="mb-1.5 shrink-0 px-1 text-[9px] text-slate-500">{meta.subtitle}</p>
         ) : null}
         {code === activeCode &&
         piezasRadicacion.length === 0 &&
         list.length === 0 ? (
-          <div className="mb-2 rounded-md border border-sky-200/90 bg-sky-50/90 px-2 py-1.5 text-[9px] leading-snug text-sky-950">
+          <div className="mb-2 shrink-0 rounded-md border border-sky-200/90 bg-sky-50/90 px-2 py-1.5 text-[9px] leading-snug text-sky-950">
             Sin demanda/anexos aquí. Suba PDF abajo o use SGDE /{' '}
             <Link to="/correo/pendientes" className="font-semibold underline">
               Correo pendientes
@@ -628,40 +892,39 @@ export function ExpedienteDigitalPanel({
           </div>
         ) : null}
         {busquedaActiva ? (
-          <p className="mb-1 px-1 text-[9px] text-slate-500">
+          <p className="mb-1 shrink-0 px-1 text-[9px] text-slate-500">
             Mostrando {filtradas.length} de {list.length}
           </p>
         ) : null}
-        <div
-          className={`space-y-1 overflow-y-auto overscroll-contain ${
-            visorAbierto
-              ? 'min-h-[26rem] max-h-[min(calc(82vh-11rem),40rem)]'
-              : 'min-h-[34rem] max-h-[min(calc(80vh-12rem),42rem)]'
-          }`}
-        >
-          {list.length === 0 ? (
-            <p className="rounded-md border border-dashed border-slate-200 py-6 text-center text-[10px] text-slate-500">
-              Sin piezas en este cuaderno.
-            </p>
-          ) : filtradas.length === 0 ? (
-            <p className="py-4 text-center text-[10px] text-slate-500">Sin coincidencias.</p>
-          ) : (
-            filtradas.map((d, i) => renderRow(d, i))
-          )}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
+          <div className="space-y-1 pr-0.5">
+            {list.length === 0 ? (
+              <p className="rounded-md border border-dashed border-slate-200 py-6 text-center text-[10px] text-slate-500">
+                Sin piezas en este cuaderno.
+              </p>
+            ) : filtradas.length === 0 ? (
+              <p className="py-4 text-center text-[10px] text-slate-500">Sin coincidencias.</p>
+            ) : (
+              filtradas.map((d, i) => renderRow(d, i))
+            )}
+          </div>
         </div>
-        <div className="mt-1.5 border-t border-slate-100 pt-1.5">{renderDropZone(nb)}</div>
+        <div className="mt-1.5 shrink-0 border-t border-slate-100 pt-1.5">{renderDropZone(nb)}</div>
       </div>
     );
   };
 
   const renderCuadernosAcordeon = () => (
-    <nav className="w-full min-w-0 space-y-3" aria-label="Cuadernos del expediente">
+    <nav
+      className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col gap-2"
+      aria-label="Cuadernos del expediente"
+    >
       {instanciaGroups.map(({ instancia, notebooks }) => (
-        <div key={instancia}>
-          <p className="mb-1 px-0.5 text-[9px] font-bold uppercase tracking-widest text-slate-400">
+        <div key={instancia} className="flex min-h-0 flex-1 flex-col gap-1">
+          <p className="shrink-0 px-0.5 text-[9px] font-bold uppercase tracking-widest text-slate-400">
             {INSTANCIA_LABELS[instancia]}
           </p>
-          <div className="space-y-1">
+          <div className="flex min-h-0 flex-1 flex-col gap-1">
             {notebooks.map((nb) => {
               const count = piezasForNotebook(nb.code).length;
               const abierto = expandedNb.has(nb.code);
@@ -670,15 +933,15 @@ export function ExpedienteDigitalPanel({
               return (
                 <div
                   key={nb.code}
-                  className={`overflow-hidden rounded-md border transition-colors ${
-                    activo ? 'border-emerald-300/80 ring-1 ring-emerald-200/60' : 'border-slate-200'
-                  }`}
+                  className={`flex min-h-0 flex-col overflow-hidden rounded-md border transition-colors ${
+                    abierto ? 'min-h-0 flex-1' : 'shrink-0'
+                  } ${activo ? 'border-emerald-300/80 ring-1 ring-emerald-200/60' : 'border-slate-200'}`}
                 >
                   <button
                     type="button"
                     onClick={() => toggleCuaderno(nb.code)}
                     aria-expanded={abierto}
-                    className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition ${
+                    className={`flex w-full shrink-0 items-center gap-2 px-2.5 py-1.5 text-left transition ${
                       activo
                         ? 'bg-emerald-50/95 hover:bg-emerald-50'
                         : 'bg-slate-50/80 hover:bg-slate-100/90'
@@ -731,10 +994,6 @@ export function ExpedienteDigitalPanel({
         onChange={(e) => void handleFiles(e.target.files)}
       />
 
-      <div className="shrink-0">
-        <ExpedienteSgdeBar caseId={caseId} caseItem={caseItem} docs={docs} onRefetchCase={onRefetchCase} />
-      </div>
-
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200/80 pb-2">
         <div className="relative min-w-[8rem] flex-1">
           <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
@@ -772,10 +1031,93 @@ export function ExpedienteDigitalPanel({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden pt-2">
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden pr-0.5">
           {renderCuadernosAcordeon()}
         </div>
       </div>
+
+      {renameDoc ? (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="rename-pieza-title"
+          onClick={() => {
+            if (!renameSaving) {
+              setRenameDoc(null);
+              setRenameValue('');
+            }
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <h4 id="rename-pieza-title" className="text-sm font-bold text-slate-800">
+                Renombrar pieza
+              </h4>
+              <button
+                type="button"
+                disabled={renameSaving}
+                onClick={() => {
+                  setRenameDoc(null);
+                  setRenameValue('');
+                }}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+                aria-label="Cerrar"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+              Nombre visible en Tutelia. No cambia el archivo en SGDE si ya estaba sincronizado.
+            </p>
+            <label className="mt-3 block text-[10px] font-bold uppercase tracking-wide text-slate-400">
+              Nombre
+            </label>
+            <input
+              type="text"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void confirmRenamePieza();
+              }}
+              disabled={renameSaving}
+              autoFocus
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:opacity-50"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={renameSaving}
+                onClick={() => {
+                  setRenameDoc(null);
+                  setRenameValue('');
+                }}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={renameSaving}
+                onClick={() => void confirmRenamePieza()}
+                className="rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white hover:opacity-90 disabled:opacity-50"
+              >
+                {renameSaving ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Guardando…
+                  </span>
+                ) : (
+                  'Guardar'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {addCuadernoOpen ? (
         <div

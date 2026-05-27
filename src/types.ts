@@ -198,6 +198,8 @@ export interface Document {
   ingestError?: string;
   /** Cuaderno del expediente (p. ej. cuaderno principal C01, incidente de desacato). */
   notebookCode?: string;
+  /** SHA-256 hex del binario (invalidación de análisis IA). */
+  fileHash?: string;
 }
 
 export interface Action {

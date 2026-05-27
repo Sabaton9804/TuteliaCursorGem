@@ -21,26 +21,25 @@ export function CaseHistorialPanel({ auditLog, auditFetchErr, auditActorNames }:
           Actividad en el expediente
         </h3>
         <p className="max-w-xl text-[11px] leading-snug text-slate-600">
-          Resumen en lenguaje claro de cada cambio guardado (documentos, datos del expediente, actuaciones, revisiones
-          Word, notificaciones). El detalle crudo de base de datos sigue disponible desplegando «Datos técnicos». No
-          reemplaza actuaciones judiciales registradas en autos.
+          Quién creó, subió, modificó, movió, firmó o eliminó algo en este expediente. Despliegue «Datos técnicos» solo
+          si necesita el detalle de base de datos. No sustituye las actuaciones judiciales del libro de actuaciones.
         </p>
       </div>
       {auditFetchErr ? (
         <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">{auditFetchErr}</p>
       ) : null}
       {!auditFetchErr && auditLog.length === 0 ? (
-        <p className="text-sm text-slate-500">
-          Aún no hay actividad registrada para este expediente. Cuando exista la tabla de auditoría en Supabase, cada
-          cambio aparecerá aquí automáticamente.
-        </p>
+        <p className="text-sm text-slate-500">Aún no hay actividad registrada para este expediente.</p>
+      ) : null}
+      {!auditFetchErr && auditLog.length > 0 ? (
+        <p className="text-[11px] text-slate-500">{auditLog.length} eventos en el registro del sistema</p>
       ) : null}
       <div className="scrollbar-thin mt-4 max-h-[min(72vh,720px)] space-y-3 overflow-y-auto pr-1">
         {auditLog.map((entry) => {
+          const human = humanizeCaseAuditEntry(entry);
           const actorLabel =
             (entry.actorUserId && auditActorNames[entry.actorUserId]) ||
             (entry.actorUserId ? `Usuario ${entry.actorUserId.slice(0, 8)}…` : 'Usuario del sistema');
-          const human = humanizeCaseAuditEntry(entry);
           const atLabel =
             entry.occurredAt && !Number.isNaN(Date.parse(entry.occurredAt))
               ? format(new Date(entry.occurredAt), 'dd MMM yyyy · HH:mm', { locale: es })

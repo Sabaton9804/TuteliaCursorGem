@@ -124,6 +124,7 @@ export function rowToCaseDoc(row: Record<string, unknown>, caseId: string): Docu
     isFromLink: Boolean(row.is_from_link),
     ingestError: row.error ? String(row.error) : undefined,
     notebookCode: row.notebook_code ? String(row.notebook_code) : 'PI_C01_PRINCIPAL',
+    fileHash: row.file_hash ? String(row.file_hash) : undefined,
   };
 }
 

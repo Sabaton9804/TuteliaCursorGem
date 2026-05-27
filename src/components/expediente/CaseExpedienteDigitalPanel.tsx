@@ -11,6 +11,9 @@ import {
 import { sanitizeExpedienteFilenameForDisplay } from '../../lib/sanitize-expediente-filename';
 import { caseDocumentRawLabel } from '../../lib/case-document-display-name';
 import { ExpedienteDigitalPanel } from './ExpedienteDigitalPanel';
+import { ExpedientePieceAiPanel } from './ExpedientePieceAiPanel';
+import { isCaseDocumentPdf } from '../../lib/expediente-docx';
+import { ExpedienteSgdeBar } from './ExpedienteSgdeBar';
 import { ExpedienteDocxPreview } from './ExpedienteDocxPreview';
 import { isCaseDocumentDocx } from '../../lib/expediente-docx';
 import type { Case, Document as CaseDoc } from '../../types';
@@ -58,6 +61,7 @@ function PdfViewer({
   onBack,
   ingestError,
   storagePath,
+  onPageCountChange,
 }: {
   content?: string;
   contentType?: string;
@@ -66,6 +70,7 @@ function PdfViewer({
   ingestError?: string;
   /** Ruta en bucket `case-documents` (columna `storage_path`). */
   storagePath?: string;
+  onPageCountChange?: (count: number | null) => void;
 }) {
   const [numPages, setNumPages] = useState<number | null>(null);
   const [zoom, setZoom] = useState<PdfViewerZoom>('fit');
@@ -91,7 +96,8 @@ function PdfViewer({
     setPdfJsError(null);
     setNumPages(null);
     setZoom('fit');
-  }, [content, storagePath]);
+    onPageCountChange?.(null);
+  }, [content, storagePath, onPageCountChange]);
 
   const documentFile = signedUrl || pdfBlob;
 
@@ -223,6 +229,7 @@ function PdfViewer({
       });
     }
     setNumPages(n);
+    onPageCountChange?.(n);
   }
 
   if (!hasStorage && !hasContent) {
@@ -568,6 +575,8 @@ export function CaseExpedienteDigitalPanel({
   onRefetchDocs,
 }: CaseExpedienteDigitalPanelProps) {
   const [constanciaAbierta, setConstanciaAbierta] = useState(false);
+  const [pdfPageCount, setPdfPageCount] = useState<number | null>(null);
+  const [aiTrigger, setAiTrigger] = useState(0);
   const autoAbrirVisorRef = useRef(false);
   const visorPieza = Boolean(selectedDoc && isCaseDocumentOpenableInViewer(selectedDoc));
   const panelDerechoAbierto = visorPieza || constanciaAbierta;
@@ -594,7 +603,14 @@ export function CaseExpedienteDigitalPanel({
 
   const seleccionarPieza = (doc: CaseDoc | null) => {
     setConstanciaAbierta(false);
+    setPdfPageCount(null);
     onSelectDoc(doc);
+  };
+
+  const lecturaRapidaPieza = (doc: CaseDoc) => {
+    setConstanciaAbierta(false);
+    onSelectDoc(doc);
+    setAiTrigger((t) => t + 1);
   };
 
   const splitHostRef = useRef<HTMLDivElement>(null);
@@ -637,13 +653,19 @@ export function CaseExpedienteDigitalPanel({
     document.body.style.userSelect = 'none';
   };
 
+  const refetchCaseAndDocs = async () => {
+    await onRefetchCase();
+    await onRefetchDocs();
+  };
+
   return (
-          <div
-            ref={splitHostRef}
-            className={`flex w-full min-w-0 flex-col gap-4 xl:h-[clamp(32rem,82vh,54rem)] ${
-              panelDerechoAbierto ? 'xl:flex-row xl:gap-0' : ''
-            }`}
-          >
+    <div className="flex w-full min-w-0 flex-col gap-4">
+      <div
+        ref={splitHostRef}
+        className={`flex w-full min-w-0 flex-col gap-4 xl:h-[clamp(32rem,82vh,54rem)] ${
+          panelDerechoAbierto ? 'xl:flex-row xl:gap-0' : ''
+        }`}
+      >
             <div
               className={`card-modern flex min-h-0 min-w-0 flex-col overflow-hidden p-4 md:p-5 xl:h-full ${
                 panelDerechoAbierto
@@ -672,6 +694,8 @@ export function CaseExpedienteDigitalPanel({
                   onSelectDoc(null);
                   setConstanciaAbierta(true);
                 }}
+                pdfPageCount={pdfPageCount}
+                onLecturaRapidaPieza={lecturaRapidaPieza}
               />
             )}
             </div>
@@ -713,9 +737,11 @@ export function CaseExpedienteDigitalPanel({
                 Cerrar visor
               </button>
             </div>
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 md:p-5">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               {visorPieza && selectedDoc ? (
-                isCaseDocumentDocx(selectedDoc) ? (
+                <>
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 md:p-5">
+                {isCaseDocumentDocx(selectedDoc) ? (
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-slate-100 p-2 sm:p-3">
                   <ExpedienteDocxPreview
                     key={selectedDoc.id}
@@ -734,10 +760,23 @@ export function CaseExpedienteDigitalPanel({
                     ingestError={selectedDoc.ingestError}
                     storagePath={selectedDoc.storagePath}
                     onBack={cerrarPanelDerecho}
+                    onPageCountChange={
+                      isCaseDocumentPdf(selectedDoc) ? setPdfPageCount : undefined
+                    }
                   />
                 </div>
-              )
+              )}
+                </div>
+                <ExpedientePieceAiPanel
+                  caseId={caseId}
+                  doc={selectedDoc}
+                  pdfPageCount={isCaseDocumentPdf(selectedDoc) ? pdfPageCount : null}
+                  refreshToken={aiTrigger}
+                  onAnalyzed={onRefetchDocs}
+                />
+                </>
               ) : (
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 md:p-5">
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
                   {caseItem.emailMetadata ? (
                     <details className="shrink-0 border-b border-slate-200 bg-slate-50/90 text-[10px] text-slate-600">
@@ -776,11 +815,24 @@ export function CaseExpedienteDigitalPanel({
                     )}
                   </div>
                 </div>
+                </div>
               )}
             </div>
           </div>
             </>
             ) : null}
-          </div>
+      </div>
+
+      {docsLoaded ? (
+        <div className="w-full shrink-0">
+          <ExpedienteSgdeBar
+            caseId={caseId}
+            caseItem={caseItem}
+            docs={docs}
+            onRefetchCase={refetchCaseAndDocs}
+          />
+        </div>
+      ) : null}
+    </div>
   );
 }
