@@ -1,0 +1,435 @@
+{
+  "$schema": "referencia interna — seed futuro sierju_movement_types",
+  "version": "2026-05-29",
+  "notes": [
+    "movement_kind: inventario_inicial | entrada | salida | inventario_final | reactivado | acumulado | metrica",
+    "is_effective false = no suma ingreso/egreso efectivo (manual UDAE)",
+    "section_code null = aplica a multiples secciones civil/laboral/familia 1a instancia"
+  ],
+  "shared_first_instance_process": [
+    {
+      "code": "inventario_inicial_con_tramite",
+      "label": "INVENTARIO AL INICIAR EL PERIODO - CON TRÁMITE",
+      "movement_kind": "inventario_inicial",
+      "is_effective": true
+    },
+    {
+      "code": "inventario_inicial_sin_tramite",
+      "label": "INVENTARIO AL INICIAR EL PERIODO - SIN TRÁMITE",
+      "movement_kind": "inventario_inicial",
+      "is_effective": true
+    },
+    {
+      "code": "entrada_reparto",
+      "label": "POR REPARTO",
+      "movement_kind": "entrada",
+      "is_effective": true,
+      "rules": "Solo procesos nuevos para la Rama Judicial; no duplicar con descongestion/reingreso/recibido"
+    },
+    {
+      "code": "entrada_descongestion",
+      "label": "DESCONGESTIÓN",
+      "movement_kind": "entrada",
+      "is_effective": true
+    },
+    {
+      "code": "entrada_reingreso",
+      "label": "REINGRESO",
+      "movement_kind": "entrada",
+      "is_effective": true,
+      "rules": "Sentencia/decision anulada; vuelve sin decision definitiva"
+    },
+    {
+      "code": "entrada_conocimiento_previo",
+      "label": "INGRESO POR CONOCIMIENTO PREVIO",
+      "movement_kind": "entrada",
+      "is_effective": true,
+      "sections": ["civil_1a_oral", "civil_2a_escrito", "civil_2a_oral"]
+    },
+    {
+      "code": "entrada_cambio_radicacion",
+      "label": "INGRESO CAMBIO DE RADICACIÓN",
+      "movement_kind": "entrada",
+      "is_effective": true
+    },
+    {
+      "code": "entrada_perdida_competencia",
+      "label": "INGRESO PÉRDIDA DE COMPETENCIA",
+      "movement_kind": "entrada",
+      "is_effective": true,
+      "sections": ["civil_1a_oral", "civil_2a_oral"]
+    },
+    {
+      "code": "entrada_renovar_actuacion",
+      "label": "INGRESO PARA RENOVAR ACTUACIÓN",
+      "movement_kind": "entrada",
+      "is_effective": true,
+      "sections": ["civil_1a_escrito", "familia_1a_escrito"]
+    },
+    {
+      "code": "entrada_recibido_otros_despachos",
+      "label": "RECIBIDO DE OTROS DESPACHOS SIN FALLO O DECISIÓN DEFINITIVA",
+      "movement_kind": "entrada",
+      "is_effective": true
+    },
+    {
+      "code": "entrada_otras_no_efectivas",
+      "label": "OTRAS ENTRADAS NO EFECTIVAS",
+      "movement_kind": "entrada",
+      "is_effective": false
+    },
+    {
+      "code": "procesos_reactivados",
+      "label": "PROCESOS REACTIVADOS",
+      "movement_kind": "reactivado",
+      "is_effective": true,
+      "rules": "Estaban en inventario sin tramite y retoman tramite; no desarchivo solo para copias"
+    },
+    {
+      "code": "salida_descongestion",
+      "label": "PARA DESCONGESTIÓN",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "salida_remitidos",
+      "label": "REMITIDOS A OTROS DESPACHOS",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "salida_rechazados_retirados",
+      "label": "RECHAZADOS O RETIRADOS",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "salida_auto_pago",
+      "label": "AUTOS - PAGO",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "salida_auto_transaccion",
+      "label": "AUTOS - TRANSACCIÓN",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "salida_conciliacion_judicial",
+      "label": "AUTO APRUEBA CONCILIACIÓN JUDICIAL",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "salida_desistimiento",
+      "label": "AUTOS - DESISTIMIENTO",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "salida_desistimiento_tacito",
+      "label": "DESISTIMIENTO TÁCITO",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "salida_seguir_ejecucion",
+      "label": "AUTO ORDENA SEGUIR EJECUCIÓN",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "salida_sentencias",
+      "label": "SENTENCIAS",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "salida_cambio_radicacion",
+      "label": "SALIDA CAMBIO DE RADICACIÓN",
+      "movement_kind": "salida",
+      "is_effective": true,
+      "sections": ["civil_1a_oral", "civil_2a_oral"]
+    },
+    {
+      "code": "salida_perdida_competencia",
+      "label": "SALIDA PÉRDIDA DE COMPETENCIA",
+      "movement_kind": "salida",
+      "is_effective": true,
+      "sections": ["civil_1a_oral", "civil_2a_oral"]
+    },
+    {
+      "code": "salida_conciliacion_extrajudicial_aprueba",
+      "label": "AUTO APRUEBA CONCILIACIÓN EXTRAJUDICIAL",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "salida_conciliacion_extrajudicial_imprueba",
+      "label": "AUTO IMPRUEBA CONCILIACIÓN EXTRAJUDICIAL",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "salida_otras_no_efectivas",
+      "label": "OTRAS SALIDAS NO EFECTIVAS",
+      "movement_kind": "salida",
+      "is_effective": false
+    },
+    {
+      "code": "salida_otras_terminaciones_efectivas",
+      "label": "OTRAS TERMINACIONES EFECTIVAS DEL PROCESO",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "procesos_acumulados",
+      "label": "PROCESOS ACUMULADOS",
+      "movement_kind": "acumulado",
+      "is_effective": true,
+      "rules": "Contar procesos acumulados al principal, no el principal"
+    },
+    {
+      "code": "sin_tramite_durante_periodo",
+      "label": "PROCESOS SIN TRÁMITE DURANTE EL PERIODO",
+      "movement_kind": "metrica",
+      "is_effective": true
+    },
+    {
+      "code": "inventario_final_con_tramite",
+      "label": "INVENTARIO AL FINAL DEL PERIODO - CON TRÁMITE",
+      "movement_kind": "inventario_final",
+      "is_effective": true
+    },
+    {
+      "code": "inventario_final_sin_tramite",
+      "label": "INVENTARIO AL FINAL DEL PERIODO - SIN TRÁMITE",
+      "movement_kind": "inventario_final",
+      "is_effective": true
+    },
+    {
+      "code": "procesos_para_fallo",
+      "label": "PROCESOS PARA FALLO",
+      "movement_kind": "metrica",
+      "is_effective": true,
+      "rules": "Pendientes de sentencia tras agotar tramite previo"
+    },
+    {
+      "code": "sentencias_escritas_procesos_orales",
+      "label": "CANTIDAD DE SENTENCIAS ESCRITAS EN PROCESOS ORALES",
+      "movement_kind": "metrica",
+      "is_effective": true,
+      "sections": ["civil_1a_oral", "familia_1a_oral"]
+    }
+  ],
+  "tutela_movimiento": [
+    {
+      "code": "tutela_inventario_inicial",
+      "label": "INVENTARIO DE TUTELAS AL INICIAR EL PERIODO",
+      "movement_kind": "inventario_inicial",
+      "is_effective": true
+    },
+    {
+      "code": "tutela_entrada_reparto",
+      "label": "INGRESO POR REPARTO DE TUTELAS DURANTE EL PERIODO",
+      "movement_kind": "entrada",
+      "is_effective": true
+    },
+    {
+      "code": "tutela_entrada_reingreso_nulidad_competencia",
+      "label": "REINGRESO POR NULIDAD O COMPETENCIA TUTELAS",
+      "movement_kind": "entrada",
+      "is_effective": true
+    },
+    {
+      "code": "tutela_entrada_competencia",
+      "label": "INGRESO POR COMPETENCIA",
+      "movement_kind": "entrada",
+      "is_effective": true
+    },
+    {
+      "code": "tutela_entrada_impedimentos",
+      "label": "ENTRADA IMPEDIMENTOS",
+      "movement_kind": "entrada",
+      "is_effective": true
+    },
+    {
+      "code": "tutela_entrada_otras_no_efectivas",
+      "label": "OTRAS ENTRADAS NO EFECTIVAS",
+      "movement_kind": "entrada",
+      "is_effective": false
+    },
+    {
+      "code": "tutela_salida_concede",
+      "label": "CONCEDE",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "tutela_salida_niega",
+      "label": "NIEGA",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "tutela_salida_improcedente",
+      "label": "DECLARA IMPROCEDENTE",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "tutela_salida_falta_competencia",
+      "label": "FALTA DE COMPETENCIA",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "tutela_salida_impedimentos",
+      "label": "SALIDA IMPEDIMENTOS",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "tutela_salida_hecho_superado",
+      "label": "HECHO SUPERADO",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "tutela_salida_rechaza",
+      "label": "RECHAZA",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "tutela_salida_conocimiento_previo",
+      "label": "RECHAZA POR CONOCIMIENTO PREVIO (REMITE A OTROS DESPACHOS)",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "tutela_salida_retiro_voluntario",
+      "label": "RETIRO VOLUNTARIO",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "tutela_salida_otras_no_efectivas",
+      "label": "OTRAS SALIDAS NO EFECTIVAS",
+      "movement_kind": "salida",
+      "is_effective": false
+    },
+    {
+      "code": "tutela_inventario_final",
+      "label": "INVENTARIO DE TUTELAS AL FINALIZAR EL PERIODO",
+      "movement_kind": "inventario_final",
+      "is_effective": true
+    }
+  ],
+  "desacato_movimiento": [
+    {
+      "code": "desacato_entrada_periodo",
+      "label": "INGRESO DE INCIDENTES DE DESACATO DURANTE EL PERIODO",
+      "movement_kind": "entrada",
+      "is_effective": true
+    },
+    {
+      "code": "desacato_entrada_reingreso_nulidad",
+      "label": "REINGRESO POR NULIDAD INCIDENTES DE DESACATO",
+      "movement_kind": "entrada",
+      "is_effective": true
+    },
+    {
+      "code": "desacato_salida_sanciona",
+      "label": "SANCIONA",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "desacato_salida_no_sanciona_archiva",
+      "label": "NO SANCIONA - ARCHIVA",
+      "movement_kind": "salida",
+      "is_effective": true
+    }
+  ],
+  "impugnacion_movimiento": [
+    {
+      "code": "impugnacion_entrada_reparto",
+      "label": "INGRESO POR REPARTO IMPUGNACIONES",
+      "movement_kind": "entrada",
+      "is_effective": true
+    },
+    {
+      "code": "impugnacion_salida_confirma",
+      "label": "CONFIRMA",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "impugnacion_salida_revoca",
+      "label": "REVOCA",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "impugnacion_salida_modifica",
+      "label": "MODIFICA",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "impugnacion_salida_rechaza_extemporanea",
+      "label": "RECHAZA POR EXTEMPORÁNEA",
+      "movement_kind": "salida",
+      "is_effective": true
+    },
+    {
+      "code": "impugnacion_salida_decreta_nulidad",
+      "label": "DECRETA NULIDAD",
+      "movement_kind": "salida",
+      "is_effective": true
+    }
+  ],
+  "fundamental_rights_rows": [
+    "salud",
+    "seguridad_social",
+    "vida",
+    "minimo_vital",
+    "igualdad",
+    "educacion",
+    "debido_proceso",
+    "derecho_peticion",
+    "informacion_publica",
+    "contra_providencias_judiciales",
+    "medio_ambiente",
+    "otros"
+  ],
+  "restitucion_tierras_metrics": [
+    {
+      "code": "restitucion_m2",
+      "label": "Cantidad de metros cuadrados restituidos",
+      "movement_kind": "metrica"
+    },
+    {
+      "code": "restitucion_predios",
+      "label": "Cantidad de predios restituidos",
+      "movement_kind": "metrica"
+    },
+    {
+      "code": "compensacion_predios",
+      "label": "Compensaciones en bien inmueble por número de predios",
+      "movement_kind": "metrica"
+    },
+    {
+      "code": "compensacion_m2",
+      "label": "Compensaciones en bien inmueble por metros cuadrados",
+      "movement_kind": "metrica"
+    },
+    {
+      "code": "compensacion_dinero",
+      "label": "Compensaciones en dinero",
+      "movement_kind": "metrica"
+    }
+  ]
+}

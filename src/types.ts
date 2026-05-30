@@ -1,4 +1,5 @@
 import type { DecisionType, DerechoTuteladoCode } from './lib/sierju-case-codes';
+import type { CaseSierjuMetadata } from './lib/sierju-types';
 
 export type { DecisionType, DerechoTuteladoCode };
 
@@ -127,8 +128,14 @@ export interface Case {
   legalDerechoTutelado?: string;
   /** Clasificación SIERJU (filas «Movimiento de Tutelas»); el texto detallado sigue en `legalDerechoTutelado`. */
   derechoTuteladoCode?: DerechoTuteladoCode;
+  /** FK a public.sierju_process_classes (catálogo SIERJU S1). */
+  sierjuProcessClassId?: string;
+  /** Metadatos SIERJU (derecho fundamental, modalidad, etc.). */
+  sierjuMetadata?: CaseSierjuMetadata;
   /** Al fallar o archivar: tipo de decisión para estadística. */
   decisionType?: DecisionType;
+  /** Fecha en que se registró decision_type (columna decision_at). */
+  decisionAt?: string;
   legalIdentificaciones?: string;
   caseType?: CaseType;
   originCourt?: string;

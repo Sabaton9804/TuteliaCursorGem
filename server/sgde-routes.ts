@@ -8,10 +8,12 @@ import {
   getUserSgdeCredentialsMeta,
   saveUserSgdeCredentials,
 } from './sgde-credentials';
+import { importExpedienteFromSgde } from './sgde-import';
 import { migrateSgdeOriginToCase, preflightSgdeOriginExpediente } from './sgde-migrate';
 import { publishSegundaTrasladoToSgdeImpugnacion } from './sgde-segunda-impugnacion';
 import { createExpedienteInSgde } from './sgde-create-expediente';
 import { syncDocumentsWithSgde } from './sgde-sync-documents';
+import { repairStorageFromSgde, ensureCaseDocumentViewUrl } from './sgde-repair-storage';
 import { signCaseDocumentInSgde } from './sgde-sign-document';
 import { parseSegundaInstanciaFromEmail } from './sgde-segunda-instancia-parse';
 import { SgdeClient, getDefaultSgdeBaseUrl } from './sgde-client';
@@ -51,7 +53,7 @@ async function sgdeClientForRequest(
 
 export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => SupabaseClient): void {
   console.info(
-    `[tutelia] SGDE API (${SGDE_API_BUILD}): status, credentials, case-tree, link, preflight-origin, preview-node, migrate-origin-to-case, create-expediente, sync-documents, sign-document`
+    `[tutelia] SGDE API (${SGDE_API_BUILD}): status, credentials, case-tree, link, preflight-origin, preview-node, migrate-origin-to-case, import-expediente, create-expediente, sync-documents, repair-storage, document-view-url, sign-document`
   );
 
   app.get('/api/sgde/status', async (req, res) => {
@@ -253,6 +255,71 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
     }
   });
 
+  app.post('/api/sgde/import-expediente', async (req, res) => {
+    const body = (req.body ?? {}) as {
+      caseType?: string;
+      radicado?: string;
+      originRadicado?: string;
+      sgdeNodeIdHint?: string;
+      originCourt?: string;
+      appellant?: string;
+      originRuling?: string;
+      forceMigrate?: boolean;
+    };
+
+    const caseType = String(body.caseType || '').trim();
+    if (caseType !== 'tutela_primera' && caseType !== 'tutela_segunda') {
+      return res.status(400).json({ error: 'caseType debe ser tutela_primera o tutela_segunda.' });
+    }
+
+    const radicado = String(body.radicado || body.originRadicado || '').trim();
+    if (!radicado) {
+      return res.status(400).json({ error: 'radicado es requerido (23 dígitos).' });
+    }
+
+    const sess = await sgdeClientForRequest(req, getSupabaseAdmin);
+    if (sess.ok === false) {
+      return res.status(sess.status).json({ error: sess.message, code: sess.code });
+    }
+
+    const { data: prof, error: profErr } = await sess.auth.admin
+      .from('profiles')
+      .select('court_id, name')
+      .eq('id', sess.auth.userId)
+      .maybeSingle();
+    if (profErr || !prof?.court_id) {
+      return res.status(403).json({ error: 'Perfil sin despacho asignado.' });
+    }
+
+    const appellantRaw = String(body.appellant || '').trim();
+    const rulingRaw = String(body.originRuling || '').trim();
+
+    try {
+      const result = await importExpedienteFromSgde({
+        client: sess.client,
+        admin: sess.auth.admin,
+        userId: sess.auth.userId,
+        userName: String(prof.name || '').trim() || undefined,
+        courtId: String(prof.court_id),
+        caseType,
+        radicadoRaw: radicado,
+        sgdeNodeIdHint: String(body.sgdeNodeIdHint || '').trim() || null,
+        originCourt: String(body.originCourt || '').trim() || undefined,
+        appellant:
+          appellantRaw === 'accionante' || appellantRaw === 'accionado'
+            ? appellantRaw
+            : undefined,
+        originRuling:
+          rulingRaw === 'concedio' || rulingRaw === 'nego' ? rulingRaw : undefined,
+        forceMigrate: body.forceMigrate === true,
+      });
+      return res.json({ ...result, portalBaseUrl: sess.portalBaseUrl });
+    } catch (e) {
+      console.error('sgde/import-expediente:', e);
+      return res.status(500).json({ error: String((e as Error)?.message || e) });
+    }
+  });
+
   app.post('/api/sgde/migrate-origin-to-case', async (req, res) => {
     const body = (req.body ?? {}) as {
       caseId?: string;
@@ -436,6 +503,136 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
         .from('cases')
         .update({ sgde_sync_status: 'error', updated_at: new Date().toISOString() })
         .eq('id', caseId);
+      return res.status(500).json({ error: String((e as Error)?.message || e) });
+    }
+  });
+
+  app.post('/api/sgde/repair-storage', async (req, res) => {
+    const body = (req.body ?? {}) as { caseId?: string; importSgdeOnly?: boolean };
+    const caseId = String(body.caseId || '').trim();
+    if (!caseId) return res.status(400).json({ error: 'caseId es requerido.' });
+
+    const sess = await sgdeClientForRequest(req, getSupabaseAdmin);
+    if (sess.ok === false) {
+      return res.status(sess.status).json({ error: sess.message, code: sess.code });
+    }
+
+    const { data: caseRow, error: caseErr } = await sess.auth.admin
+      .from('cases')
+      .select('id, court_id, radicado, sgde_id, case_type')
+      .eq('id', caseId)
+      .maybeSingle();
+    if (caseErr || !caseRow?.id) {
+      return res.status(404).json({ error: 'Expediente no encontrado.' });
+    }
+
+    const { data: prof } = await sess.auth.admin
+      .from('profiles')
+      .select('court_id')
+      .eq('id', sess.auth.userId)
+      .maybeSingle();
+    if (!prof?.court_id || String(prof.court_id) !== String(caseRow.court_id)) {
+      return res.status(403).json({ error: 'No autorizado para este expediente.' });
+    }
+
+    const radicado23 = String(caseRow.radicado || '').replace(/\D/g, '').slice(0, 23);
+    if (radicado23.length !== 23) {
+      return res.status(400).json({ error: 'Radicado inválido (23 dígitos).' });
+    }
+
+    let sgdeRootId = String(caseRow.sgde_id || '').trim();
+    if (!sgdeRootId) {
+      sgdeRootId = (await sess.client.buscarExpedienteNodeId(radicado23)) || '';
+    }
+    if (!sgdeRootId) {
+      return res.status(400).json({
+        error: 'El expediente no está vinculado a SGDE. Use «Vincular» o importe desde SGDE primero.',
+      });
+    }
+
+    try {
+      const result = await repairStorageFromSgde({
+        client: sess.client,
+        admin: sess.auth.admin,
+        caseId,
+        sgdeRootId,
+        caseType: caseRow.case_type ? String(caseRow.case_type) : null,
+        originRadicado: radicado23,
+        importSgdeOnly: body.importSgdeOnly !== false,
+      });
+      const now = new Date().toISOString();
+      await sess.auth.admin
+        .from('cases')
+        .update({
+          sgde_id: sgdeRootId,
+          sgde_linked_at: now,
+          sgde_sync_status: result.ok ? 'linked' : 'error',
+          updated_at: now,
+        })
+        .eq('id', caseId);
+      return res.json({ ...result, portalBaseUrl: sess.portalBaseUrl });
+    } catch (e) {
+      console.error('sgde/repair-storage:', e);
+      return res.status(500).json({ error: String((e as Error)?.message || e) });
+    }
+  });
+
+  app.post('/api/sgde/document-view-url', async (req, res) => {
+    const body = (req.body ?? {}) as { caseId?: string; documentId?: string };
+    const caseId = String(body.caseId || '').trim();
+    const documentId = String(body.documentId || '').trim();
+    if (!caseId) return res.status(400).json({ error: 'caseId es requerido.' });
+    if (!documentId) return res.status(400).json({ error: 'documentId es requerido.' });
+
+    const auth = await requireAuthenticatedCaller(req, getSupabaseAdmin);
+    if (auth.ok === false) {
+      return res.status(auth.status).json({ error: auth.message });
+    }
+
+    const { data: caseRow, error: caseErr } = await auth.admin
+      .from('cases')
+      .select('id, court_id')
+      .eq('id', caseId)
+      .maybeSingle();
+    if (caseErr || !caseRow?.id) {
+      return res.status(404).json({ error: 'Expediente no encontrado.' });
+    }
+
+    const { data: prof } = await auth.admin
+      .from('profiles')
+      .select('court_id')
+      .eq('id', auth.userId)
+      .maybeSingle();
+    if (!prof?.court_id || String(prof.court_id) !== String(caseRow.court_id)) {
+      return res.status(403).json({ error: 'No autorizado para este expediente.' });
+    }
+
+    let sgdeClient: import('./sgde-client').SgdeClient | null = null;
+    const platform = sgdePlatformState();
+    if (platform.available) {
+      const logged = await getLoggedInSgdeClientForUser(auth.admin, auth.userId);
+      if (!('error' in logged)) sgdeClient = logged.client;
+    }
+
+    try {
+      const result = await ensureCaseDocumentViewUrl({
+        admin: auth.admin,
+        client: sgdeClient,
+        caseId,
+        documentId,
+      });
+      if (!result.ok) {
+        return res.status(404).json({ error: result.error });
+      }
+      const portalBaseUrl = platform.portalBaseUrl;
+      return res.json({
+        signedUrl: result.signedUrl,
+        storagePath: result.storagePath,
+        repaired: result.repaired,
+        portalBaseUrl,
+      });
+    } catch (e) {
+      console.error('sgde/document-view-url:', e);
       return res.status(500).json({ error: String((e as Error)?.message || e) });
     }
   });

@@ -21,7 +21,8 @@ import { renumberJudicialDisponeNumerals } from './auto-dispone-numeracion';
 import { stripAutoOptionalNumeralsFromPlainIfNoToggleMarkers } from './auto-optional-plain-strip';
 import { CLASSIC_AUTO_VARIABLES_PLAIN, DEFAULT_AUTO_DATOS_RICH_PLAIN } from './auto-datos-expediente-defaults';
 import { hasMembreteRichContent } from './membrete-rich-doc';
-import { DESPACHO_STAFF } from './court-staff-assignees';
+import { getCachedNameByRole } from './court-staff-cache';
+import { DEMO_DESPACHO_STAFF } from './court-staff-demo-seed';
 import { userRoleLabelEs } from './user-roles';
 import type { UserRole } from '../types';
 
@@ -80,7 +81,9 @@ export function sustituirMarcadores(texto: string, mapa: Record<string, string>)
 }
 
 function nombreEquipoPorRol(role: UserRole): string {
-  const row = DESPACHO_STAFF.find((p) => p.courtRole === role);
+  const cached = getCachedNameByRole(role);
+  if (cached) return cached;
+  const row = DEMO_DESPACHO_STAFF.find((p) => p.courtRole === role);
   return row?.name?.trim() ?? '';
 }
 

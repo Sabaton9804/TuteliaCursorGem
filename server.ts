@@ -45,6 +45,7 @@ import {
 } from './server/precedent-radicado.js';
 import { createOpenAiTlsInsecureFetch } from './server/openai-insecure-fetch.js';
 import { analyzeCaseDocumentPiece } from './server/analyze-piece-service.js';
+import { reviewJudicialText } from './server/ai-review-text-service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1282,6 +1283,38 @@ FORMATO DE SALIDA (USAR MARKDOWN):
       if (status < 500) {
         return res.status(status).json({ error: message });
       }
+      const mapped = mapAiError(error);
+      return res.status(mapped.status).json({ error: mapped.message });
+    }
+  });
+
+  app.post('/api/ai/review-text', async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as { text?: string; documentLabel?: string };
+      const text = String(body.text || '').trim();
+      if (!text) {
+        return res.status(400).json({ error: 'text es requerido.' });
+      }
+      const openai = getOpenAiClient();
+      const out = await reviewJudicialText(openai, {
+        text,
+        documentLabel: body.documentLabel,
+      });
+      return res.json({
+        ok: true,
+        summary: out.summary,
+        correctedText: out.correctedText,
+        issues: out.issues,
+        model: out.model,
+        promptVersion: out.promptVersion,
+      });
+    } catch (error: unknown) {
+      const status = typeof (error as { status?: number }).status === 'number'
+        ? (error as { status: number }).status
+        : 500;
+      const message = error instanceof Error ? error.message : 'Error al revisar el texto.';
+      if (status >= 500) console.error('ai/review-text:', error);
+      if (status < 500) return res.status(status).json({ error: message });
       const mapped = mapAiError(error);
       return res.status(mapped.status).json({ error: mapped.message });
     }

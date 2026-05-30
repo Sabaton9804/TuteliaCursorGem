@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { FileText, ExternalLink, Loader2, ZoomIn, ZoomOut } from 'lucide-react';
 import { Document, Page } from 'react-pdf';
 import { supabase } from '../../lib/supabase';
@@ -21,6 +21,7 @@ import {
   isCaseDocumentOpenableInViewer,
   primeraPiezaParaAbrir,
 } from '../../lib/expediente-viewer-doc';
+import { sgdeRepairStorage, sgdeDocumentViewUrl } from '../../lib/sgde-api';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
@@ -62,15 +63,20 @@ function PdfViewer({
   ingestError,
   storagePath,
   onPageCountChange,
+  caseId,
+  documentId,
+  onStoragePathUpdated,
 }: {
   content?: string;
   contentType?: string;
   filename: string;
   onBack?: () => void;
   ingestError?: string;
-  /** Ruta en bucket `case-documents` (columna `storage_path`). */
   storagePath?: string;
   onPageCountChange?: (count: number | null) => void;
+  caseId?: string;
+  documentId?: string;
+  onStoragePathUpdated?: (storagePath: string) => void;
 }) {
   const [numPages, setNumPages] = useState<number | null>(null);
   const [zoom, setZoom] = useState<PdfViewerZoom>('fit');
@@ -82,6 +88,7 @@ function PdfViewer({
   const [pdfJsError, setPdfJsError] = useState<string | null>(null);
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
   const [signError, setSignError] = useState<string | null>(null);
+  const [signLoading, setSignLoading] = useState(false);
 
   const pathTrim = storagePath?.trim() ?? '';
   const hasStorage = Boolean(pathTrim);
@@ -117,32 +124,54 @@ function PdfViewer({
   }, [documentFile, pdfJsError, isImage]);
 
   useEffect(() => {
-    if (!pathTrim) {
+    if (!pathTrim && !(caseId && documentId)) {
       setSignedUrl(null);
       setSignError(null);
+      setSignLoading(false);
       return;
     }
     let cancelled = false;
+    setSignLoading(true);
+    setSignError(null);
     void (async () => {
-      const { data, error } = await supabase.storage
-        .from(CASE_DOCUMENTS_BUCKET)
-        .createSignedUrl(pathTrim, CASE_DOCUMENT_SIGNED_URL_TTL_SEC);
-      if (cancelled) return;
-      if (error || !data?.signedUrl) {
-        setSignError(
-          error?.message ||
-            'No se pudo firmar la URL. Compruebe el bucket case-documents, políticas RLS de storage y la columna storage_path.'
-        );
+      try {
+        if (caseId && documentId) {
+          const view = await sgdeDocumentViewUrl({ caseId, documentId });
+          if (cancelled) return;
+          setSignedUrl(view.signedUrl);
+          setSignError(null);
+          if (view.repaired && view.storagePath) {
+            onStoragePathUpdated?.(view.storagePath);
+          }
+          return;
+        }
+
+        const { data, error } = await supabase.storage
+          .from(CASE_DOCUMENTS_BUCKET)
+          .createSignedUrl(pathTrim, CASE_DOCUMENT_SIGNED_URL_TTL_SEC);
+        if (cancelled) return;
+        if (error || !data?.signedUrl) {
+          setSignError(
+            error?.message ||
+              'No se pudo firmar la URL. Compruebe el bucket case-documents y storage_path.'
+          );
+          setSignedUrl(null);
+          return;
+        }
+        setSignedUrl(data.signedUrl);
+        setSignError(null);
+      } catch (e) {
+        if (cancelled) return;
+        setSignError(e instanceof Error ? e.message : String(e));
         setSignedUrl(null);
-        return;
+      } finally {
+        if (!cancelled) setSignLoading(false);
       }
-      setSignedUrl(data.signedUrl);
-      setSignError(null);
     })();
     return () => {
       cancelled = true;
     };
-  }, [pathTrim]);
+  }, [pathTrim, caseId, documentId, onStoragePathUpdated]);
 
   useEffect(() => {
     if (!hasContent) {
@@ -255,12 +284,35 @@ function PdfViewer({
     );
   }
 
-  if (hasStorage && signError) {
+  if ((hasStorage || (caseId && documentId)) && signError) {
     return (
       <div className="p-10 flex flex-col items-center justify-center text-center space-y-4 flex-1 min-h-0 max-w-lg mx-auto">
         <p className="text-sm font-bold text-slate-800">No se pudo cargar el archivo desde Supabase Storage</p>
         <p className="text-xs text-slate-500 leading-relaxed">{signError}</p>
-        <p className="text-[11px] text-slate-400 font-mono break-all">{pathTrim}</p>
+        {pathTrim ? (
+          <p className="text-[11px] text-slate-400 font-mono break-all">{pathTrim}</p>
+        ) : null}
+        {caseId && documentId ? (
+          <button
+            type="button"
+            onClick={() => {
+              setSignError(null);
+              setSignLoading(true);
+              void sgdeDocumentViewUrl({ caseId, documentId })
+                .then((view) => {
+                  setSignedUrl(view.signedUrl);
+                  if (view.repaired && view.storagePath) {
+                    onStoragePathUpdated?.(view.storagePath);
+                  }
+                })
+                .catch((e) => setSignError(e instanceof Error ? e.message : String(e)))
+                .finally(() => setSignLoading(false));
+            }}
+            className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-2 text-[11px] font-bold text-sky-900 hover:bg-sky-100"
+          >
+            Reintentar descarga desde SGDE
+          </button>
+        ) : null}
         {onBack && (
           <button
             type="button"
@@ -274,11 +326,13 @@ function PdfViewer({
     );
   }
 
-  if (hasStorage && !signedUrl) {
+  if ((hasStorage || (caseId && documentId)) && !signedUrl && signLoading) {
     return (
       <div className="flex flex-col items-center justify-center p-20 text-slate-400 flex-1 min-h-[400px]">
         <Loader2 className="w-8 h-8 animate-spin mb-4" />
-        <p className="text-xs font-bold uppercase tracking-widest">Obteniendo adjunto desde Storage…</p>
+        <p className="text-xs font-bold uppercase tracking-widest">
+          {caseId && documentId ? 'Descargando PDF desde SGDE…' : 'Obteniendo adjunto desde Storage…'}
+        </p>
       </div>
     );
   }
@@ -581,6 +635,62 @@ export function CaseExpedienteDigitalPanel({
   const visorPieza = Boolean(selectedDoc && isCaseDocumentOpenableInViewer(selectedDoc));
   const panelDerechoAbierto = visorPieza || constanciaAbierta;
 
+  const [repairingStorage, setRepairingStorage] = useState(false);
+  const [repairNotice, setRepairNotice] = useState<string | null>(null);
+  const [repairError, setRepairError] = useState<string | null>(null);
+
+  const onStoragePathUpdated = useCallback(
+    (storagePath: string) => {
+      if (selectedDoc) {
+        onSelectDoc({ ...selectedDoc, storagePath });
+      }
+      void onRefetchDocs();
+    },
+    [selectedDoc, onSelectDoc, onRefetchDocs]
+  );
+
+  useEffect(() => {
+    if (!selectedDoc?.id) return;
+    const fresh = docs.find((d) => d.id === selectedDoc.id);
+    if (!fresh) return;
+    if (fresh.storagePath !== selectedDoc.storagePath) {
+      onSelectDoc(fresh);
+    }
+  }, [docs, selectedDoc?.id, selectedDoc?.storagePath, onSelectDoc]);
+
+  const runStorageRepair = useCallback(async (): Promise<boolean> => {
+    setRepairingStorage(true);
+    setRepairError(null);
+    try {
+      const res = await sgdeRepairStorage({ caseId, importSgdeOnly: true });
+      if (res.failed > 0 && res.repaired === 0 && res.imported === 0) {
+        setRepairError(
+          res.errors[0] ||
+            'No se pudo reparar Storage. Verifique credenciales SGDE en Ajustes y pulse Sincronizar.'
+        );
+      } else {
+        setRepairNotice(res.message);
+      }
+      if (res.repaired > 0 || res.imported > 0) {
+        await onRefetchDocs();
+        await onRefetchCase();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setRepairError(msg);
+      return false;
+    } finally {
+      setRepairingStorage(false);
+    }
+  }, [caseId, onRefetchDocs, onRefetchCase]);
+
+  useEffect(() => {
+    setRepairNotice(null);
+    setRepairError(null);
+  }, [caseId]);
+
   useEffect(() => {
     autoAbrirVisorRef.current = false;
   }, [caseId]);
@@ -660,6 +770,20 @@ export function CaseExpedienteDigitalPanel({
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-4">
+      {repairingStorage ? (
+        <div className="flex items-center gap-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2 text-[11px] text-sky-900">
+          <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+          Descargando PDF desde SGDE hacia Storage…
+        </div>
+      ) : repairError ? (
+        <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[11px] text-red-800">
+          {repairError}
+        </div>
+      ) : repairNotice ? (
+        <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-900">
+          {repairNotice}
+        </div>
+      ) : null}
       <div
         ref={splitHostRef}
         className={`flex w-full min-w-0 flex-col gap-4 xl:h-[clamp(32rem,82vh,54rem)] ${
@@ -759,6 +883,9 @@ export function CaseExpedienteDigitalPanel({
                     filename={sanitizeExpedienteFilenameForDisplay(caseDocumentRawLabel(selectedDoc))}
                     ingestError={selectedDoc.ingestError}
                     storagePath={selectedDoc.storagePath}
+                    caseId={caseId}
+                    documentId={selectedDoc.id}
+                    onStoragePathUpdated={onStoragePathUpdated}
                     onBack={cerrarPanelDerecho}
                     onPageCountChange={
                       isCaseDocumentPdf(selectedDoc) ? setPdfPageCount : undefined

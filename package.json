@@ -11,6 +11,7 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "verify:supabase": "tsx scripts/verify-supabase.mts",
+    "verify:migrations-202605": "tsx scripts/verify-migrations-202605.mts",
     "seed:dev-admin": "tsx scripts/seed-dev-admin.mts",
     "seed:court-users": "tsx scripts/seed-court-users.mts",
     "seed:superuser": "tsx scripts/seed-superuser.mts",

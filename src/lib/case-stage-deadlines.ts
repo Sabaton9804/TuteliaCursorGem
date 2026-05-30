@@ -1,12 +1,13 @@
+import type { CaseType } from '../types';
 import {
   CONTESTACION_BUSINESS_DAYS,
   IMPUGNACION_BUSINESS_DAYS,
-  contestacionDeadlineFrom,
-  impugnacionDeadlineFrom,
+  businessDayTermEnd,
   inclusiveBusinessDaysBetween,
   startOfLocalDay,
 } from './business-days';
 import type { CaseStageCode } from './case-workflow-stages';
+import { getCachedStageTermBusinessDays } from './process-definitions-service';
 
 export const META_STAGE_DEADLINE_AT = 'stage_deadline_at';
 export const META_STAGE_DEADLINE_KIND = 'stage_deadline_kind';
@@ -21,11 +22,27 @@ export function stageDeadlineFromMetadata(
   return typeof v === 'string' && v.trim() ? v.trim() : null;
 }
 
-/** Plazo secundario de la etapa abierta (contestación 2d / impugnación 3d). */
+function resolveStageTermBusinessDays(
+  stageCode: CaseStageCode,
+  caseType?: CaseType,
+): number | null {
+  const fromBd = getCachedStageTermBusinessDays(caseType, stageCode);
+  if (fromBd != null) return fromBd;
+  if (stageCode === 'TERMINO_RESPUESTA') return CONTESTACION_BUSINESS_DAYS;
+  if (stageCode === 'TERMINO_IMPUGNACION') return IMPUGNACION_BUSINESS_DAYS;
+  return null;
+}
+
+function stageDeadlineFromTerm(start: Date, termBusinessDays: number): Date {
+  return businessDayTermEnd(startOfLocalDay(start), termBusinessDays);
+}
+
+/** Plazo secundario de la etapa abierta (contestación / impugnación, etc.). */
 export function resolveSubStageDeadline(
   stageCode: CaseStageCode,
   enteredAt: string,
   metadata: Record<string, unknown> | null | undefined,
+  caseType?: CaseType,
 ): Date | null {
   const fromMeta = stageDeadlineFromMetadata(metadata);
   if (fromMeta) {
@@ -35,39 +52,48 @@ export function resolveSubStageDeadline(
   if (!enteredAt.trim()) return null;
   const start = startOfLocalDay(new Date(enteredAt));
   if (Number.isNaN(start.getTime())) return null;
-  if (stageCode === 'TERMINO_RESPUESTA') {
-    return contestacionDeadlineFrom(start);
-  }
-  if (stageCode === 'TERMINO_IMPUGNACION') {
-    return impugnacionDeadlineFrom(start);
-  }
-  return null;
+  const termDays = resolveStageTermBusinessDays(stageCode, caseType);
+  if (termDays == null) return null;
+  return stageDeadlineFromTerm(start, termDays);
 }
 
-export function metadataForContestacionDeadline(notifiedOn: Date): Record<string, unknown> {
-  const end = contestacionDeadlineFrom(notifiedOn);
+export function metadataForContestacionDeadline(
+  notifiedOn: Date,
+  caseType?: CaseType,
+): Record<string, unknown> {
+  const days = resolveStageTermBusinessDays('TERMINO_RESPUESTA', caseType) ?? CONTESTACION_BUSINESS_DAYS;
+  const end = stageDeadlineFromTerm(notifiedOn, days);
   return {
     [META_STAGE_DEADLINE_AT]: end.toISOString(),
     [META_STAGE_DEADLINE_KIND]: 'contestacion_accionados' satisfies StageDeadlineKind,
-    [META_STAGE_DEADLINE_DAYS]: CONTESTACION_BUSINESS_DAYS,
+    [META_STAGE_DEADLINE_DAYS]: days,
   };
 }
 
-export function metadataForImpugnacionDeadline(notifiedOn: Date): Record<string, unknown> {
-  const end = impugnacionDeadlineFrom(notifiedOn);
+export function metadataForImpugnacionDeadline(
+  notifiedOn: Date,
+  caseType?: CaseType,
+): Record<string, unknown> {
+  const days = resolveStageTermBusinessDays('TERMINO_IMPUGNACION', caseType) ?? IMPUGNACION_BUSINESS_DAYS;
+  const end = stageDeadlineFromTerm(notifiedOn, days);
   return {
     [META_STAGE_DEADLINE_AT]: end.toISOString(),
     [META_STAGE_DEADLINE_KIND]: 'impugnacion' satisfies StageDeadlineKind,
-    [META_STAGE_DEADLINE_DAYS]: IMPUGNACION_BUSINESS_DAYS,
+    [META_STAGE_DEADLINE_DAYS]: days,
   };
 }
 
-export function subStageDeadlineLabel(stageCode: CaseStageCode): string | null {
+export function subStageDeadlineLabel(stageCode: CaseStageCode, caseType?: CaseType): string | null {
+  const days = resolveStageTermBusinessDays(stageCode, caseType);
+  if (days == null) return null;
   if (stageCode === 'TERMINO_RESPUESTA') {
-    return `Contestación de accionados (${CONTESTACION_BUSINESS_DAYS} días hábiles)`;
+    return `Contestación de accionados (${days} días hábiles)`;
   }
   if (stageCode === 'TERMINO_IMPUGNACION') {
-    return `Impugnación (${IMPUGNACION_BUSINESS_DAYS} días hábiles)`;
+    return `Impugnación (${days} días hábiles)`;
+  }
+  if (days > 0) {
+    return `Plazo de etapa (${days} días hábiles)`;
   }
   return null;
 }

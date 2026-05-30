@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { SgdeClient, SgdePdfLeaf } from './sgde-client';
+import { repairStorageFromSgde } from './sgde-repair-storage';
 import {
   buildSgdeExpedienteProperties,
   tipoDocumentalSgdeFromFileName,
@@ -25,6 +26,9 @@ export type SyncDocumentsWithSgdeResult = {
   sgdeOnly: number;
   uploaded: number;
   uploadFailed: number;
+  repaired: number;
+  imported: number;
+  repairFailed: number;
   items: SgdeDocumentSyncItem[];
   sgdeOnlyItems: SgdeDocumentSyncItem[];
   errors: string[];
@@ -326,17 +330,55 @@ export async function syncDocumentsWithSgde(opts: {
     .filter(Boolean)
     .join(' · ');
 
+  let repaired = 0;
+  let imported = 0;
+  let repairFailed = 0;
+  const repairErrors: string[] = [];
+
+  try {
+    const repair = await repairStorageFromSgde({
+      client,
+      admin,
+      caseId,
+      sgdeRootId,
+      caseType: c.case_type,
+      originRadicado: radicado23,
+      importSgdeOnly: true,
+    });
+    repaired = repair.repaired;
+    imported = repair.imported;
+    repairFailed = repair.failed;
+    repairErrors.push(...repair.errors);
+  } catch (e) {
+    repairFailed += 1;
+    repairErrors.push(String((e as Error)?.message || e));
+  }
+
+  const fullMessage = [
+    message || 'Sin documentos PDF para comparar.',
+    repaired ? `${repaired} PDF reparado(s) en Storage` : null,
+    imported ? `${imported} importado(s) desde SGDE` : null,
+    repairFailed ? `${repairFailed} fallo(s) al reparar Storage` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  const allErrors = [...errors, ...repairErrors];
+
   return {
-    ok: uploadFailed === 0,
+    ok: uploadFailed === 0 && repairFailed === 0,
     linked,
     localOnly,
     sgdeOnly,
     uploaded,
     uploadFailed,
+    repaired,
+    imported,
+    repairFailed,
     items,
     sgdeOnlyItems,
-    errors,
-    message: message || 'Sin documentos PDF para comparar.',
+    errors: allErrors,
+    message: fullMessage,
     sgdeRootId,
   };
 }

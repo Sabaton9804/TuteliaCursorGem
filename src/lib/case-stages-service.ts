@@ -16,6 +16,7 @@ import {
 } from './case-workflow-stages';
 import { insertWorkflowStageEntryNotifications } from './workflow-stage-notifications';
 import { ensureSupabaseSessionForWrites } from './supabase-write-auth';
+import { getCachedStageDefinitionId } from './process-definitions-service';
 
 export type CaseStageRowDb = {
   id: string;
@@ -124,6 +125,38 @@ async function closeStageById(supabase: SupabaseClient, stageId: string, exitedA
   if (error) throw error;
 }
 
+async function insertCaseStage(
+  supabase: SupabaseClient,
+  opts: {
+    courtId: string;
+    caseId: string;
+    stage: CaseStageCode;
+    enteredAt: string;
+    previousStageCode?: CaseStageCode | null;
+    createdBy: string | null;
+    metadata?: Record<string, unknown>;
+    caseType?: CaseType;
+    exitedAt?: string | null;
+  },
+): Promise<void> {
+  const rr = responsibleRoleForStage(opts.stage);
+  const stageDefinitionId = getCachedStageDefinitionId(opts.caseType, opts.stage);
+  const row: Record<string, unknown> = {
+    court_id: opts.courtId,
+    case_id: opts.caseId,
+    stage_code: opts.stage,
+    responsible_role: rr,
+    entered_at: opts.enteredAt,
+    previous_stage_code: opts.previousStageCode ?? null,
+    created_by: opts.createdBy,
+    metadata: opts.metadata ?? {},
+  };
+  if (stageDefinitionId) row.stage_definition_id = stageDefinitionId;
+  if (opts.exitedAt) row.exited_at = opts.exitedAt;
+  const { error } = await supabase.from('case_stages').insert(row);
+  if (error) throw error;
+}
+
 async function insertOpenStage(
   supabase: SupabaseClient,
   opts: {
@@ -134,20 +167,10 @@ async function insertOpenStage(
     previousStageCode?: CaseStageCode | null;
     createdBy: string | null;
     metadata?: Record<string, unknown>;
+    caseType?: CaseType;
   },
 ): Promise<void> {
-  const rr = responsibleRoleForStage(opts.stage);
-  const { error } = await supabase.from('case_stages').insert({
-    court_id: opts.courtId,
-    case_id: opts.caseId,
-    stage_code: opts.stage,
-    responsible_role: rr,
-    entered_at: opts.enteredAt,
-    previous_stage_code: opts.previousStageCode ?? null,
-    created_by: opts.createdBy,
-    metadata: opts.metadata ?? {},
-  });
-  if (error) throw error;
+  await insertCaseStage(supabase, opts);
 }
 
 /** Expediente recién radicado: primera etapa abierta. */
@@ -176,17 +199,17 @@ export async function openRadicacionStageAfterRadicate(
   const pipeline = pipelineForCaseType(opts.caseType);
   const first = pipeline[0] ?? 'RADICACION';
   const now = new Date().toISOString();
-  const rr = responsibleRoleForStage(first);
-  const { error: insErr } = await supabase.from('case_stages').insert({
-    court_id: opts.courtId,
-    case_id: opts.caseId,
-    stage_code: first,
-    responsible_role: rr,
-    entered_at: now,
-    created_by: userId,
-    metadata: { source: 'radicacion' },
-  });
-  if (insErr) {
+  try {
+    await insertCaseStage(supabase, {
+      courtId: opts.courtId,
+      caseId: opts.caseId,
+      stage: first,
+      enteredAt: now,
+      createdBy: userId,
+      caseType: opts.caseType,
+      metadata: { source: 'radicacion' },
+    });
+  } catch (insErr) {
     console.error('openRadicacionStageAfterRadicate:', insErr);
     return;
   }
@@ -264,6 +287,7 @@ export async function applyStageTransitionJudgeApprovedBorrador(
       enteredAt: now,
       previousStageCode: current,
       createdBy: userId,
+      caseType: opts.caseType,
       metadata: { source: 'juez_aprueba_auto_admisorio' },
     });
     await insertCaseAction(supabase, {
@@ -307,6 +331,7 @@ export async function applyStageTransitionJudgeApprovedBorrador(
       enteredAt: now,
       previousStageCode: current,
       createdBy: userId,
+      caseType: opts.caseType,
       metadata: { source: 'juez_aprueba_borrador_fallo' },
     });
     await insertCaseAction(supabase, {
@@ -361,15 +386,15 @@ export async function applyStageTransitionNotificacionAutoEnviada(
   const termino: CaseStageCode = 'TERMINO_RESPUESTA';
 
   await closeStageById(supabase, open.id, now);
-  await supabase.from('case_stages').insert({
-    court_id: opts.courtId,
-    case_id: opts.caseId,
-    stage_code: notif,
-    responsible_role: responsibleRoleForStage(notif),
-    entered_at: t0,
-    exited_at: t0,
-    previous_stage_code: 'ADMISION',
-    created_by: userId,
+  await insertCaseStage(supabase, {
+    courtId: opts.courtId,
+    caseId: opts.caseId,
+    stage: notif,
+    enteredAt: t0,
+    exitedAt: t0,
+    previousStageCode: 'ADMISION',
+    createdBy: userId,
+    caseType: opts.caseType,
     metadata: { source: 'notificacion_auto_instantanea' },
   });
   const notifiedDay = startOfLocalDay(new Date());
@@ -380,10 +405,11 @@ export async function applyStageTransitionNotificacionAutoEnviada(
     enteredAt: t0,
     previousStageCode: notif,
     createdBy: userId,
+    caseType: opts.caseType,
     metadata: {
       source: 'notificacion_auto_enviada',
       notified_at: t0,
-      ...metadataForContestacionDeadline(notifiedDay),
+      ...metadataForContestacionDeadline(notifiedDay, opts.caseType),
     },
   });
   await supabase.from('cases').update({ updated_at: now }).eq('id', opts.caseId);
@@ -433,7 +459,7 @@ export async function applyStageTransitionIfTerminoRespuestaVencido(
   const open = await fetchOpenStageRow(supabase, opts.caseId);
   if (!open || open.stage_code !== 'TERMINO_RESPUESTA') return;
   const end =
-    resolveSubStageDeadline('TERMINO_RESPUESTA', open.entered_at, open.metadata ?? {}) ??
+    resolveSubStageDeadline('TERMINO_RESPUESTA', open.entered_at, open.metadata ?? {}, opts.caseType) ??
     (opts.deadlineAt?.trim() ? startOfLocalDay(new Date(opts.deadlineAt)) : null);
   if (!end) return;
   const today = startOfLocalDay(new Date());
@@ -452,6 +478,7 @@ export async function applyStageTransitionIfTerminoRespuestaVencido(
     enteredAt: now,
     previousStageCode: prev,
     createdBy: userId,
+    caseType: opts.caseType,
     metadata: { source: 'termino_respuesta_vencido' },
   });
   await insertCaseAction(supabase, {
@@ -499,15 +526,15 @@ export async function applyStageTransitionNotificacionFalloEnviada(
   const notif: CaseStageCode = 'NOTIFICACION_FALLO';
   const termino: CaseStageCode = 'TERMINO_IMPUGNACION';
   await closeStageById(supabase, open.id, now);
-  await supabase.from('case_stages').insert({
-    court_id: opts.courtId,
-    case_id: opts.caseId,
-    stage_code: notif,
-    responsible_role: responsibleRoleForStage(notif),
-    entered_at: t0,
-    exited_at: t0,
-    previous_stage_code: 'FALLO',
-    created_by: userId,
+  await insertCaseStage(supabase, {
+    courtId: opts.courtId,
+    caseId: opts.caseId,
+    stage: notif,
+    enteredAt: t0,
+    exitedAt: t0,
+    previousStageCode: 'FALLO',
+    createdBy: userId,
+    caseType: opts.caseType,
     metadata: { source: 'notificacion_fallo_instantanea' },
   });
   const notifiedDay = startOfLocalDay(new Date());
@@ -518,10 +545,11 @@ export async function applyStageTransitionNotificacionFalloEnviada(
     enteredAt: t0,
     previousStageCode: notif,
     createdBy: userId,
+    caseType: opts.caseType,
     metadata: {
       source: 'notificacion_fallo_enviada',
       notified_at: t0,
-      ...metadataForImpugnacionDeadline(notifiedDay),
+      ...metadataForImpugnacionDeadline(notifiedDay, opts.caseType),
     },
   });
   await supabase.from('cases').update({ updated_at: now }).eq('id', opts.caseId);
@@ -570,7 +598,7 @@ export async function applyStageTransitionIfTerminoImpugnacionVencido(
   const open = await fetchOpenStageRow(supabase, opts.caseId);
   if (!open || open.stage_code !== 'TERMINO_IMPUGNACION') return;
   const end =
-    resolveSubStageDeadline('TERMINO_IMPUGNACION', open.entered_at, open.metadata ?? {}) ??
+    resolveSubStageDeadline('TERMINO_IMPUGNACION', open.entered_at, open.metadata ?? {}, opts.caseType) ??
     (opts.deadlineAt?.trim() ? startOfLocalDay(new Date(opts.deadlineAt)) : null);
   if (!end) return;
   const today = startOfLocalDay(new Date());
@@ -589,6 +617,7 @@ export async function applyStageTransitionIfTerminoImpugnacionVencido(
     enteredAt: now,
     previousStageCode: prev,
     createdBy: userId,
+    caseType: opts.caseType,
     metadata: { source: 'termino_impugnacion_vencido' },
   });
   await insertCaseAction(supabase, {
@@ -642,6 +671,7 @@ export async function applyStageTransitionRemisionCorteRegistrada(
     enteredAt: now,
     previousStageCode: prev,
     createdBy: userId,
+    caseType: opts.caseType,
     metadata: { source: 'remision_corte' },
   });
   await insertCaseAction(supabase, {
@@ -737,6 +767,7 @@ export async function manualStageGoBack(
       enteredAt: now,
       previousStageCode: cur,
       createdBy: userId,
+      caseType: opts.caseType,
       metadata: { source: 'manual_retroceso', reopened: true },
     });
   }
@@ -792,18 +823,17 @@ export async function manualStageSkipTo(
   await closeStageById(supabase, open.id, now);
 
   for (const code of intermediates) {
-    const { error } = await supabase.from('case_stages').insert({
-      court_id: opts.courtId,
-      case_id: opts.caseId,
-      stage_code: code,
-      responsible_role: responsibleRoleForStage(code as CaseStageCode),
-      entered_at: now,
-      exited_at: now,
-      previous_stage_code: cur,
-      created_by: userId,
+    await insertCaseStage(supabase, {
+      courtId: opts.courtId,
+      caseId: opts.caseId,
+      stage: code as CaseStageCode,
+      enteredAt: now,
+      exitedAt: now,
+      previousStageCode: cur,
+      createdBy: userId,
+      caseType: opts.caseType,
       metadata: { omitida: true, source: 'manual_salto' },
     });
-    if (error) throw error;
   }
 
   await insertOpenStage(supabase, {
@@ -813,6 +843,7 @@ export async function manualStageSkipTo(
     enteredAt: now,
     previousStageCode: cur,
     createdBy: userId,
+    caseType: opts.caseType,
     metadata: { source: 'manual_salto' },
   });
 

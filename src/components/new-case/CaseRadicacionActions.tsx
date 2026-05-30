@@ -2,9 +2,11 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { AlertCircle, ArrowRight, Check, CheckCircle2, Edit2, Loader2, Sparkles } from 'lucide-react';
-import { COURT_CONSTANTS } from '../../constants';
+import { defaultRadicacionConfig } from '../../lib/court-radicacion-config';
 import { formatRadicado } from '../../lib/formatters';
 import { CUI_INSTANCE_PRIMERA, CUI_INSTANCE_SEGUNDA } from '../../lib/radicado-cui';
+import { COURT_CONSTANTS } from '../../constants';
+import type { CourtRadicacionConfig } from '../../lib/process-definition-types';
 import type { LegalAnalysis } from './new-case-types';
 
 export type CaseRadicacionConsecutivePanelProps = {
@@ -13,6 +15,9 @@ export type CaseRadicacionConsecutivePanelProps = {
   consecutiveLoading: boolean;
   consecutiveReady: boolean;
   radicadoConflict: { raw: string; existingCaseId: string } | null;
+  /** CUI del despacho (desde courts en BD). */
+  radicacion?: CourtRadicacionConfig;
+  instanceCode?: string;
   /** Segunda instancia: mismo CUI base; sufijo 01, 02… según vueltas (p. ej. tras nulidad). */
   segundaInstancia?: {
     originRadicado: string;
@@ -28,8 +33,12 @@ export function CaseRadicacionConsecutivePanel({
   consecutiveLoading,
   consecutiveReady,
   radicadoConflict,
+  radicacion,
+  instanceCode,
   segundaInstancia,
 }: CaseRadicacionConsecutivePanelProps) {
+  const cui = radicacion ?? defaultRadicacionConfig('');
+  const inst = instanceCode ?? COURT_CONSTANTS.INSTANCE_CODE;
   if (segundaInstancia) {
     const originDigits = segundaInstancia.originRadicado.replace(/\D/g, '');
     const originOk = originDigits.length === 23;
@@ -139,13 +148,13 @@ export function CaseRadicacionConsecutivePanel({
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-x-1 gap-y-1 text-xs font-mono text-slate-700">
-        <span className="tabular-nums">{COURT_CONSTANTS.CITY_CODE}</span>
+        <span className="tabular-nums">{cui.daneCode}</span>
         <span className="text-slate-300">·</span>
-        <span className="tabular-nums">{COURT_CONSTANTS.ENTITY_CODE}</span>
+        <span className="tabular-nums">{cui.entityCode}</span>
         <span className="text-slate-300">·</span>
-        <span className="tabular-nums">{COURT_CONSTANTS.SPECIALTY_CODE}</span>
+        <span className="tabular-nums">{cui.specialtyCode}</span>
         <span className="text-slate-300">·</span>
-        <span className="tabular-nums">{COURT_CONSTANTS.DESPACHO_CODE}</span>
+        <span className="tabular-nums">{cui.despachoNumber}</span>
         <span className="text-slate-300">·</span>
         <span className="tabular-nums">{new Date().getFullYear()}</span>
         <span className="text-slate-300">·</span>
@@ -160,7 +169,7 @@ export function CaseRadicacionConsecutivePanel({
           title="Consecutivo de proceso (5 dígitos). Se sugiere el siguiente al último radicado en este despacho y año."
         />
         <span className="text-slate-300">·</span>
-        <span className="tabular-nums">{COURT_CONSTANTS.INSTANCE_CODE}</span>
+        <span className="tabular-nums">{inst}</span>
       </div>
       <p className="mt-1.5 text-[10px] leading-snug text-slate-400">
         El consecutivo se propone según el último expediente ya radicado en este despacho para el año en curso; puede

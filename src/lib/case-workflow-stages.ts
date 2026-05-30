@@ -5,6 +5,7 @@ import {
   findStaffByAssignedValue,
   normalizeStaffKey,
 } from './court-staff-assignees';
+import { getCachedPipelineForCaseType, getCachedStageLabel } from './process-definitions-service';
 
 /** Códigos de etapa alineados con `public.case_stages.stage_code` (CHECK en migración). */
 export type CaseStageCode =
@@ -101,8 +102,12 @@ export const STAGE_LABEL_ES: Record<CaseStageCode, string> = {
 };
 
 export function pipelineForCaseType(caseType: CaseType | undefined): readonly CaseStageCode[] {
-  const t = caseType ?? 'tutela_primera';
-  return STAGE_PIPELINE_BY_CASE_TYPE[t] ?? STAGE_PIPELINE_BY_CASE_TYPE.tutela_primera;
+  return getCachedPipelineForCaseType(caseType);
+}
+
+/** Etiqueta de etapa: BD (process_stages_definition) o fallback TS. */
+export function stageLabelForCaseType(stage: CaseStageCode, caseType?: CaseType): string {
+  return getCachedStageLabel(stage, caseType);
 }
 
 export function nextStageInPipeline(
@@ -182,8 +187,9 @@ export async function resolveWorkflowAssigneeId(
 export function workflowTaskPayloadForStage(
   stage: CaseStageCode,
   radicado: string,
+  caseType?: CaseType,
 ): { title: string; description: string; task_type: 'custom' | 'generate_notifs' } {
-  const label = STAGE_LABEL_ES[stage];
+  const label = stageLabelForCaseType(stage, caseType);
   if (stage === 'ADMISION') {
     return {
       title: `Generar oficios — notificación auto admisorio — ${radicado}`,

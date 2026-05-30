@@ -10,6 +10,7 @@ import {
   type CaseStageCode,
   type CaseStageResponsibleRole,
 } from '../lib/case-workflow-stages';
+import { getCachedStageDefinitionId } from '../lib/process-definitions-service';
 import { insertWorkflowStageEntryNotifications } from '../lib/workflow-stage-notifications';
 
 export type CaseStageRow = {
@@ -111,7 +112,8 @@ export function useCaseStages(opts: UseOpts) {
       const first = pipeline[0];
       if (!first) return;
       const rr = responsibleRoleForStage(first);
-      const { error: insErr } = await supabase.from('case_stages').insert({
+      const stageDefinitionId = getCachedStageDefinitionId(opts.caseType, first);
+      const row: Record<string, unknown> = {
         court_id: opts.courtId,
         case_id: opts.caseId,
         stage_code: first,
@@ -119,7 +121,9 @@ export function useCaseStages(opts: UseOpts) {
         entered_at: new Date().toISOString(),
         created_by: uid,
         metadata: { source: 'case_stages_bootstrap' },
-      });
+      };
+      if (stageDefinitionId) row.stage_definition_id = stageDefinitionId;
+      const { error: insErr } = await supabase.from('case_stages').insert(row);
       if (insErr) throw insErr;
 
       const assigneeId = await resolveWorkflowAssigneeId(supabase, {

@@ -39,7 +39,7 @@ import { tiptapJsonToPlainText } from '../../lib/tiptap-to-plain-text';
 import { formatRadicado } from '../../lib/formatters';
 import { supabase } from '../../lib/supabase';
 import { recordBorradorAutoEnviadoRevision } from '../../lib/case-stages-service';
-import { DESPACHO_STAFF } from '../../lib/court-staff-assignees';
+import { useCourtOperational } from '../../contexts/CourtOperationalContext';
 import { marcadoresParaPlantilla } from '../../lib/plantilla-marcadores-catalog';
 import { defaultToggleDefsForPlantilla } from '../../lib/plantilla-template-default-toggles';
 import {
@@ -54,6 +54,8 @@ import { stripReviewCommentMarksFromTipTapDoc } from '../../lib/tiptap-strip-rev
 import { JudicialDocEditor } from '../shared/JudicialDocEditor';
 import { TiptapDespachoReviewChrome } from '../plantillas/TiptapDespachoReviewChrome';
 import { DespachoBorradorWordPanel } from './DespachoBorradorWordPanel';
+import { DespachoPrecedentsAssist } from './DespachoPrecedentsAssist';
+import { JudicialDocAiToolbar } from './JudicialDocAiToolbar';
 
 /** Protocolo: sin guiones ni radicado (23 dígitos) en el nombre; el expediente identifica el proceso. */
 const DEFAULT_INFORME_INGRESO_PDF_NAME = 'InformeIngresoDespacho.pdf';
@@ -78,6 +80,7 @@ export function CaseDespachoDocumentosPanel({
   onAfterEnviarRevision,
   revisionActorDisplayName,
 }: Props) {
+  const { nameByRole } = useCourtOperational();
   const [membreteState, setMembreteState] = useState<PlantillasStateV2>(() => loadPlantillas());
   const [templates, setTemplates] = useState<DocumentTemplate[]>([]);
   const [tplError, setTplError] = useState<string | null>(null);
@@ -103,10 +106,7 @@ export function CaseDespachoDocumentosPanel({
 
   const radSlug = formatRadicado(caseItem.radicado) || caseItem.radicado;
 
-  const nombreJuezRevision = useMemo(
-    () => DESPACHO_STAFF.find((p) => p.courtRole === 'judge')?.name?.trim() ?? '',
-    [],
-  );
+  const nombreJuezRevision = useMemo(() => nameByRole('judge'), [nameByRole]);
 
   useEffect(() => {
     if (!revisionSentHint) return;
@@ -635,6 +635,40 @@ export function CaseDespachoDocumentosPanel({
   const informesOpts = templates.filter((t) => t.categoria === 'secretaria' && t.tipo === 'informe_ingreso');
   const autosOpts = templates.filter((t) => t.categoria === 'despacho' && t.tipo === 'auto_admisorio');
 
+  const getInformePlainText = useCallback(
+    () => tiptapJsonToPlainText(informeDocContent) || informeDraft || textoInforme,
+    [informeDocContent, informeDraft, textoInforme],
+  );
+
+  const getAutoPlainText = useCallback(
+    () => tiptapJsonToPlainText(autoDocContent) || autoDraft || textoAuto,
+    [autoDocContent, autoDraft, textoAuto],
+  );
+
+  const applyPlainTextToInforme = useCallback(
+    (text: string) => {
+      informeDraftTouchedRef.current = true;
+      if (informeTpl?.docxStoragePath) {
+        setInformeDraft(text);
+        return;
+      }
+      setInformeDraft(docToStorage(plainTextToTiptapDoc(text)));
+    },
+    [informeTpl?.docxStoragePath],
+  );
+
+  const applyPlainTextToAuto = useCallback(
+    (text: string) => {
+      autoDraftTouchedRef.current = true;
+      if (autoTpl?.docxStoragePath) {
+        setAutoDraft(text);
+        return;
+      }
+      setAutoDraft(docToStorage(plainTextToTiptapDoc(text)));
+    },
+    [autoTpl?.docxStoragePath],
+  );
+
   return (
     <div className="space-y-6">
       {tplError ? (
@@ -715,6 +749,8 @@ export function CaseDespachoDocumentosPanel({
           </div>
         </div>
       </div>
+
+      <DespachoPrecedentsAssist caseItem={caseItem} />
 
       <section className="card-modern overflow-hidden">
         <div className="border-b border-slate-100 bg-white px-6 py-4">
@@ -812,6 +848,14 @@ export function CaseDespachoDocumentosPanel({
           </div>
 
           {preview === 'informe' ? (
+            <JudicialDocAiToolbar
+              documentLabel="Informe de ingreso"
+              getText={getInformePlainText}
+              onApplyCorrectedText={informeTpl?.docxStoragePath ? undefined : applyPlainTextToInforme}
+            />
+          ) : null}
+
+          {preview === 'informe' ? (
             <DespachoBorradorWordPanel
               membrete={membreteState.membrete}
               draft={informeDraft}
@@ -849,6 +893,7 @@ export function CaseDespachoDocumentosPanel({
                       <JudicialDocEditor
                         unframed
                         despachoSheetChrome
+                        browserSpellCheck
                         content={informeDocContent}
                         onChange={(json) => {
                           informeDraftTouchedRef.current = true;
@@ -1044,6 +1089,13 @@ export function CaseDespachoDocumentosPanel({
             «Documentos por revisar».
           </p>
           {preview === 'auto' ? (
+            <JudicialDocAiToolbar
+              documentLabel="Auto admisorio"
+              getText={getAutoPlainText}
+              onApplyCorrectedText={autoTpl?.docxStoragePath ? undefined : applyPlainTextToAuto}
+            />
+          ) : null}
+          {preview === 'auto' ? (
             <DespachoBorradorWordPanel
               membrete={membreteState.membrete}
               draft={autoDraft}
@@ -1081,6 +1133,7 @@ export function CaseDespachoDocumentosPanel({
                       <JudicialDocEditor
                         unframed
                         despachoSheetChrome
+                        browserSpellCheck
                         content={autoDocContent}
                         onChange={(json) => {
                           autoDraftTouchedRef.current = true;

@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import type { Case } from '../../types';
-import { sgdeCreateExpediente, sgdeSyncDocuments, type SgdeSyncDocumentsResult } from '../../lib/sgde-api';
+import { sgdeCreateExpediente, sgdeSyncDocuments, sgdeRepairStorage, type SgdeSyncDocumentsResult } from '../../lib/sgde-api';
 import {
   DOCUMENT_SGDE_SYNC_LABELS,
   DOCUMENT_SGDE_SYNC_STYLES,
@@ -131,6 +131,7 @@ export function ExpedienteSgdeBar({
   const [linking, setLinking] = useState(false);
   const [creating, setCreating] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [repairing, setRepairing] = useState(false);
   const [syncReport, setSyncReport] = useState<SgdeSyncDocumentsResult | null>(null);
   const [syncOpen, setSyncOpen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -249,6 +250,37 @@ export function ExpedienteSgdeBar({
     }
   }, [caseId, loadTree, onRefetchCase]);
 
+  const repairFromSgde = useCallback(async () => {
+    setRepairing(true);
+    setErr(null);
+    try {
+      const res = await sgdeRepairStorage({ caseId, importSgdeOnly: true });
+      setSyncReport({
+        ok: res.ok,
+        linked: 0,
+        localOnly: 0,
+        sgdeOnly: 0,
+        uploaded: 0,
+        uploadFailed: 0,
+        repaired: res.repaired,
+        imported: res.imported,
+        repairFailed: res.failed,
+        items: [],
+        sgdeOnlyItems: [],
+        errors: res.errors,
+        message: res.message,
+        sgdeRootId: caseItem.sgdeId || '',
+      });
+      setSyncOpen(true);
+      await onRefetchCase();
+      await loadTree();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRepairing(false);
+    }
+  }, [caseId, caseItem.sgdeId, loadTree, onRefetchCase]);
+
   const linkedDocs = docs.filter((d) => documentSgdeSyncStatus(d) === 'linked');
   const localOnlyDocs = docs.filter((d) => documentSgdeSyncStatus(d) === 'local_only');
   const showSgdeBadges = Boolean(caseItem.sgdeId?.trim()) || linkStatus !== 'unlinked';
@@ -310,6 +342,16 @@ export function ExpedienteSgdeBar({
             </button>
           ) : null}
           {linkStatus !== 'unlinked' ? (
+            <>
+            <button
+              type="button"
+              onClick={() => void repairFromSgde()}
+              disabled={repairing || syncing}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-violet-900 hover:bg-violet-100 disabled:opacity-50"
+            >
+              {repairing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              Reparar PDF
+            </button>
             <button
               type="button"
               onClick={() => void syncWithSgde()}
@@ -319,6 +361,7 @@ export function ExpedienteSgdeBar({
               {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
               Sincronizar
             </button>
+            </>
           ) : null}
           <button
             type="button"

@@ -117,24 +117,35 @@ export function inclusiveBusinessDaysBetween(from: Date, to: Date): number {
 }
 
 /**
+ * Ventana de N días hábiles desde radicación (día de radicación = día 1).
+ * Días restantes = (N + 1) − días hábiles transcurridos (inclusive radicación y hoy).
+ */
+export function businessDaysRemainingInTermWindow(
+  filingDate: Date,
+  termBusinessDays: number,
+  today = new Date(),
+): number {
+  const used = inclusiveBusinessDaysBetween(filingDate, today);
+  return termBusinessDays + 1 - used;
+}
+
+/**
  * Ventana de 10 días hábiles desde radicación (día de radicación = aún 10 días por delante).
  * Días restantes = 11 - días hábiles transcurridos (inclusive radicación y hoy).
  */
 export function businessDaysRemainingInTenDayWindow(filingDate: Date, today = new Date()): number {
-  const used = inclusiveBusinessDaysBetween(filingDate, today);
-  return 11 - used;
+  return businessDaysRemainingInTermWindow(filingDate, 10, today);
 }
 
 /**
- * Misma semántica que `businessDaysRemainingInTenDayWindow` cuando el día 10 hábil ya está en BD.
- * Evita recorrer años entre radicación y hoy mientras el expediente sigue dentro del término:
- * solo cuenta hasta `min(hoy, fin de término)` en ese tramo.
- * Tras el fin del término usa el día posterior al plazo como origen (equivalente a 11 − hábiles(radicación→hoy)).
+ * Misma semántica que `businessDaysRemainingInTermWindow` cuando el fin del término ya está en BD.
+ * Evita recorrer años entre radicación y hoy mientras el expediente sigue dentro del término.
  */
-export function businessDaysRemainingWithStoredDeadline(
+export function businessDaysRemainingWithStoredTermDeadline(
   filingDate: Date,
   termEndDeadline: Date,
-  today = new Date()
+  termBusinessDays: number,
+  today = new Date(),
 ): number {
   const f = startOfLocalDay(filingDate);
   const end = startOfLocalDay(termEndDeadline);
@@ -144,10 +155,21 @@ export function businessDaysRemainingWithStoredDeadline(
 
   if (t.getTime() <= end.getTime()) {
     const used = inclusiveBusinessDaysBetween(f, t);
-    return 11 - used;
+    return termBusinessDays + 1 - used;
   }
   const usedAfter = inclusiveBusinessDaysBetween(dayAfterEnd, t);
   return 1 - usedAfter;
+}
+
+/**
+ * Igual que {@link businessDaysRemainingWithStoredTermDeadline} con término de 10 días hábiles (tutela).
+ */
+export function businessDaysRemainingWithStoredDeadline(
+  filingDate: Date,
+  termEndDeadline: Date,
+  today = new Date(),
+): number {
+  return businessDaysRemainingWithStoredTermDeadline(filingDate, termEndDeadline, 10, today);
 }
 
 export function addBusinessDays(start: Date, businessDays: number): Date {

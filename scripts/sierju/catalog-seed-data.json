@@ -1,0 +1,591 @@
+{
+  "formTemplates": [
+    {
+      "code": "sierju_civil_circuito_2023_v4",
+      "label": "SIERJU Juzgado Civil Circuito 2023 V.4",
+      "version": "2023_v4",
+      "effective_from": "2023-01-01",
+      "source_document": "docs/sierju/clases-civil-circuito-2023.md"
+    },
+    {
+      "code": "sierju_restitucion_tierras_2019",
+      "label": "SIERJU Sala Civil Especializada Restitución de Tierras 2019",
+      "version": "2019",
+      "effective_from": "2019-01-01",
+      "source_document": "Manual UDAE Restitución de Tierras 2019"
+    }
+  ],
+  "sections": [
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "civil_1a_escrito",
+      "label": "Primera y única instancia Civil-Escrito",
+      "specialty": "civil",
+      "instance_level": 1,
+      "procedure_mode": "escrito",
+      "unit_of_measure": "proceso",
+      "sort_order": 1
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "civil_1a_oral",
+      "label": "Primera y única instancia Civil-Oral",
+      "specialty": "civil",
+      "instance_level": 1,
+      "procedure_mode": "oral",
+      "unit_of_measure": "proceso",
+      "sort_order": 2
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "laboral_1a_escrito",
+      "label": "Primera y única Instancia Laboral",
+      "specialty": "laboral",
+      "instance_level": 1,
+      "procedure_mode": "escrito",
+      "unit_of_measure": "proceso",
+      "sort_order": 3
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "laboral_1a_oral",
+      "label": "Primera y única Instancia Laboral - Oral",
+      "specialty": "laboral",
+      "instance_level": 1,
+      "procedure_mode": "oral",
+      "unit_of_measure": "proceso",
+      "sort_order": 4
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "familia_1a_escrito",
+      "label": "Primera y única Instancia Familia - Escrito",
+      "specialty": "familia",
+      "instance_level": 1,
+      "procedure_mode": "escrito",
+      "unit_of_measure": "proceso",
+      "sort_order": 5
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "familia_1a_oral",
+      "label": "Primera y única Instancia Familia - Oral",
+      "specialty": "familia",
+      "instance_level": 1,
+      "procedure_mode": "oral",
+      "unit_of_measure": "proceso",
+      "sort_order": 6
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "acciones_const_1a",
+      "label": "Primera instancia Acciones constitucionales",
+      "specialty": "constitucional",
+      "instance_level": 1,
+      "procedure_mode": null,
+      "unit_of_measure": "proceso",
+      "sort_order": 7
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "movimiento_tutelas",
+      "label": "Movimiento de Tutelas",
+      "specialty": "constitucional",
+      "instance_level": 1,
+      "procedure_mode": null,
+      "unit_of_measure": "tutela",
+      "sort_order": 8
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "procesos_post_decision",
+      "label": "Procesos iniciados después de un proceso decidido",
+      "specialty": "civil",
+      "instance_level": 1,
+      "procedure_mode": null,
+      "unit_of_measure": "proceso",
+      "sort_order": 9
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "civil_2a_escrito",
+      "label": "Segunda Instancia Civil - Escrito",
+      "specialty": "civil",
+      "instance_level": 2,
+      "procedure_mode": "escrito",
+      "unit_of_measure": "proceso",
+      "sort_order": 10
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "civil_2a_oral",
+      "label": "Segunda Instancia Civil - Oral",
+      "specialty": "civil",
+      "instance_level": 2,
+      "procedure_mode": "oral",
+      "unit_of_measure": "proceso",
+      "sort_order": 11
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "incidentes_desacato",
+      "label": "Incidentes de Desacato",
+      "specialty": "constitucional",
+      "instance_level": 1,
+      "procedure_mode": null,
+      "unit_of_measure": "incidente",
+      "sort_order": 12
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "impugnaciones",
+      "label": "Movimiento de Impugnaciones",
+      "specialty": "constitucional",
+      "instance_level": 2,
+      "procedure_mode": null,
+      "unit_of_measure": "impugnacion",
+      "sort_order": 13
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "acciones_const_2a",
+      "label": "Segunda Instancia Acciones Constitucionales",
+      "specialty": "constitucional",
+      "instance_level": 2,
+      "procedure_mode": null,
+      "unit_of_measure": "proceso",
+      "sort_order": 14
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "consultas_desacato",
+      "label": "Consultas Incidentes de Desacato",
+      "specialty": "constitucional",
+      "instance_level": 2,
+      "procedure_mode": null,
+      "unit_of_measure": "consulta",
+      "sort_order": 15
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "tramite_posterior_actuaciones",
+      "label": "Trámite posterior - Actuaciones",
+      "specialty": "transversal",
+      "instance_level": null,
+      "procedure_mode": null,
+      "unit_of_measure": "actuacion",
+      "sort_order": 16
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "tramite_posterior_procesos",
+      "label": "Trámite posterior - Procesos",
+      "specialty": "transversal",
+      "instance_level": null,
+      "procedure_mode": null,
+      "unit_of_measure": "proceso",
+      "sort_order": 17
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "audiencias",
+      "label": "Audiencias",
+      "specialty": "transversal",
+      "instance_level": null,
+      "procedure_mode": null,
+      "unit_of_measure": "audiencia",
+      "sort_order": 18
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "otros_asuntos",
+      "label": "Otros asuntos",
+      "specialty": "transversal",
+      "instance_level": null,
+      "procedure_mode": null,
+      "unit_of_measure": "asunto",
+      "sort_order": 19
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "recursos_interpuestos",
+      "label": "Recursos interpuestos contra providencias",
+      "specialty": "transversal",
+      "instance_level": null,
+      "procedure_mode": null,
+      "unit_of_measure": "recurso",
+      "sort_order": 20
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "recursos_decididos_superiores",
+      "label": "Recursos decididos por superiores",
+      "specialty": "transversal",
+      "instance_level": null,
+      "procedure_mode": null,
+      "unit_of_measure": "recurso",
+      "sort_order": 21
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "actuaciones_especiales",
+      "label": "Actuaciones especiales",
+      "specialty": "transversal",
+      "instance_level": null,
+      "procedure_mode": null,
+      "unit_of_measure": "actuacion",
+      "sort_order": 22
+    },
+    {
+      "form": "sierju_civil_circuito_2023_v4",
+      "code": "archivados",
+      "label": "Procesos archivados definitivamente",
+      "specialty": "transversal",
+      "instance_level": null,
+      "procedure_mode": null,
+      "unit_of_measure": "proceso",
+      "sort_order": 23
+    },
+    {
+      "form": "sierju_restitucion_tierras_2019",
+      "code": "civil_1a_tierras",
+      "label": "Primera y única instancia civil tierras",
+      "specialty": "tierras",
+      "instance_level": 1,
+      "procedure_mode": null,
+      "unit_of_measure": "proceso",
+      "sort_order": 1
+    },
+    {
+      "form": "sierju_restitucion_tierras_2019",
+      "code": "civil_1a_escrito",
+      "label": "Primera o única instancia civil escrito (concurrente)",
+      "specialty": "civil",
+      "instance_level": 1,
+      "procedure_mode": "escrito",
+      "unit_of_measure": "proceso",
+      "sort_order": 2
+    },
+    {
+      "form": "sierju_restitucion_tierras_2019",
+      "code": "civil_1a_oral",
+      "label": "Primera o única instancia civil oral (concurrente)",
+      "specialty": "civil",
+      "instance_level": 1,
+      "procedure_mode": "oral",
+      "unit_of_measure": "proceso",
+      "sort_order": 3
+    }
+  ],
+  "classesBySection": {
+    "civil_1a_escrito": [
+      ["declarativos_ordinarios", "DECLARATIVOS - ORDINARIOS"],
+      ["declarativos_abreviados", "DECLARATIVOS - ABREVIADOS"],
+      ["declarativos_verbales", "DECLARATIVOS - VERBALES"],
+      ["declarativos_verbal_sumario", "DECLARATIVOS - VERBAL SUMARIO"],
+      ["declarativos_divisorios", "DECLARATIVOS - DIVISORIOS"],
+      ["declarativos_otros", "DECLARATIVOS - OTROS"],
+      ["ejecutivos", "EJECUTIVOS"],
+      ["ejecutivos_hipotecario", "EJECUTIVOS - HIPOTECARIO"],
+      ["insolvencia_persona_natural", "INSOLVENCIA DE PERSONA NATURAL"],
+      ["insolvencia_sociedades", "INSOLVENCIA DE SOCIEDADES"],
+      ["liquidacion_sociedades_incumplimiento_reorg", "PROCESOS DE LIQUIDACIÓN - LIQUIDACIÓN DE SOCIEDADES POR INCUMPLIMIENTO DE ACUERDO DE REORGANIZACIÓN"],
+      ["liquidacion_disolucion_nulidad_sociedades", "PROCESOS DE LIQUIDACIÓN - DISOLUCIÓN, NULIDAD Y LIQUIDACIÓN DE SOCIEDADES"],
+      ["liquidacion_otros", "PROCESOS DE LIQUIDACIÓN - OTROS"],
+      ["jurisdiccion_voluntaria", "PROCESOS DE JURISDICCIÓN VOLUNTARIA"],
+      ["pertenencia", "PROCESOS DE PERTENENCIA"],
+      ["servidumbres", "SERVIDUMBRES"],
+      ["titulacion_predios", "TITULACIÓN DE PREDIOS"],
+      ["liquidacion_sociedades_patrimoniales_hecho", "LIQUIDACIÓN DE SOCIEDADES PATRIMONIALES DE HECHO"],
+      ["expropiacion", "EXPROPIACIÓN"],
+      ["deslinde_amojonamiento", "DESLINDE Y AMOJONAMIENTO"],
+      ["impugnacion_actas_asambleas", "IMPUGNACIÓN DE ACTAS DE ASAMBLEAS, JUNTAS DIRECTIVAS O DE SOCIOS."],
+      ["competencia_desleal", "COMPETENCIA DESLEAL"],
+      ["rc_extracontractual", "RESPONSABILIDAD CIVIL EXTRACONTRACTUAL"],
+      ["rc_contractual", "RESPONSABILIDAD CIVIL CONTRACTUAL"],
+      ["conciliacion_extrajudicial", "CONCILIACIÓN EXTRAJUDICIAL"],
+      ["otros_procesos", "OTROS PROCESOS"]
+    ],
+    "civil_1a_oral": [
+      ["declarativos_verbal_pertenencia", "DECLARATIVOS VERBAL PERTENENCIA"],
+      ["declarativos_verbal_servidumbres", "DECLARATIVOS VERBAL SERVIDUMBRES"],
+      ["declarativos_verbal_impugnacion_actas", "DECLARATIVOS - VERBAL-IMPUGNACIÓN DE ACTAS DE ASAMBLEAS, JUNTAS DIRECTIVAS O DE SOCIOS."],
+      ["declarativos_verbal_bienes_vacantes", "DECLARATIVOS VERBAL DECLARACIÓN DE BIENES VACANTES O MOSTRENCOS"],
+      ["declarativos_especiales_divisorio", "DECLARATIVOS ESPECIALES DIVISORIO"],
+      ["declarativos_especiales_expropiacion", "DECLARATIVOS ESPECIALES EXPROPIACIÓN"],
+      ["declarativos_especiales_deslinde", "DECLARATIVOS ESPECIALES DESLINDE Y AMOJONAMIENTO"],
+      ["ejecutivos", "EJECUTIVOS"],
+      ["ejecutivos_garantia_real", "EJECUTIVOS CON GARANTÍA REAL"],
+      ["responsabilidad_medica", "RESPONSABILIDAD MEDICA"],
+      ["rc_extracontractual", "RESPONSABILIDAD CIVIL EXTRACONTRACTUAL"],
+      ["rc_contractual", "RESPONSABILIDAD CIVIL CONTRACTUAL"],
+      ["insolvencia_persona_natural", "INSOLVENCIA DE LA PERSONA NATURAL"],
+      ["insolvencia_sociedades", "INSOLVENCIA DE SOCIEDADES"],
+      ["liquidacion_sociedades_incumplimiento_reorg", "PROCESOS DE LIQUIDACIÓN - LIQUIDACIÓN DE SOCIEDADES POR INCUMPLIMIENTO DE ACUERDO DE REORGANIZACIÓN"],
+      ["liquidacion_disolucion_nulidad_sociedades", "PROCESOS DE LIQUIDACIÓN - DISOLUCIÓN, NULIDAD Y LIQUIDACIÓN DE SOCIEDADES"],
+      ["liquidacion_otros", "PROCESOS DE LIQUIDACIÓN - OTROS"],
+      ["jurisdiccion_voluntaria", "PROCESOS DE JURISDICCIÓN VOLUNTARIA"],
+      ["competencia_desleal", "COMPETENCIA DESLEAL"],
+      ["propiedad_intelectual", "PROPIEDAD INTELECTUAL"],
+      ["proteccion_consumidor", "PROCESOS DE PROTECCIÓN DE DERECHO AL CONSUMIDOR"],
+      ["declaratoria_ausencia_desaparicion", "DECLARATORIA DE AUSENCIA POR DESAPARICIÓN FORZADA"],
+      ["conciliacion_extrajudicial", "CONCILIACIÓN EXTRAJUDICIAL"],
+      ["otros_procesos", "OTROS PROCESOS"]
+    ],
+    "laboral_1a_escrito": [
+      ["ordinarios", "ORDINARIOS"],
+      ["ejecutivos", "EJECUTIVOS"],
+      ["fuero_sindical", "FUERO SINDICAL"],
+      ["sindicatos_suspension_disolucion", "SUSPENSIÓN, DISOLUCIÓN, LIQUIDACIÓN DE SINDICATOS Y CANCELACIÓN DE REGISTRO SINDICAL"],
+      ["acoso_laboral_1010", "ACOSO LABORAL PREVISTO EN LA LEY 1010 DE 2006"],
+      ["conciliacion_extrajudicial", "CONCILIACIÓN EXTRAJUDICIAL"]
+    ],
+    "laboral_1a_oral": [
+      ["ordinarios_ss_unica", "ORDINARIOS - CONTROVERSIAS DE SEGURIDAD SOCIAL - ÚNICA INSTANCIA"],
+      ["ordinarios_contrato_unica", "ORDINARIOS - CONTROVERSIAS CONTRATOS DE TRABAJO - ÚNICA INSTANCIA"],
+      ["ordinarios_honorarios_unica", "ORDINARIOS - RECONOCIMIENTO DE HONORARIOS - ÚNICA INSTANCIA"],
+      ["ordinarios_otros_unica", "ORDINARIOS - OTROS - ÚNICA INSTANCIA"],
+      ["ordinarios_ss_primera", "ORDINARIOS - CONTROVERSIAS DE SEGURIDAD SOCIAL - PRIMERA INSTANCIA"],
+      ["ordinarios_contrato_primera", "ORDINARIOS - CONTROVERSIAS CONTRATOS DE TRABAJO - PRIMERA INSTANCIA"],
+      ["ordinarios_honorarios_primera", "ORDINARIOS - RECONOCIMIENTO DE HONORARIOS - PRIMERA INSTANCIA"],
+      ["ordinarios_otros_primera", "ORDINARIOS - OTROS - PRIMERA INSTANCIA"],
+      ["ejecutivos_ss", "EJECUTIVOS - SEGURIDAD SOCIAL"],
+      ["ejecutivos_obligaciones_contrato", "EJECUTIVOS - OBLIGACIONES DERIVADAS DEL CONTRATO DE TRABAJO"],
+      ["ejecutivos_aportes_parafiscales", "EJECUTIVOS - COBRO DE APORTES PARAFISCALES"],
+      ["ejecutivos_otros", "EJECUTIVOS - OTROS"],
+      ["fuero_sindical", "FUERO SINDICAL"],
+      ["sindicatos_suspension_disolucion", "SUSPENSIÓN, DISOLUCIÓN, LIQUIDACIÓN DE SINDICATOS Y CANCELACIÓN DE REGISTRO SINDICAL"],
+      ["acoso_laboral_1010", "ACOSO LABORAL PREVISTO EN LA LEY 1010 DE 2006"],
+      ["conciliacion_extrajudicial", "CONCILIACIÓN EXTRAJUDICIAL"],
+      ["otros_procesos", "OTROS PROCESOS"]
+    ],
+    "familia_1a_escrito": [
+      ["alimentos", "FIJACIÓN, AUMENTO, DISMINUCIÓN O EXONERACIÓN DE ALIMENTOS"],
+      ["union_marital_hecho", "DECLARATORIA DE UNIÓN MARITAL DE HECHO"],
+      ["paternidad_maternidad", "INVESTIGACIÓN O IMPUGNACIÓN DE LA PATERNIDAD O LA MATERNIDAD."],
+      ["custodia", "CUSTODIA"],
+      ["patria_potestad", "PATRIA POTESTAD"],
+      ["divorcio_nulidad_matrimonio", "NULIDAD, DIVORCIO DE MATRIMONIO CIVIL O CESACIÓN DE EFECTOS CIVILES DEL MATRIMONIO RELIGIOSO"],
+      ["liquidacion_sociedad_conyugal", "LIQUIDACIÓN DE SOCIEDAD CONYUGAL"],
+      ["liquidacion_sucesion", "PROCESOS DE LIQUIDACIÓN - SUCESIÓN"],
+      ["peticion_herencia", "PETICIÓN DE HERENCIA"],
+      ["nulidad_testamento", "NULIDAD DE TESTAMENTO"],
+      ["restitucion_internacional_nna", "RESTITUCIÓN INTERNACIONAL DE NNA"],
+      ["restablecimiento_derecho_nna", "RESTABLECIMIENTO DERECHO NIÑOS-NIÑAS"],
+      ["permiso_salir_pais", "PERMISO PARA SALIR DEL PAÍS"],
+      ["adopcion", "ADOPCIÓN"],
+      ["divorcio_comun_acuerdo", "DIVORCIO DE COMÚN ACUERDO"],
+      ["declaratoria_ausencia_muerte", "DECLARATORIA DE AUSENCIA O MUERTE"],
+      ["adjudicacion_apoyos", "ADJUDICACIÓN DE APOYOS"],
+      ["jv_otros", "OTROS PROCESOS DE JURISDICCIÓN VOLUNTARIA"],
+      ["ejecutivos", "EJECUTIVOS"],
+      ["conciliacion_extrajudicial", "CONCILIACIÓN EXTRAJUDICIAL"],
+      ["otros_procesos", "OTROS PROCESOS"]
+    ],
+    "familia_1a_oral": [
+      ["alimentos", "FIJACIÓN, AUMENTO, DISMINUCIÓN O EXONERACIÓN DE ALIMENTOS"],
+      ["union_marital_hecho", "DECLARATORIA DE UNIÓN MARITAL DE HECHO"],
+      ["paternidad_maternidad", "INVESTIGACIÓN O IMPUGNACIÓN DE LA PATERNIDAD O LA MATERNIDAD."],
+      ["custodia", "CUSTODIA"],
+      ["patria_potestad", "PATRIA POTESTAD"],
+      ["divorcio_nulidad_matrimonio", "NULIDAD, DIVORCIO DE MATRIMONIO CIVIL O CESACIÓN DE EFECTOS CIVILES DEL MATRIMONIO RELIGIOSO"],
+      ["liquidacion_sociedad_conyugal", "LIQUIDACIÓN DE SOCIEDAD CONYUGAL"],
+      ["liquidacion_sucesion", "PROCESOS DE LIQUIDACIÓN - SUCESIÓN"],
+      ["particion_patrimonio_vida", "PARTICIÓN DE PATRIMONIO EN VIDA"],
+      ["peticion_herencia", "PETICIÓN DE HERENCIA"],
+      ["nulidad_testamento", "NULIDAD DE TESTAMENTO"],
+      ["medidas_proteccion_vif_infancia", "MEDIDAS DE PROTECCIÓN DE INFANCIA POR VIOLENCIA INTRAFAMILIAR"],
+      ["restitucion_internacional_nna", "RESTITUCIÓN INTERNACIONAL DE NNA"],
+      ["restablecimiento_derecho_nna", "RESTABLECIMIENTO DERECHO NIÑOS-NIÑAS"],
+      ["permiso_salir_pais", "PERMISO PARA SALIR DEL PAÍS"],
+      ["adopcion", "ADOPCIÓN"],
+      ["divorcio_comun_acuerdo", "DIVORCIO DE COMÚN ACUERDO"],
+      ["declaratoria_ausencia_muerte", "DECLARATORIA DE AUSENCIA O MUERTE"],
+      ["adjudicacion_apoyos", "ADJUDICACIÓN DE APOYOS"],
+      ["jv_otros", "OTROS PROCESOS DE JURISDICCIÓN VOLUNTARIA"],
+      ["ejecutivos", "EJECUTIVOS"],
+      ["conciliacion_extrajudicial", "CONCILIACIÓN EXTRAJUDICIAL"],
+      ["otros_procesos", "OTROS PROCESOS"]
+    ],
+    "acciones_const_1a": [
+      ["accion_cumplimiento", "ACCIONES CONSTITUCIONALES - ACCIÓN DE CUMPLIMIENTO"],
+      ["accion_grupo", "ACCIONES CONSTITUCIONALES - ACCIONES DE GRUPO"],
+      ["accion_popular", "ACCIONES CONSTITUCIONALES - ACCIONES POPULARES"],
+      ["habeas_corpus", "ACCIÓN DE HÁBEAS CORPUS"]
+    ],
+    "movimiento_tutelas": [
+      ["salud", "SALUD"],
+      ["seguridad_social", "SEGURIDAD SOCIAL"],
+      ["vida", "VIDA"],
+      ["minimo_vital", "MÍNIMO VITAL"],
+      ["igualdad", "IGUALDAD"],
+      ["educacion", "EDUCACIÓN"],
+      ["debido_proceso", "DEBIDO PROCESO"],
+      ["derecho_peticion", "DERECHO DE PETICIÓN"],
+      ["informacion_publica", "DERECHO A LA INFORMACIÓN PÚBLICA"],
+      ["contra_providencias_judiciales", "CONTRA PROVIDENCIAS JUDICIALES"],
+      ["medio_ambiente", "MEDIO AMBIENTE"],
+      ["otros", "OTROS"]
+    ],
+    "procesos_post_decision": [
+      ["ejecutivos", "EJECUTIVOS"],
+      ["declarativos", "DECLARATIVOS"],
+      ["otros_procesos", "OTROS PROCESOS"]
+    ],
+    "civil_2a_escrito": [
+      ["declarativos_ordinarios", "DECLARATIVOS - ORDINARIOS"],
+      ["declarativos_abreviados", "DECLARATIVOS - ABREVIADOS"],
+      ["declarativos_verbales", "DECLARATIVOS - VERBALES"],
+      ["declarativos_servidumbres", "DECLARATIVOS - SERVIDUMBRES"],
+      ["declarativos_restitucion_inmueble_arrendado", "DECLARATIVOS - RESTITUCIÓN DE INMUEBLE ARRENDADO"],
+      ["declarativos_posesorios", "DECLARATIVOS - POSESORIOS"],
+      ["declarativos_verbal_bienes_vacantes", "DECLARATIVOS - VERBAL - DECLARACIÓN DE BIENES VACANTES O MOSTRENCOS."],
+      ["declarativos_especiales_deslinde", "DECLARATIVOS ESPECIALES DESLINDE Y AMOJONAMIENTO"],
+      ["declarativos_especiales_divisorio", "DECLARATIVOS ESPECIALES DIVISORIO"],
+      ["ejecutivos", "EJECUTIVOS"],
+      ["ejecutivos_hipotecario", "EJECUTIVOS - HIPOTECARIO"],
+      ["liquidacion_sociedades", "PROCESOS DE LIQUIDACIÓN - LIQUIDACIÓN DE SOCIEDADES"],
+      ["liquidacion_sucesion", "PROCESOS DE LIQUIDACIÓN - SUCESIÓN"],
+      ["responsabilidad_medica", "RESPONSABILIDAD MEDICA"],
+      ["jurisdiccion_voluntaria", "PROCESOS DE JURISDICCIÓN VOLUNTARIA"],
+      ["pertenencia", "PROCESOS DE PERTENENCIA"],
+      ["titulacion_predios", "TITULACIÓN DE PREDIOS"],
+      ["expropiaciones", "EXPROPIACIONES"],
+      ["impugnacion_actas_asambleas", "IMPUGNACIÓN DE ACTAS DE ASAMBLEAS, JUNTAS DIRECTIVAS O DE SOCIOS."],
+      ["competencia_desleal", "COMPETENCIA DESLEAL"],
+      ["otros_procesos", "OTROS PROCESOS"]
+    ],
+    "civil_2a_oral": [
+      ["declarativos_verbal_pertenencia", "DECLARATIVOS VERBAL PERTENENCIA"],
+      ["declarativos_verbal_servidumbres", "DECLARATIVOS VERBAL SERVIDUMBRES"],
+      ["declarativos_verbal_posesorios", "DECLARATIVOS VERBAL POSESORIOS"],
+      ["declarativos_verbal_bienes_vacantes", "DECLARATIVOS - VERBAL - DECLARACIÓN DE BIENES VACANTES O MOSTRENCOS."],
+      ["declarativos_verbal_restitucion_inmueble", "DECLARATIVOS - VERBAL - RESTITUCIÓN DE INMUEBLE ARRENDADO."],
+      ["declarativos_especiales_expropiacion", "DECLARATIVOS ESPECIALES EXPROPIACIÓN"],
+      ["declarativos_especiales_deslinde", "DECLARATIVOS ESPECIALES DESLINDE Y AMOJONAMIENTO"],
+      ["declarativos_especiales_divisorio", "DECLARATIVOS ESPECIALES DIVISORIO"],
+      ["ejecutivos", "EJECUTIVOS"],
+      ["ejecutivos_garantia_real", "EJECUTIVOS CON GARANTÍA REAL"],
+      ["liquidacion_disolucion_nulidad_sociedades", "PROCESOS DE LIQUIDACIÓN - DISOLUCIÓN, NULIDAD Y LIQUIDACIÓN DE SOCIEDADES"],
+      ["liquidacion_sucesion", "PROCESOS DE LIQUIDACIÓN - SUCESIÓN"],
+      ["jurisdiccion_voluntaria", "PROCESOS DE JURISDICCIÓN VOLUNTARIA"],
+      ["titulacion_predios", "TITULACIÓN DE PREDIOS"],
+      ["responsabilidad_medica", "RESPONSABILIDAD MEDICA"],
+      ["otros_procesos", "OTROS PROCESOS"]
+    ],
+    "incidentes_desacato": [
+      ["salud", "SALUD"],
+      ["seguridad_social", "SEGURIDAD SOCIAL"],
+      ["vida", "VIDA"],
+      ["minimo_vital", "MÍNIMO VITAL"],
+      ["igualdad", "IGUALDAD"],
+      ["educacion", "EDUCACIÓN"],
+      ["debido_proceso", "DEBIDO PROCESO"],
+      ["derecho_peticion", "DERECHO DE PETICIÓN"],
+      ["informacion_publica", "DERECHO A LA INFORMACIÓN PÚBLICA"],
+      ["contra_providencias_judiciales", "CONTRA PROVIDENCIAS JUDICIALES"],
+      ["medio_ambiente", "MEDIO AMBIENTE"],
+      ["otros", "OTROS"]
+    ],
+    "impugnaciones": [
+      ["salud", "SALUD"],
+      ["seguridad_social", "SEGURIDAD SOCIAL"],
+      ["vida", "VIDA"],
+      ["minimo_vital", "MÍNIMO VITAL"],
+      ["igualdad", "IGUALDAD"],
+      ["educacion", "EDUCACIÓN"],
+      ["debido_proceso", "DEBIDO PROCESO"],
+      ["derecho_peticion", "DERECHO DE PETICIÓN"],
+      ["informacion_publica", "DERECHO A LA INFORMACIÓN PÚBLICA"],
+      ["contra_providencias_judiciales", "CONTRA PROVIDENCIAS JUDICIALES"],
+      ["medio_ambiente", "MEDIO AMBIENTE"],
+      ["otros", "OTROS"]
+    ],
+    "acciones_const_2a": [
+      ["habeas_corpus", "ACCIÓN DE HÁBEAS CORPUS"]
+    ],
+    "consultas_desacato": [
+      ["salud", "SALUD"],
+      ["seguridad_social", "SEGURIDAD SOCIAL"],
+      ["vida", "VIDA"],
+      ["minimo_vital", "MÍNIMO VITAL"],
+      ["igualdad", "IGUALDAD"],
+      ["educacion", "EDUCACIÓN"],
+      ["debido_proceso", "DEBIDO PROCESO"],
+      ["derecho_peticion", "DERECHO DE PETICIÓN"],
+      ["informacion_publica", "DERECHO A LA INFORMACIÓN PÚBLICA"],
+      ["contra_providencias_judiciales", "CONTRA PROVIDENCIAS JUDICIALES"],
+      ["medio_ambiente", "MEDIO AMBIENTE"],
+      ["otros", "OTROS"]
+    ],
+    "tramite_posterior_actuaciones": [
+      ["avaluos", "AVALÚOS"],
+      ["liquidacion_costas_creditos", "LIQUIDACIÓN DE COSTAS Y CRÉDITOS"],
+      ["remates", "REMATES"],
+      ["incidentes", "INCIDENTES"],
+      ["medidas_cautelares", "SOLICITUDES SOBRE MEDIDAS CAUTELARES"],
+      ["entrega_inmuebles", "ENTREGA DE INMUEBLES"],
+      ["otros", "OTROS"]
+    ],
+    "tramite_posterior_procesos": [
+      ["civiles", "CIVILES"],
+      ["familia", "FAMILIA"],
+      ["laboral", "LABORAL"]
+    ],
+    "audiencias": [
+      ["civiles", "CIVILES"],
+      ["laboral", "LABORAL"],
+      ["familia", "FAMILIA"]
+    ],
+    "otros_asuntos": [
+      ["despachos_comisorios", "DESPACHOS COMISORIOS"],
+      ["pruebas_anticipadas", "PRUEBAS ANTICIPADAS"],
+      ["inspecciones_judiciales", "INSPECCIONES JUDICIALES"],
+      ["diligencias_practicar", "DILIGENCIAS A PRACTICAR"],
+      ["conciliaciones_extrajudiciales", "CONCILIACIONES EXTRAJUDICIALES"],
+      ["otros", "OTROS"]
+    ],
+    "recursos_interpuestos": [
+      ["apelacion", "APELACIÓN"],
+      ["reposicion", "REPOSICIÓN"],
+      ["suplica", "SÚPLICA"],
+      ["queja", "QUEJA"],
+      ["consulta", "CONSULTA"],
+      ["impugnacion", "IMPUGNACIÓN"]
+    ],
+    "recursos_decididos_superiores": [
+      ["confirman", "CONFIRMAN TOTALMENTE LA DECISIÓN"],
+      ["modifican", "MODIFICAN LA DECISIÓN"],
+      ["revocan", "REVOCAN LA DECISIÓN"],
+      ["decretan_nulidad", "DECRETAN NULIDAD"],
+      ["inadmitidos", "INADMITIDOS"],
+      ["desiertos", "DESIERTOS"],
+      ["desistidos", "DESISTIDOS"]
+    ],
+    "actuaciones_especiales": [
+      ["diligencias_remate", "DILIGENCIAS DE REMATE"],
+      ["amparos_pobreza", "AMPAROS DE POBREZA"],
+      ["asistencia_sesiones_sala", "ASISTENCIA A SESIONES DE SALA"]
+    ],
+    "archivados": [
+      ["procesos", "PROCESOS"]
+    ],
+    "civil_1a_tierras": [
+      ["restitucion_comunidades_negras_4635", "Proceso rest. Derechos territoriales comunidades negras. Afro, palen, raizales (decreto 4635/2011)"],
+      ["restitucion_comunidades_indigenas_4633", "Proceso rest. Derechos territoriales comunidades indígenas (decreto ley 4633/2011)"],
+      ["restitucion_formalizacion_ley1448_cap3", "Proceso rest. y formalización de territorios despo. o abandonados (ley 1448 capítulo 3)"],
+      ["restitucion_pueblo_rom_4634", "Proceso rest. Derechos territoriales pueblo rom o gitano (decreto 4634/2011)"]
+    ]
+  },
+  "restitucionConcurrentClasses": {
+    "civil_1a_escrito": [
+      ["recurso_revision", "Recurso de revisión"],
+      ["otros_procesos", "Otros procesos"]
+    ],
+    "civil_1a_oral": [
+      ["recurso_revision", "Recurso de revisión"],
+      ["recursos_anulacion_laudos", "Recursos de anulación de laudos"],
+      ["otros_procesos", "Otros procesos"]
+    ]
+  }
+}

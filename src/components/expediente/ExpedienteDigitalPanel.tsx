@@ -62,6 +62,18 @@ import {
   tituloPiezaExpediente,
 } from '../../lib/expediente-viewer-doc';
 import { Link } from 'react-router-dom';
+import {
+  sgdeCuadernoFromFolderPath,
+  splitSgdeFolderPath,
+} from '../../lib/expediente-folder-tree';
+import { ExpedienteSgdeFolderTree, ExpedienteTreeModeHint } from './ExpedienteSgdeFolderTree';
+import {
+  isMissingExpedienteCuadernosExtraColumn,
+  loadLocalExtraCuadernos,
+  mergeExtraCuadernos,
+  saveLocalExtraCuadernos,
+  type ExpedienteCuadernoExtra,
+} from '../../lib/expediente-extra-cuadernos';
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
@@ -80,7 +92,7 @@ const ALLOWED_EXT = new Set([
   'webp',
 ]);
 
-export type ExpedienteCuadernoExtra = { code: string; label: string };
+export type { ExpedienteCuadernoExtra } from '../../lib/expediente-extra-cuadernos';
 
 function formatBytes(n: number | undefined): string {
   if (n == null || Number.isNaN(n)) return '—';
@@ -155,8 +167,14 @@ function sortReparto(list: Document[]): Document[] {
   return [...list].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 }
 
+function docBelongsToNotebook(doc: Document, code: string): boolean {
+  if (normalizeNotebookCode(doc.notebookCode) === code) return true;
+  const fromPath = sgdeCuadernoFromFolderPath(doc.sgdeFolderPath);
+  return fromPath?.code === code;
+}
+
 function filterByNotebook(docs: Document[], code: string): Document[] {
-  return sortReparto(docs.filter((d) => normalizeNotebookCode(d.notebookCode) === code));
+  return sortReparto(docs.filter((d) => docBelongsToNotebook(d, code)));
 }
 
 function maxSortOrder(docs: Document[], code: string): number {
@@ -170,36 +188,57 @@ function buildNotebookSections(
 ): ExpedienteCuadernoExtra[] {
   const primary =
     caseType === 'tutela_segunda' ? NOTEBOOK_SI_C01_PRINCIPAL : NOTEBOOK_PI_C01_PRINCIPAL;
-  const out: ExpedienteCuadernoExtra[] = [
-    { code: primary, label: NOTEBOOK_META[primary].label },
-  ];
-  const seen = new Set<string>([primary]);
+  const out: ExpedienteCuadernoExtra[] = [];
+  const seen = new Set<string>();
+
+  const addSection = (code: string, label: string) => {
+    const c = (code || '').trim();
+    if (!c || seen.has(c)) return;
+    seen.add(c);
+    out.push({ code: c, label: (label || '').trim() || c });
+  };
+
+  for (const d of docs) {
+    const cuaderno = sgdeCuadernoFromFolderPath(d.sgdeFolderPath);
+    if (cuaderno) addSection(cuaderno.code, cuaderno.label);
+  }
+
+  const hasSgdeCuadernos = out.length > 0;
+  if (!hasSgdeCuadernos) {
+    addSection(primary, NOTEBOOK_META[primary].label);
+  }
+
   if (caseType === 'tutela_segunda') {
-    const pi = NOTEBOOK_PI_C01_PRINCIPAL;
-    if (!seen.has(pi)) {
-      seen.add(pi);
-      out.push({ code: pi, label: 'Expediente de origen (1ª instancia)' });
-    }
+    addSection(NOTEBOOK_PI_C01_PRINCIPAL, 'Expediente de origen (1ª instancia)');
   }
 
   for (const e of extra) {
     const code = (e.code || '').trim();
-    if (!code || seen.has(code) || code === primary) continue;
-    seen.add(code);
-    out.push({ code, label: (e.label || '').trim() || code });
+    if (!code || seen.has(code)) continue;
+    addSection(code, (e.label || '').trim() || code);
   }
 
   const fromDocs = new Set<string>();
   for (const d of docs) {
     const c = normalizeNotebookCode(d.notebookCode);
-    if (c !== primary) fromDocs.add(c);
+    if (c !== primary && !seen.has(c)) fromDocs.add(c);
   }
   for (const code of [...fromDocs].sort()) {
     if (seen.has(code)) continue;
-    seen.add(code);
     const label = NOTEBOOK_META[code]?.label || `Cuaderno · ${code}`;
-    out.push({ code, label });
+    addSection(code, label);
   }
+
+  const listable = docs.filter(isExpedientePiezaListable);
+  const hasOrphans = listable.some((d) => !out.some((s) => docBelongsToNotebook(d, s.code)));
+  if (hasOrphans && !seen.has(primary)) {
+    addSection(primary, NOTEBOOK_META[primary].label);
+  }
+
+  if (out.length === 0) {
+    addSection(primary, NOTEBOOK_META[primary].label);
+  }
+
   return out;
 }
 
@@ -478,9 +517,24 @@ export function ExpedienteDigitalPanel({
   const pickNbRef = useRef(DEFAULT_NOTEBOOK_CODE);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [localExtraNotebooks, setLocalExtraNotebooks] = useState<ExpedienteCuadernoExtra[]>(() =>
+    loadLocalExtraCuadernos(caseId)
+  );
+  const [cuadernosExtraColumnMissing, setCuadernosExtraColumnMissing] = useState(false);
+
+  useEffect(() => {
+    setLocalExtraNotebooks(loadLocalExtraCuadernos(caseId));
+    setCuadernosExtraColumnMissing(false);
+  }, [caseId]);
+
+  const mergedExtraNotebooks = useMemo(
+    () => mergeExtraCuadernos(extraNotebooks, localExtraNotebooks),
+    [extraNotebooks, localExtraNotebooks]
+  );
+
   const sections = useMemo(
-    () => buildNotebookSections(extraNotebooks, docs, caseItem.caseType),
-    [extraNotebooks, docs, caseItem.caseType]
+    () => buildNotebookSections(mergedExtraNotebooks, docs, caseItem.caseType),
+    [mergedExtraNotebooks, docs, caseItem.caseType]
   );
   const instanciaGroups = useMemo(() => groupSectionsByInstancia(sections), [sections]);
 
@@ -500,8 +554,10 @@ export function ExpedienteDigitalPanel({
   }, [activeCode]);
 
   useEffect(() => {
-    setExpandedNb(new Set([defaultNb]));
-  }, [caseId, defaultNb]);
+    const codes = sections.map((s) => s.code);
+    setExpandedNb(new Set(codes.length > 0 ? [codes[0]] : [defaultNb]));
+    setSelectedNb((prev) => (codes.includes(prev) ? prev : codes[0] ?? defaultNb));
+  }, [caseId, defaultNb, sections]);
 
   useEffect(() => {
     setExpandedNb((prev) => {
@@ -619,7 +675,7 @@ export function ExpedienteDigitalPanel({
         'Ejecute supabase/migrations/20250428160000_case_documents_notebook.sql en el SQL Editor y recargue.'
       );
     }
-    if (/expediente_cuadernos_extra/i.test(raw) && /Could not find|schema cache/i.test(raw)) {
+    if (/expediente_cuadernos_extra/i.test(raw) && /Could not find|PGRST204|schema cache/i.test(raw)) {
       return (
         'En Supabase falta la columna «expediente_cuadernos_extra» en la tabla «cases». ' +
         'Ejecute la migración supabase/migrations/20250428170000_cases_expediente_cuadernos_extra.sql en el SQL Editor y recargue la página.'
@@ -653,19 +709,51 @@ export function ExpedienteDigitalPanel({
     try {
       await ensureSupabaseSessionForWrites();
       const code = `PI_INC_${Date.now()}`;
-      const next = [...(extraNotebooks || []), { code, label }];
+      const localOnly = mergeExtraCuadernos(extraNotebooks, [...localExtraNotebooks, { code, label }]).filter(
+        (e) => !extraNotebooks.some((x) => x.code === e.code)
+      );
+
+      const finishLocal = (notice?: string) => {
+        setLocalExtraNotebooks(localOnly);
+        saveLocalExtraCuadernos(caseId, localOnly);
+        setAddCuadernoOpen(false);
+        setNewCuadernoLabel('');
+        setSelectedNb(code);
+        setExpandedNb((prev) => new Set(prev).add(code));
+        if (notice) setUploadErr(notice);
+      };
+
+      if (cuadernosExtraColumnMissing) {
+        finishLocal();
+        return;
+      }
+
+      const persisted = mergeExtraCuadernos(extraNotebooks, [...localExtraNotebooks, { code, label }]);
       const { error } = await supabase
         .from('cases')
         .update({
-          expediente_cuadernos_extra: next,
+          expediente_cuadernos_extra: persisted,
           updated_at: new Date().toISOString(),
         })
         .eq('id', caseId);
-      if (error) await handleDataPermissionError(error, 'update', 'cases');
+
+      if (error) {
+        if (isMissingExpedienteCuadernosExtraColumn(error)) {
+          setCuadernosExtraColumnMissing(true);
+          finishLocal(
+            'Cuaderno creado en esta sesión. Para persistirlo en Supabase ejecute: supabase/migrations/20250428170000_cases_expediente_cuadernos_extra.sql'
+          );
+          return;
+        }
+        await handleDataPermissionError(error, 'update', 'cases');
+        throw error;
+      }
       setAddCuadernoOpen(false);
       setNewCuadernoLabel('');
       setSelectedNb(code);
       setExpandedNb((prev) => new Set(prev).add(code));
+      setLocalExtraNotebooks([]);
+      saveLocalExtraCuadernos(caseId, []);
       await onRefetchCase();
     } catch (e) {
       console.error(e);
@@ -874,12 +962,15 @@ export function ExpedienteDigitalPanel({
     const filtradas = piezasFiltradasFor(code);
     const meta = NOTEBOOK_META[code];
     const busquedaActiva = code === activeCode && piezaBusqueda.trim().length > 0;
+    const treeDocs = busquedaActiva ? filtradas : list;
+    const sgdeTreeMode = list.some((d) => splitSgdeFolderPath(d.sgdeFolderPath).length > 0);
 
     return (
       <div className="flex min-h-0 flex-1 flex-col border-t border-slate-200/90 bg-white/90 px-2 pb-2 pt-1.5">
         {meta?.subtitle ? (
           <p className="mb-1.5 shrink-0 px-1 text-[9px] text-slate-500">{meta.subtitle}</p>
         ) : null}
+        <ExpedienteTreeModeHint visible={sgdeTreeMode} />
         {code === activeCode &&
         piezasRadicacion.length === 0 &&
         list.length === 0 ? (
@@ -897,17 +988,13 @@ export function ExpedienteDigitalPanel({
           </p>
         ) : null}
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
-          <div className="space-y-1 pr-0.5">
-            {list.length === 0 ? (
-              <p className="rounded-md border border-dashed border-slate-200 py-6 text-center text-[10px] text-slate-500">
-                Sin piezas en este cuaderno.
-              </p>
-            ) : filtradas.length === 0 ? (
-              <p className="py-4 text-center text-[10px] text-slate-500">Sin coincidencias.</p>
-            ) : (
-              filtradas.map((d, i) => renderRow(d, i))
-            )}
-          </div>
+          <ExpedienteSgdeFolderTree
+            docs={treeDocs}
+            cuadernoLabel={nb.label}
+            searchQuery={busquedaActiva ? piezaBusqueda : ''}
+            selectedDocId={selectedDoc?.id}
+            renderFileRow={(d, i) => renderRow(d, i)}
+          />
         </div>
         <div className="mt-1.5 shrink-0 border-t border-slate-100 pt-1.5">{renderDropZone(nb)}</div>
       </div>
@@ -1171,6 +1258,11 @@ export function ExpedienteDigitalPanel({
               className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:opacity-50"
               placeholder="Incidente de desacato…"
             />
+            {uploadErr && addCuadernoOpen ? (
+              <p className="mt-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-900">
+                {uploadErr}
+              </p>
+            ) : null}
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"

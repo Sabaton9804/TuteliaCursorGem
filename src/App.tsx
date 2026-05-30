@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Shell from './components/layout/Shell';
 import Dashboard from './pages/Dashboard';
 import NewCase from './pages/NewCase';
+import ImportFromSgde from './pages/ImportFromSgde';
 import CaseDetail from './pages/CaseDetail';
 import CasesList from './pages/CasesList';
 import Settings from './pages/Settings';
@@ -23,6 +24,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/new" element={<NewCase />} />
+          <Route path="/import-sgde" element={<ImportFromSgde />} />
           <Route path="/cases" element={<CasesList />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/estadisticas" element={<Estadisticas />} />

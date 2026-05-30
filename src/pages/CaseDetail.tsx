@@ -43,19 +43,19 @@ import { CaseIncidenteDesacatoPanel } from '../components/expediente/CaseInciden
 import { CaseExpedienteDigitalPanel } from '../components/expediente/CaseExpedienteDigitalPanel';
 import { buildCaseActuacionesTimeline, buildSynthesisContextBlock } from '../lib/case-detail-context';
 import { caseSgdeLinkLabel, caseSgdeLinkStatus } from '../lib/expediente-sgde-sync';
-import { resolveAssigneeForCase, SUSTANCIADORES } from '../lib/court-staff-assignees';
+import { resolveAssigneeForCase } from '../lib/court-staff-assignees';
+import { useCourtOperational } from '../contexts/CourtOperationalContext';
 import { ensureSupabaseSessionForWrites } from '../lib/supabase-write-auth';
 import { parseSustanciadorAssignmentMode } from '../lib/sustanciador-reparto';
 import {
   insertAssignmentNotificationsForProfiles,
   markAssignmentNotificationsReadForCase,
 } from '../lib/assignment-notifications';
+import { CaseSierjuClassification } from '../components/expediente/CaseSierjuClassification';
 import {
-  DERECHO_TUTELADO_CODES,
-  DERECHO_TUTELADO_LABELS,
   DECISION_TYPES,
   DECISION_TYPE_LABELS,
-  parseDerechoTuteladoCode,
+  DERECHO_TUTELADO_LABELS,
   parseDecisionType,
 } from '../lib/sierju-case-codes';
 type ExpedienteTab = CaseDetailExpedienteTab;
@@ -88,6 +88,7 @@ function parseExpedienteTabParam(raw: string | null): ExpedienteTab {
 
 export default function CaseDetail() {
   const { id } = useParams<{ id: string }>();
+  const { sustanciadores, processForCaseType } = useCourtOperational();
   const [caseItem, setCaseItem] = useState<Case | null>(null);
   const [docs, setDocs] = useState<CaseDoc[]>([]);
   const [selectedDoc, setSelectedDoc] = useState<CaseDoc | null>(null);
@@ -504,34 +505,53 @@ export default function CaseDetail() {
     }
   };
 
-  const handleDerechoTuteladoCodeChange = useCallback(
-    async (raw: string) => {
+  const handleSierjuClassificationChange = useCallback(
+    async (next: {
+      derechoCode: import('../lib/sierju-case-codes').DerechoTuteladoCode | undefined;
+      classId: string | undefined;
+      option: import('../lib/sierju-catalog-service').SierjuClassOption | undefined;
+    }) => {
       if (!id || !caseItem) return;
-      const next = raw === '' ? undefined : parseDerechoTuteladoCode(raw);
-      if (raw !== '' && !next) return;
-      const prev = caseItem.derechoTuteladoCode;
-      if ((next ?? undefined) === (prev ?? undefined)) return;
+      const prevDerecho = caseItem.derechoTuteladoCode;
+      const prevClassId = caseItem.sierjuProcessClassId;
+      if (
+        (next.derechoCode ?? undefined) === (prevDerecho ?? undefined) &&
+        (next.classId ?? undefined) === (prevClassId ?? undefined)
+      ) {
+        return;
+      }
       setDerechoCodeSaving(true);
       try {
         await ensureSupabaseSessionForWrites();
         const now = new Date().toISOString();
         const { error: upErr } = await supabase
           .from('cases')
-          .update({ derecho_tutelado_code: next ?? null, updated_at: now })
+          .update({
+            derecho_tutelado_code: next.derechoCode ?? null,
+            sierju_process_class_id: next.classId ?? null,
+            sierju_metadata: next.option
+              ? { fundamental_right: next.option.fundamentalRight }
+              : {},
+            updated_at: now,
+          })
           .eq('id', id);
         if (upErr) throw upErr;
 
         const { data: u } = await supabase.auth.getUser();
         const uname = u.user?.user_metadata?.full_name || u.user?.email || 'Sistema';
+        const label = next.derechoCode ? DERECHO_TUTELADO_LABELS[next.derechoCode] : null;
         await supabase.from('case_actions').insert({
           case_id: id,
           type: 'derecho_tutelado_code',
-          description: next
-            ? `Clasificación SIERJU: ${DERECHO_TUTELADO_LABELS[next]}`
-            : 'Clasificación SIERJU eliminada',
+          description: label ? `Clasificación SIERJU: ${label}` : 'Clasificación SIERJU eliminada',
           user_id: u.user?.id ?? null,
           user_name: String(uname),
-          metadata: { previous: prev ?? null, next: next ?? null },
+          metadata: {
+            previous: prevDerecho ?? null,
+            next: next.derechoCode ?? null,
+            previous_sierju_process_class_id: prevClassId ?? null,
+            next_sierju_process_class_id: next.classId ?? null,
+          },
         });
         await refetchCase();
         await refetchActions();
@@ -541,7 +561,7 @@ export default function CaseDetail() {
         setDerechoCodeSaving(false);
       }
     },
-    [id, caseItem, refetchCase, refetchActions]
+    [id, caseItem, refetchCase, refetchActions],
   );
 
   const handleDecisionTypeChange = useCallback(
@@ -557,7 +577,11 @@ export default function CaseDetail() {
         const now = new Date().toISOString();
         const { error: upErr } = await supabase
           .from('cases')
-          .update({ decision_type: next ?? null, updated_at: now })
+          .update({
+            decision_type: next ?? null,
+            decision_at: next ? now : null,
+            updated_at: now,
+          })
           .eq('id', id);
         if (upErr) throw upErr;
 
@@ -749,28 +773,15 @@ export default function CaseDetail() {
       </header>
 
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3 sm:gap-5">
-        <div className="min-w-[200px] flex-1 space-y-1">
-          <label className="text-[9px] font-bold uppercase tracking-wider text-slate-400" htmlFor="derecho-tutelado-code">
-            Clasificación SIERJU (alimenta el informe global)
-          </label>
-          <div className="flex items-center gap-2">
-            <select
-              id="derecho-tutelado-code"
-              className="input-modern min-h-[40px] flex-1 text-xs font-medium"
-              value={caseItem.derechoTuteladoCode ?? ''}
-              disabled={derechoCodeSaving}
-              onChange={(e) => void handleDerechoTuteladoCodeChange(e.target.value)}
-            >
-              <option value="">Sin clasificar</option>
-              {DERECHO_TUTELADO_CODES.map((code) => (
-                <option key={code} value={code}>
-                  {DERECHO_TUTELADO_LABELS[code]}
-                </option>
-              ))}
-            </select>
-            {derechoCodeSaving ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-slate-400" aria-hidden /> : null}
-          </div>
-        </div>
+        <CaseSierjuClassification
+          courtId={caseItem.courtId}
+          caseType={caseItem.caseType}
+          processDefinitionId={processForCaseType(caseItem.caseType ?? 'tutela_primera')?.id}
+          valueDerechoCode={caseItem.derechoTuteladoCode}
+          valueClassId={caseItem.sierjuProcessClassId}
+          saving={derechoCodeSaving}
+          onChange={handleSierjuClassificationChange}
+        />
         {caseItem.status === 'judgment' || caseItem.status === 'archived' ? (
           <div className="min-w-[200px] flex-1 space-y-1">
             <label className="text-[9px] font-bold uppercase tracking-wider text-slate-400" htmlFor="decision-type">
@@ -831,7 +842,7 @@ export default function CaseDetail() {
                   ? 'Sin asignar (modo manual del juzgado)'
                   : 'Sin asignar'}
               </option>
-              {SUSTANCIADORES.map((s) => (
+              {sustanciadores.map((s) => (
                 <option key={s.id} value={s.name}>
                   {s.initials} — {s.name}
                 </option>

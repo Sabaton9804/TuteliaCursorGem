@@ -19,6 +19,8 @@ export const CASE_LIST_COLUMNS = [
   'subject',
   'legal_derecho_tutelado',
   'derecho_tutelado_code',
+  'sierju_process_class_id',
   'decision_type',
+  'decision_at',
   'case_type',
 ].join(',');

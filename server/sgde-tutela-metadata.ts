@@ -4,6 +4,14 @@ import { COURT_CONSTANTS } from '../src/constants.js';
 export const SGDE_SERIE_TUTELA = 'Constitucional';
 export const SGDE_SUBSERIE_TUTELA = 'Acciones Constitucionales de Tutela';
 
+export type CourtRadicacionCuiRow = {
+  dane_code?: string | null;
+  entity_code?: string | null;
+  specialty_code?: string | null;
+  despacho_number?: string | null;
+  name?: string | null;
+};
+
 export type SgdeExpedienteMetadataInput = {
   radicado23: string;
   claimant: string;
@@ -11,9 +19,17 @@ export type SgdeExpedienteMetadataInput = {
   courtName?: string;
 };
 
+export function courtRadicacionCode12FromRow(row?: CourtRadicacionCuiRow | null): string {
+  const dane = (row?.dane_code || COURT_CONSTANTS.CITY_CODE).trim();
+  const entity = (row?.entity_code || COURT_CONSTANTS.ENTITY_CODE).trim();
+  const specialty = (row?.specialty_code || COURT_CONSTANTS.SPECIALTY_CODE).trim();
+  const despacho = (row?.despacho_number || COURT_CONSTANTS.DESPACHO_CODE).trim();
+  return `${dane}${entity}${specialty}${despacho}`.replace(/\D/g, '').slice(0, 12);
+}
+
+/** @deprecated Preferir courtRadicacionCode12FromRow con fila courts. */
 export function courtRadicacionCode12(): string {
-  const { CITY_CODE, ENTITY_CODE, SPECIALTY_CODE, DESPACHO_CODE } = COURT_CONSTANTS;
-  return `${CITY_CODE}${ENTITY_CODE}${SPECIALTY_CODE}${DESPACHO_CODE}`.replace(/\D/g, '').slice(0, 12);
+  return courtRadicacionCode12FromRow(null);
 }
 
 export function tituloExpedienteSgde(claimant: string, defendant: string): string {

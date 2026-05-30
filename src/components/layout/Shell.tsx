@@ -10,7 +10,8 @@ import { rowToUserProfile } from '../../lib/supabase-mappers';
 import { DEFAULT_DEMO_COURT_ID } from '../../lib/default-court';
 import { userRoleLabelEs } from '../../lib/user-roles';
 import { UserProfile } from '../../types';
-import { SessionCourtProvider } from '../../contexts/SessionCourtContext';
+import { SessionCourtProvider, useSessionCourt } from '../../contexts/SessionCourtContext';
+import { CourtOperationalProvider } from '../../contexts/CourtOperationalContext';
 import { AssignmentNotificationBell } from './AssignmentNotificationBell';
 import { GlobalSearch } from './GlobalSearch';
 import { AppSidebarNav } from './AppSidebarNav';
@@ -20,6 +21,11 @@ import type { Provider, User } from '@supabase/supabase-js';
 
 interface ShellProps {
   children: React.ReactNode;
+}
+
+function ShellMainWithCourtOps({ children }: { children: React.ReactNode }) {
+  const { courtId } = useSessionCourt();
+  return <CourtOperationalProvider courtId={courtId}>{children}</CourtOperationalProvider>;
 }
 
 const SIDEBAR_COLLAPSED_KEY = 'tutelia_sidebar_collapsed';
@@ -655,6 +661,7 @@ export default function Shell({ children }: ShellProps) {
 
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-10 bg-bg">
           <SessionCourtProvider profile={profile}>
+            <ShellMainWithCourtOps>
             <AnimatePresence mode="wait">
               <motion.div
                 key={location.pathname}
@@ -666,6 +673,7 @@ export default function Shell({ children }: ShellProps) {
                 {children}
               </motion.div>
             </AnimatePresence>
+            </ShellMainWithCourtOps>
           </SessionCourtProvider>
         </main>
       </div>

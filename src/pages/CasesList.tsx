@@ -7,8 +7,9 @@ import { rowToUserProfile } from '../lib/supabase-mappers';
 import type { CaseStatus, UserProfile } from '../types';
 import ExpedientesViews, { type ExpedientesViewMode } from '../components/expedientes/ExpedientesViews';
 import { buildExpedienteViewRow } from '../lib/expedientes-view-model';
-import { assignedToMatchesProfile, SUSTANCIADORES } from '../lib/court-staff-assignees';
+import { assignedToMatchesProfile } from '../lib/court-staff-assignees';
 import { intentFreshNewCaseFromMenu } from '../lib/new-case-nav';
+import { useCourtOperational } from '../contexts/CourtOperationalContext';
 import {
   parseTutelasListFilter,
   tutelasListPageTitle,
@@ -59,13 +60,9 @@ function parseViewParam(v: string | null): ExpedientesViewMode {
   return 'lista';
 }
 
-const ASSIGNEE_SELECT_OPTIONS = SUSTANCIADORES.map((a) => ({
-  id: a.id,
-  label: `${a.initials} — ${a.name}`,
-}));
-
 export default function CasesList() {
   const { courtId, profile: sessionCourtProfile } = useSessionCourt();
+  const { sustanciadores } = useCourtOperational();
   const allCourts = Boolean(sessionCourtProfile?.isSuperuser);
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -82,6 +79,15 @@ export default function CasesList() {
   const [derechoFilter, setDerechoFilter] = useState<string | 'all'>('all');
   const [authUserId, setAuthUserId] = useState<string | undefined>();
   const [sessionProfile, setSessionProfile] = useState<UserProfile | null>(null);
+
+  const assigneeSelectOptions = useMemo(
+    () =>
+      sustanciadores.map((a) => ({
+        id: a.id,
+        label: `${a.initials} — ${a.name}`,
+      })),
+    [sustanciadores],
+  );
 
   useEffect(() => {
     void supabase.auth.getSession().then(({ data }) => {
@@ -352,7 +358,7 @@ export default function CasesList() {
           onAssigneeFilterId={setAssigneeFilterId}
           derechoFilter={derechoFilter}
           onDerechoFilter={setDerechoFilter}
-          assigneeOptions={ASSIGNEE_SELECT_OPTIONS}
+          assigneeOptions={assigneeSelectOptions}
           derechoOptions={derechoOptions}
           loading={isPending}
         />

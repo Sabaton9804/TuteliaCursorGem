@@ -12,6 +12,8 @@ import type {
   WordReviewStatus,
 } from '../types';
 import { parseDecisionType, parseDerechoTuteladoCode } from './sierju-case-codes';
+import type { CaseSierjuMetadata, FundamentalRightCode } from './sierju-types';
+import { FUNDAMENTAL_RIGHT_CODES } from './sierju-types';
 import { parseUserRole } from './user-roles';
 import { DEFAULT_DEMO_COURT_ID } from './default-court';
 
@@ -28,6 +30,27 @@ function parseCaseAppellant(v: unknown): CaseAppellant | undefined {
 function parseCaseOriginRuling(v: unknown): CaseOriginRuling | undefined {
   if (v === 'concedio' || v === 'nego') return v;
   return undefined;
+}
+
+function parseSierjuMetadata(raw: unknown): CaseSierjuMetadata | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  const fundamental =
+    typeof o.fundamental_right === 'string' &&
+    (FUNDAMENTAL_RIGHT_CODES as readonly string[]).includes(o.fundamental_right)
+      ? (o.fundamental_right as FundamentalRightCode)
+      : undefined;
+  const procedureMode =
+    o.procedure_mode === 'escrito' || o.procedure_mode === 'oral' ? o.procedure_mode : undefined;
+  const quantiaBand = typeof o.quantia_band === 'string' ? o.quantia_band : undefined;
+  const notes = typeof o.notes === 'string' ? o.notes : undefined;
+  if (!fundamental && !procedureMode && !quantiaBand && !notes) return undefined;
+  return {
+    ...(fundamental ? { fundamental_right: fundamental } : {}),
+    ...(procedureMode ? { procedure_mode: procedureMode } : {}),
+    ...(quantiaBand ? { quantia_band: quantiaBand } : {}),
+    ...(notes ? { notes } : {}),
+  };
 }
 
 export function rowToCase(row: Record<string, unknown>): Case {
@@ -62,7 +85,10 @@ export function rowToCase(row: Record<string, unknown>): Case {
     legalPretensiones: row.legal_pretensiones ? String(row.legal_pretensiones) : undefined,
     legalDerechoTutelado: row.legal_derecho_tutelado ? String(row.legal_derecho_tutelado) : undefined,
     derechoTuteladoCode: parseDerechoTuteladoCode(row.derecho_tutelado_code),
+    sierjuProcessClassId: row.sierju_process_class_id ? String(row.sierju_process_class_id) : undefined,
+    sierjuMetadata: parseSierjuMetadata(row.sierju_metadata),
     decisionType: parseDecisionType(row.decision_type),
+    decisionAt: row.decision_at ? ts(row.decision_at) : undefined,
     legalIdentificaciones: row.legal_identificaciones ? String(row.legal_identificaciones) : undefined,
     subject: row.subject ? String(row.subject) : undefined,
     rawText: row.raw_text ? String(row.raw_text) : undefined,

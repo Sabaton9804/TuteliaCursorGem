@@ -59,6 +59,8 @@ export interface JudicialDocEditorProps {
   showComments?: boolean;
   placeholder?: string;
   minHeight?: string;
+  /** Corrector ortográfico del navegador en el área editable (recomendado en borradores del despacho). */
+  browserSpellCheck?: boolean;
 }
 
 /** Compatibilidad con integraciones existentes hasta unificar llamadas (paso 2). */
@@ -149,6 +151,7 @@ export const JudicialDocEditor = forwardRef<JudicialDocEditorHandle, JudicialDoc
       showComments = false,
       placeholder = '',
       minHeight = '400px',
+      browserSpellCheck = false,
       plantillaResolveLabel,
       hideInlineCommentBubble = false,
       unframed = false,
@@ -179,12 +182,13 @@ export const JudicialDocEditor = forwardRef<JudicialDocEditorHandle, JudicialDoc
           ...extraAttr,
           class: mergedClass,
           style: `min-height: ${minHeight}`,
+          spellcheck: browserSpellCheck ? 'true' : 'false',
         },
         handleDOMEvents: {
           ...(extra?.handleDOMEvents ?? {}),
         },
       };
-    }, [extraEditorProps, minHeight, className, despachoSheetChrome]);
+    }, [extraEditorProps, minHeight, className, despachoSheetChrome, browserSpellCheck]);
 
     const extensions = useMemo(
       () =>

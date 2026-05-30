@@ -1,5 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { BarChart3, Loader2 } from 'lucide-react';
+import {
+  BarChart3,
+  Clock,
+  Info,
+  LayoutDashboard,
+  Loader2,
+  PieChart,
+  Table2,
+} from 'lucide-react';
 import {
   endOfMonth,
   endOfQuarter,
@@ -16,82 +24,24 @@ import { es } from 'date-fns/locale';
 import { supabase } from '../lib/supabase';
 import { rowToCase } from '../lib/supabase-mappers';
 import type { Case } from '../types';
+import { DECISION_TYPES, DECISION_TYPE_LABELS } from '../lib/sierju-case-codes';
+import { SIERJU_TUTELAS_COBERTURA, type TutelaStatsScope } from '../lib/sierju-tutela-informe';
 import {
-  DERECHO_TUTELADO_CODES,
-  DERECHO_TUTELADO_LABELS,
-  DECISION_TYPE_LABELS,
-  DECISION_TYPES,
-  resolveDerechoTuteladoCodeForInforme,
-} from '../lib/sierju-case-codes';
+  buildTutelaStatsDashboard,
+  type StatsTimeGranularity,
+} from '../lib/tutela-stats-dashboard';
+import { StatsBarChart } from '../components/estadisticas/StatsBarChart';
+import { StatsTimeSeriesChart } from '../components/estadisticas/StatsTimeSeriesChart';
+import { StatsSegmentBar } from '../components/estadisticas/StatsSegmentBar';
 import { useSessionCourt } from '../contexts/SessionCourtContext';
 
-/**
- * Bloques del Excel «Movimiento de Tutelas» (SIERJU) vs esta pantalla.
- * Prioridad del producto: admisión; completar columnas del formulario oficial será iterativo después.
- */
-const SIERJU_TUTELAS_COBERTURA: readonly {
-  bloque: string;
-  detalle: string;
-  estado: 'si' | 'parcial' | 'no';
-}[] = [
-  {
-    bloque: 'Filas por derecho tutelado (SALUD, Debido proceso, etc.)',
-    detalle: 'Misma taxonomía de filas del formulario.',
-    estado: 'si',
-  },
-  {
-    bloque: 'Inventario al iniciar el periodo (por derecho)',
-    detalle: 'Requiere stock al corte o historial de cada expediente; no se calcula aún.',
-    estado: 'no',
-  },
-  {
-    bloque: 'Ingreso por reparto en el periodo',
-    detalle: 'Se aproxima con tutelas creadas en el periodo (fecha de radicación en el sistema).',
-    estado: 'parcial',
-  },
-  {
-    bloque: 'Reingreso por nulidad o competencia / Ingreso por competencia',
-    detalle: 'No hay tipos de entrada separados en base de datos.',
-    estado: 'no',
-  },
-  {
-    bloque: 'Entrada impedimentos / Otras entradas no efectivas',
-    detalle: 'No registrados como hechos contables.',
-    estado: 'no',
-  },
-  {
-    bloque: 'Salidas: CONCEDE, NIEGA, IMPROCEDENTE, FALTA DE COMPETENCIA, etc.',
-    detalle: 'Solo lo que coincida con `decision_type` y fecha proxy (`updated_at`); faltan impedimentos, remisión explícita, etc.',
-    estado: 'parcial',
-  },
-  {
-    bloque: 'Salida impedimentos / Hecho superado / Rechazo / Remisión / Retiro / Otras salidas',
-    detalle: 'Parte cabe en `decision_type`; el resto no está modelado por separado.',
-    estado: 'parcial',
-  },
-  {
-    bloque: 'Procesos acumulados',
-    detalle: 'No hay campo ni regla de acumulación en el sistema.',
-    estado: 'no',
-  },
-  {
-    bloque: 'Inventario al finalizar el periodo (por derecho)',
-    detalle: 'Mismo cuello de botella que el inventario inicial.',
-    estado: 'no',
-  },
-  {
-    bloque: 'Columna «Derechos fundamentales tutelados» (si aplica en su versión del formulario)',
-    detalle: 'No replicada; solo clasificación por fila SIERJU y texto libre.',
-    estado: 'no',
-  },
-];
-
 type PeriodPreset = 'week' | 'month' | 'quarter' | 'year' | 'last30' | 'custom';
+type StatsTab = 'resumen' | 'movimiento' | 'tiempos' | 'sierju';
 
 function rangeForPreset(
   preset: PeriodPreset,
   customFrom: string,
-  customTo: string
+  customTo: string,
 ): { from: Date; to: Date } {
   const now = new Date();
   switch (preset) {
@@ -121,9 +71,49 @@ function rangeForPreset(
   }
 }
 
-function inRange(iso: string, from: Date, to: Date): boolean {
-  const d = new Date(iso);
-  return d >= from && d <= to;
+const CASE_STATS_COLUMNS = [
+  'id',
+  'created_at',
+  'updated_at',
+  'status',
+  'operational_status',
+  'deadline_at',
+  'derecho_tutelado_code',
+  'decision_type',
+  'decision_at',
+  'legal_derecho_tutelado',
+  'radicado',
+  'court_id',
+  'case_type',
+  'sierju_process_class_id',
+  'sierju_metadata',
+].join(',');
+
+const TABS: { id: StatsTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: 'resumen', label: 'Resumen', icon: LayoutDashboard },
+  { id: 'movimiento', label: 'Movimiento', icon: BarChart3 },
+  { id: 'tiempos', label: 'Tiempos y plazos', icon: Clock },
+  { id: 'sierju', label: 'SIERJU oficial', icon: Table2 },
+];
+
+function KpiCard({
+  label,
+  value,
+  hint,
+  accent,
+}: {
+  label: string;
+  value: React.ReactNode;
+  hint: string;
+  accent?: string;
+}) {
+  return (
+    <div className="card-modern border border-slate-100 p-5">
+      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{label}</p>
+      <p className={`mt-2 text-3xl font-bold ${accent ?? 'text-slate-900'}`}>{value}</p>
+      <p className="mt-1 text-xs text-slate-500">{hint}</p>
+    </div>
+  );
 }
 
 export default function Estadisticas() {
@@ -131,18 +121,19 @@ export default function Estadisticas() {
   const [cases, setCases] = useState<Case[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [preset, setPreset] = useState<PeriodPreset>('month');
-  const [customFrom, setCustomFrom] = useState(() => format(startOfMonth(new Date()), 'yyyy-MM-dd'));
-  const [customTo, setCustomTo] = useState(() => format(endOfMonth(new Date()), 'yyyy-MM-dd'));
+  const [preset, setPreset] = useState<PeriodPreset>('quarter');
+  const [scope, setScope] = useState<TutelaStatsScope>('primera');
+  const [tab, setTab] = useState<StatsTab>('resumen');
+  const [granularity, setGranularity] = useState<StatsTimeGranularity>('month');
+  const [customFrom, setCustomFrom] = useState(() => format(startOfQuarter(new Date()), 'yyyy-MM-dd'));
+  const [customTo, setCustomTo] = useState(() => format(endOfQuarter(new Date()), 'yyyy-MM-dd'));
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     const { data, error: fetchError } = await supabase
       .from('cases')
-      .select(
-        'id,created_at,updated_at,status,derecho_tutelado_code,decision_type,legal_derecho_tutelado,radicado,court_id'
-      )
+      .select(CASE_STATS_COLUMNS)
       .eq('court_id', courtId);
     if (fetchError) {
       setError(fetchError.message);
@@ -160,76 +151,29 @@ export default function Estadisticas() {
 
   const { from, to } = useMemo(
     () => rangeForPreset(preset, customFrom, customTo),
-    [preset, customFrom, customTo]
+    [preset, customFrom, customTo],
   );
 
-  const informe = useMemo(() => {
-    const ingresos = cases.filter((c) => inRange(c.createdAt, from, to));
-    const porDerecho = new Map<string, number>();
-    for (const code of DERECHO_TUTELADO_CODES) porDerecho.set(code, 0);
-    porDerecho.set('__SIN_CLASIFICAR__', 0);
-    for (const c of ingresos) {
-      const resolved = resolveDerechoTuteladoCodeForInforme(c);
-      const k = resolved ?? '__SIN_CLASIFICAR__';
-      porDerecho.set(k, (porDerecho.get(k) ?? 0) + 1);
-    }
+  const dash = useMemo(
+    () => buildTutelaStatsDashboard(cases, from, to, scope, granularity),
+    [cases, from, to, scope, granularity],
+  );
 
-    const decisionesPeriodo = cases.filter(
-      (c) => c.decisionType && inRange(c.updatedAt, from, to)
-    );
-    const porDecision = new Map<string, number>();
-    for (const dt of DECISION_TYPES) porDecision.set(dt, 0);
-    for (const c of decisionesPeriodo) {
-      if (!c.decisionType) continue;
-      porDecision.set(c.decisionType, (porDecision.get(c.decisionType) ?? 0) + 1);
-    }
-
-    const activos = cases.filter((c) => c.status !== 'archived').length;
-    const conCodigoExplicito = cases.filter((c) => Boolean(c.derechoTuteladoCode)).length;
-    const conDerechoIdentificable = cases.filter((c) => Boolean(resolveDerechoTuteladoCodeForInforme(c))).length;
-
-    return {
-      ingresosCount: ingresos.length,
-      porDerechoRows: [
-        ...DERECHO_TUTELADO_CODES.map((code) => ({
-          key: code,
-          label: DERECHO_TUTELADO_LABELS[code],
-          count: porDerecho.get(code) ?? 0,
-        })),
-        {
-          key: '__SIN_CLASIFICAR__',
-          label: 'Sin clasificar',
-          count: porDerecho.get('__SIN_CLASIFICAR__') ?? 0,
-        },
-      ],
-      decisionesCount: decisionesPeriodo.length,
-      porDecisionRows: DECISION_TYPES.map((dt) => ({
-        key: dt,
-        label: DECISION_TYPE_LABELS[dt],
-        count: porDecision.get(dt) ?? 0,
-      })).filter((row) => row.count > 0),
-      totalExpedientes: cases.length,
-      activos,
-      conCodigoExplicito,
-      conDerechoIdentificable,
-    };
-  }, [cases, from, to]);
-
-  const periodoLabel = `${format(from, "d MMM yyyy", { locale: es })} — ${format(to, "d MMM yyyy", { locale: es })}`;
+  const { informe } = dash;
+  const periodoLabel = `${format(from, 'd MMM yyyy', { locale: es })} — ${format(to, 'd MMM yyyy', { locale: es })}`;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8">
-      <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+    <div className="mx-auto max-w-6xl space-y-6 pb-10">
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400">
-            <BarChart3 className="h-4 w-4 text-accent" aria-hidden />
-            Despacho
+            <PieChart className="h-4 w-4 text-accent" aria-hidden />
+            Centro de estadísticas · Tutelas
           </div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Informe estadístico</h1>
-          <p className="mt-1 max-w-2xl text-sm font-medium text-slate-500">
-            Por ahora el foco del desarrollo es la admisión; esta vista solo anticipa totales útiles (ingresos por periodo,
-            derecho tutelado, decisiones). El formulario completo de la Rama tiene más columnas; la tabla del final es la hoja
-            de ruta para cuando avancemos el flujo y los datos.
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Panel analítico</h1>
+          <p className="mt-1 max-w-2xl text-sm text-slate-500">
+            Gráficos, plazos y borrador SIERJU. Datos internos del despacho; el formulario oficial CSJ sigue
+            requiriendo inventarios y export trimestral.
           </p>
         </div>
         <button
@@ -239,39 +183,79 @@ export default function Estadisticas() {
           className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-          Actualizar datos
+          Actualizar
         </button>
       </header>
 
-      <div className="card-modern border border-slate-100 p-5 sm:p-6">
-        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Periodo</p>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          {(
-            [
-              ['week', 'Esta semana'],
-              ['month', 'Este mes'],
-              ['quarter', 'Este trimestre'],
-              ['year', 'Este año'],
-              ['last30', 'Últimos 30 días'],
-              ['custom', 'Personalizado'],
-            ] as const
-          ).map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setPreset(key)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                preset === key
-                  ? 'bg-accent text-white shadow-sm'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+      <div className="rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-3 text-sm text-blue-950">
+        <div className="flex gap-2">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" aria-hidden />
+          <p className="text-xs leading-relaxed">
+            <strong className="font-semibold">Borrador Tutelia</strong> — ingresos por radicación, salidas por{' '}
+            <code className="rounded bg-white/80 px-1">decision_at</code>, plazos con días hábiles del término
+            global (10 días tutela 1ª). <strong className="font-semibold">Oficial CSJ</strong>: inventarios y
+            columnas de entrada detalladas (Fase S3).
+          </p>
+        </div>
+      </div>
+
+      <div className="card-modern space-y-4 border border-slate-100 p-5 sm:p-6">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Alcance</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {(
+                [
+                  ['primera', 'Tutela 1ª instancia'],
+                  ['todas_tutelas', 'Todas las tutelas'],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setScope(key)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    scope === key
+                      ? 'bg-slate-800 text-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Periodo</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {(
+                [
+                  ['week', 'Semana'],
+                  ['month', 'Mes'],
+                  ['quarter', 'Trimestre'],
+                  ['year', 'Año'],
+                  ['last30', '30 días'],
+                  ['custom', 'Custom'],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setPreset(key)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    preset === key
+                      ? 'bg-accent text-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
         {preset === 'custom' ? (
-          <div className="mt-4 flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 text-sm text-slate-600">
               Desde
               <input
@@ -292,7 +276,25 @@ export default function Estadisticas() {
             </label>
           </div>
         ) : null}
-        <p className="mt-4 text-sm font-medium text-slate-600">{periodoLabel}</p>
+        <p className="text-sm font-medium text-slate-600">{periodoLabel}</p>
+
+        <div className="flex flex-wrap gap-1 border-t border-slate-100 pt-4">
+          {TABS.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setTab(id)}
+              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wide transition-colors ${
+                tab === id
+                  ? 'bg-accent text-white shadow-sm'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <Icon className="h-4 w-4" aria-hidden />
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {error ? (
@@ -302,142 +304,267 @@ export default function Estadisticas() {
       {loading && cases.length === 0 ? (
         <div className="card-modern flex items-center justify-center gap-2 p-12 text-sm font-medium text-slate-500">
           <Loader2 className="h-5 w-5 animate-spin" />
-          Cargando expedientes…
+          Cargando…
         </div>
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="card-modern border border-slate-100 p-5">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Tutelas radicadas (periodo)</p>
-              <p className="mt-2 text-3xl font-bold text-slate-900">{informe.ingresosCount}</p>
-              <p className="mt-1 text-xs text-slate-500">Por fecha de creación en el sistema.</p>
-            </div>
-            <div className="card-modern border border-slate-100 p-5">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Expedientes activos (total)</p>
-              <p className="mt-2 text-3xl font-bold text-slate-900">{informe.activos}</p>
-              <p className="mt-1 text-xs text-slate-500">Estado distinto de archivado.</p>
-            </div>
-            <div className="card-modern border border-slate-100 p-5">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Clasificación usable</p>
-              <p className="mt-2 text-3xl font-bold text-slate-900">
-                {informe.conDerechoIdentificable}
-                <span className="text-lg font-semibold text-slate-400">
-                  {' '}
-                  / {informe.totalExpedientes}
-                </span>
-              </p>
-              <p className="mt-1 text-xs text-slate-500">
-                Código en BD o derecho reconocido desde el texto (Art. CP). Explícito en BD: {informe.conCodigoExplicito}.
-              </p>
-            </div>
-          </div>
-
-          <div className="card-modern overflow-hidden border border-slate-100">
-            <div className="border-b border-slate-100 bg-slate-50/80 px-5 py-3">
-              <h2 className="text-sm font-bold text-slate-800">Ingresos en el periodo por derecho tutelado</h2>
-              <p className="text-xs text-slate-500">
-                Solo tutelas radicadas en el periodo. Si no hay código SIERJU guardado, se deduce del texto del expediente (por
-                ejemplo «Art. 29 — Debido proceso»), igual que lo que ve en la lista de expedientes.
-              </p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-100">
-                    <th className="px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                      Derecho tutelado
-                    </th>
-                    <th className="px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Cantidad</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {informe.porDerechoRows.map((row) => (
-                    <tr key={row.key} className="border-b border-slate-50 last:border-0">
-                      <td className="px-5 py-3 font-medium text-slate-800">{row.label}</td>
-                      <td className="px-5 py-3 tabular-nums text-slate-700">{row.count}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="card-modern overflow-hidden border border-slate-100">
-            <div className="border-b border-slate-100 bg-slate-50/80 px-5 py-3">
-              <h2 className="text-sm font-bold text-slate-800">Decisiones registradas en el periodo</h2>
-              <p className="text-xs text-slate-500">
-                Expedientes con tipo de decisión cuya última actualización cae en el periodo ({informe.decisionesCount}{' '}
-                movimientos). Útil como proxy hasta tener fecha propia de fallo.
-              </p>
-            </div>
-            {informe.porDecisionRows.length === 0 ? (
-              <p className="px-5 py-8 text-center text-sm text-slate-500">
-                No hay decisiones con fecha de actualización en este periodo. Registre el tipo de decisión al cerrar
-                fallos o archive en cada expediente.
-              </p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-100">
-                      <th className="px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Tipo</th>
-                      <th className="px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Cantidad</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {informe.porDecisionRows.map((row) => (
-                      <tr key={row.key} className="border-b border-slate-50 last:border-0">
-                        <td className="px-5 py-3 font-medium text-slate-800">{row.label}</td>
-                        <td className="px-5 py-3 tabular-nums text-slate-700">{row.count}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+          {tab === 'resumen' ? (
+            <div className="space-y-6">
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <KpiCard label="Ingresos" value={informe.ingresosCount} hint="Radicadas en el periodo" />
+                <KpiCard label="Salidas" value={informe.salidasCount} hint="Decisiones en el periodo" accent="text-violet-700" />
+                <KpiCard
+                  label="Activas"
+                  value={informe.activos}
+                  hint={`${informe.totalExpedientes} totales en alcance`}
+                />
+                <KpiCard
+                  label="Tasa concesión"
+                  value={dash.tasaConcesion != null ? `${dash.tasaConcesion}%` : '—'}
+                  hint="Concede / (Concede + Niega) en el periodo"
+                  accent="text-emerald-700"
+                />
               </div>
-            )}
-          </div>
 
-          <div className="card-modern overflow-hidden border border-amber-100 bg-amber-50/20">
-            <div className="border-b border-amber-100/80 bg-amber-50/60 px-5 py-3">
-              <h2 className="text-sm font-bold text-slate-900">¿Qué del Excel «Movimiento de Tutelas» cubre esta pantalla?</h2>
-              <p className="mt-1 text-xs text-slate-600">
-                Referencia al libro SIERJU (hoja de tutelas). No hay que implementarlo todo ahora: sirve para acordar qué datos
-                ir guardando mientras consolidamos admisión y etapas siguientes.
-              </p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-100 bg-white/80">
-                    <th className="px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Bloque del formulario</th>
-                    <th className="px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">En esta app</th>
-                    <th className="px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-400 w-28">Estado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {SIERJU_TUTELAS_COBERTURA.map((row) => (
-                    <tr key={row.bloque} className="border-b border-slate-100/80 last:border-0 bg-white/40">
-                      <td className="px-5 py-3 font-medium text-slate-800">{row.bloque}</td>
-                      <td className="px-5 py-3 text-slate-600">{row.detalle}</td>
-                      <td className="px-5 py-3">
-                        <span
-                          className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-                            row.estado === 'si'
-                              ? 'bg-emerald-100 text-emerald-900'
-                              : row.estado === 'parcial'
-                                ? 'bg-amber-100 text-amber-950'
-                                : 'bg-slate-200 text-slate-700'
+              <div className="grid gap-6 lg:grid-cols-2">
+                <div className="card-modern border border-slate-100 p-5">
+                  <div className="mb-4 flex items-center justify-between gap-2">
+                    <h2 className="text-sm font-bold text-slate-800">Evolución ingresos vs salidas</h2>
+                    <div className="flex gap-1">
+                      {(['week', 'month'] as const).map((g) => (
+                        <button
+                          key={g}
+                          type="button"
+                          onClick={() => setGranularity(g)}
+                          className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase ${
+                            granularity === g ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'
                           }`}
                         >
-                          {row.estado === 'si' ? 'Sí' : row.estado === 'parcial' ? 'Parcial' : 'No'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                          {g === 'week' ? 'Sem' : 'Mes'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <StatsTimeSeriesChart points={dash.timeSeries} />
+                </div>
+
+                <div className="card-modern border border-slate-100 p-5">
+                  <h2 className="mb-4 text-sm font-bold text-slate-800">Top derechos tutelados (ingresos)</h2>
+                  <StatsBarChart rows={dash.topDerechosIngreso} />
+                </div>
+              </div>
+
+              <div className="grid gap-6 lg:grid-cols-2">
+                <div className="card-modern border border-slate-100 p-5">
+                  <h2 className="mb-4 text-sm font-bold text-slate-800">Estado judicial (activas)</h2>
+                  <StatsSegmentBar rows={dash.statusCounts} emptyLabel="No hay tutelas activas." />
+                </div>
+                <div className="card-modern border border-slate-100 p-5">
+                  <h2 className="mb-4 text-sm font-bold text-slate-800">Etapa operativa (tablero)</h2>
+                  <StatsSegmentBar rows={dash.stageCounts} />
+                </div>
+              </div>
             </div>
-          </div>
+          ) : null}
+
+          {tab === 'movimiento' ? (
+            <div className="space-y-6">
+              <div className="grid gap-6 lg:grid-cols-2">
+                <div className="card-modern border border-slate-100 p-5">
+                  <h2 className="mb-1 text-sm font-bold text-slate-800">Ingresos por derecho</h2>
+                  <p className="mb-4 text-xs text-slate-500">Proxy SIERJU: tutela_entrada_reparto</p>
+                  <StatsBarChart rows={informe.porDerechoIngreso.filter((r) => r.count > 0).map((r) => ({
+                    key: r.key,
+                    label: r.label,
+                    value: r.count,
+                    color: r.key === '__SIN_CLASIFICAR__' ? '#f59e0b' : '#0d9488',
+                  }))} />
+                </div>
+                <div className="card-modern border border-slate-100 p-5">
+                  <h2 className="mb-1 text-sm font-bold text-slate-800">Salidas por decisión</h2>
+                  <p className="mb-4 text-xs text-slate-500">Mapeo a tutela_salida_* del catálogo</p>
+                  <StatsBarChart rows={dash.topDecisiones} horizontal={false} />
+                </div>
+              </div>
+
+              {informe.matrizSalida.length > 0 ? (
+                <div className="card-modern overflow-hidden border border-slate-100">
+                  <div className="border-b border-slate-100 bg-slate-50/80 px-5 py-3">
+                    <h2 className="text-sm font-bold text-slate-800">Mapa de calor — derecho × decisión</h2>
+                    <p className="text-xs text-slate-500">Intensidad = cantidad en el periodo</p>
+                  </div>
+                  <div className="overflow-x-auto p-4">
+                    <table className="w-full min-w-[640px] text-left text-sm">
+                      <thead>
+                        <tr>
+                          <th className="pb-2 text-[10px] font-bold uppercase text-slate-400">Derecho</th>
+                          {DECISION_TYPES.map((dt) => (
+                            <th key={dt} className="px-1 pb-2 text-center text-[9px] font-bold uppercase text-slate-400">
+                              {dt.slice(0, 4)}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {informe.matrizSalida.map((row) => {
+                          const cellMap = new Map(row.cells.map((c) => [c.decision, c.count]));
+                          const rowMax = Math.max(1, ...row.cells.map((c) => c.count));
+                          return (
+                            <tr key={row.rowKey}>
+                              <td className="py-1.5 pr-2 font-medium text-slate-800">{row.rowLabel}</td>
+                              {DECISION_TYPES.map((dt) => {
+                                const n = cellMap.get(dt) ?? 0;
+                                const alpha = n > 0 ? 0.15 + (n / rowMax) * 0.75 : 0;
+                                return (
+                                  <td key={dt} className="p-0.5">
+                                    <div
+                                      className="flex h-9 min-w-[2rem] items-center justify-center rounded-md text-xs font-bold tabular-nums"
+                                      style={{
+                                        backgroundColor: n > 0 ? `rgba(13, 148, 136, ${alpha})` : '#f8fafc',
+                                        color: n > 0 ? '#0f766e' : '#cbd5e1',
+                                      }}
+                                      title={n > 0 ? `${DECISION_TYPE_LABELS[dt]}: ${n}` : undefined}
+                                    >
+                                      {n || '·'}
+                                    </div>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {tab === 'tiempos' ? (
+            <div className="space-y-6">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                <KpiCard
+                  label="Vencidas"
+                  value={dash.termBuckets.vencidos}
+                  hint="Término global agotado"
+                  accent="text-red-600"
+                />
+                <KpiCard
+                  label="Urgentes"
+                  hint="≤ 2 días hábiles"
+                  value={dash.termBuckets.urgentes}
+                  accent="text-orange-600"
+                />
+                <KpiCard label="Alerta" value={dash.termBuckets.alerta} hint="3–4 días hábiles" accent="text-amber-600" />
+                <KpiCard label="En término" value={dash.termBuckets.enTermino} hint="5+ días hábiles" accent="text-emerald-700" />
+                <KpiCard label="Cerradas" value={dash.termBuckets.cerrados} hint="Archivadas o fallo notificado" />
+              </div>
+
+              <div className="grid gap-6 lg:grid-cols-2">
+                <div className="card-modern border border-slate-100 p-5">
+                  <h2 className="mb-4 text-sm font-bold text-slate-800">Semáforo de plazos (cartera actual)</h2>
+                  <StatsBarChart
+                    rows={[
+                      { key: 'v', label: 'Vencidas', value: dash.termBuckets.vencidos, color: '#dc2626' },
+                      { key: 'u', label: 'Urgentes', value: dash.termBuckets.urgentes, color: '#ea580c' },
+                      { key: 'a', label: 'Alerta', value: dash.termBuckets.alerta, color: '#d97706' },
+                      { key: 'ok', label: 'En término', value: dash.termBuckets.enTermino, color: '#059669' },
+                    ].filter((r) => r.value > 0)}
+                  />
+                </div>
+                <div className="card-modern border border-slate-100 p-5">
+                  <h2 className="mb-4 text-sm font-bold text-slate-800">Tiempo hasta decisión</h2>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="rounded-xl bg-slate-50 p-4 text-center">
+                      <p className="text-[10px] font-bold uppercase text-slate-400">Promedio</p>
+                      <p className="mt-1 text-3xl font-bold text-slate-900">
+                        {dash.tiemposFallo.promedioDias ?? '—'}
+                        {dash.tiemposFallo.promedioDias != null ? (
+                          <span className="text-base font-semibold text-slate-400"> d</span>
+                        ) : null}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-4 text-center">
+                      <p className="text-[10px] font-bold uppercase text-slate-400">Mediana</p>
+                      <p className="mt-1 text-3xl font-bold text-slate-900">
+                        {dash.tiemposFallo.medianaDias ?? '—'}
+                        {dash.tiemposFallo.medianaDias != null ? (
+                          <span className="text-base font-semibold text-slate-400"> d</span>
+                        ) : null}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="mt-4 text-xs text-slate-500">
+                    Días calendario desde radicación hasta decisión registrada. Muestra:{' '}
+                    {dash.tiemposFallo.muestra} expedientes (histórico en alcance, no solo periodo).
+                  </p>
+                </div>
+              </div>
+
+              <div className="card-modern border border-slate-100 p-5">
+                <h2 className="mb-4 text-sm font-bold text-slate-800">Radicaciones en el tiempo</h2>
+                <StatsTimeSeriesChart points={dash.timeSeries} showSalidas={false} />
+              </div>
+            </div>
+          ) : null}
+
+          {tab === 'sierju' ? (
+            <div className="space-y-6">
+              <div className="grid gap-4 sm:grid-cols-3">
+                <KpiCard
+                  label="Clasificación SIERJU"
+                  value={`${informe.conClaseSierju}/${informe.totalExpedientes}`}
+                  hint="Con sierju_process_class_id"
+                />
+                <KpiCard
+                  label="Código explícito"
+                  value={informe.conCodigoExplicito}
+                  hint="derecho_tutelado_code en BD"
+                />
+                <KpiCard
+                  label="Sin clasificar"
+                  value={dash.sinClasificar}
+                  hint="Ingresos del periodo sin fila SIERJU"
+                  accent={dash.sinClasificar > 0 ? 'text-amber-700' : undefined}
+                />
+              </div>
+
+              <details className="card-modern group border border-amber-100 bg-amber-50/20">
+                <summary className="cursor-pointer list-none px-5 py-4 font-bold text-slate-900 marker:content-none">
+                  <span className="flex items-center justify-between gap-2">
+                    Cobertura vs formulario CSJ «Movimiento de Tutelas»
+                    <span className="text-xs font-normal text-slate-500 group-open:hidden">Ver detalle</span>
+                  </span>
+                </summary>
+                <div className="overflow-x-auto border-t border-amber-100/80">
+                  <table className="w-full text-left text-sm">
+                    <tbody>
+                      {SIERJU_TUTELAS_COBERTURA.map((row) => (
+                        <tr key={row.bloque} className="border-b border-amber-100/60 last:border-0">
+                          <td className="px-5 py-3 font-medium text-slate-800">{row.bloque}</td>
+                          <td className="px-5 py-3 text-slate-600">{row.detalle}</td>
+                          <td className="w-28 px-5 py-3">
+                            <span
+                              className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-bold uppercase ${
+                                row.estado === 'si'
+                                  ? 'bg-emerald-100 text-emerald-900'
+                                  : row.estado === 'parcial'
+                                    ? 'bg-amber-100 text-amber-950'
+                                    : 'bg-slate-200 text-slate-700'
+                              }`}
+                            >
+                              {row.estado === 'si' ? 'Sí' : row.estado === 'parcial' ? 'Parcial' : 'No'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            </div>
+          ) : null}
         </>
       )}
     </div>

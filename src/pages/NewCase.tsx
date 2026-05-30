@@ -51,8 +51,20 @@ import {
 } from '../lib/new-case-email-attachment';
 import { NEW_CASE_FRESH_EVENT, NEW_CASE_FRESH_NAV_FLAG } from '../lib/new-case-nav';
 import { guessDerechoTuteladoCodeFromText } from '../lib/sierju-case-codes';
-import { startOfLocalDay, tenthBusinessDayDeadline } from '../lib/business-days';
+import type { DerechoTuteladoCode } from '../lib/sierju-case-codes';
+import {
+  buildSierjuClassificationPatch,
+  fetchSierjuClassesForCaseType,
+} from '../lib/sierju-catalog-service';
+import { CaseSierjuClassification } from '../components/expediente/CaseSierjuClassification';
+import { startOfLocalDay, tenthBusinessDayDeadline, businessDayTermEnd } from '../lib/business-days';
 import { useSessionCourt } from '../contexts/SessionCourtContext';
+import {
+  useCourtOperational,
+  radicacionCourtPrefixFromConfig,
+  buildRadicacionYearPrefix,
+} from '../contexts/CourtOperationalContext';
+import { resolveProcessDefinitionId } from '../lib/process-definitions-service';
 import { assertRadicacionProfileAccess } from '../lib/radicacion-profile-access';
 import {
   computeInitialAssignedTo,
@@ -287,6 +299,7 @@ function NewCaseOriginFlowFields({
 
 export default function NewCase() {
   const { courtId, profile: sessionProfile } = useSessionCourt();
+  const { radicacion, sustanciadores, processForCaseType, instanceCodeForCaseType } = useCourtOperational();
   const [file, setFile] = useState<File | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const [parsedData, setParsedData] = useState<any>(null);
@@ -325,6 +338,8 @@ export default function NewCase() {
   /** Radicados Tutelia con la misma base CUI (21 díg.) para calcular sufijo 01, 02… */
   const [segundaKnownRadicados, setSegundaKnownRadicados] = useState<string[]>([]);
   const [segundaSuffixLoading, setSegundaSuffixLoading] = useState(false);
+  const [sierjuDerechoSel, setSierjuDerechoSel] = useState<DerechoTuteladoCode | undefined>();
+  const [sierjuClassIdSel, setSierjuClassIdSel] = useState<string | undefined>();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -560,9 +575,7 @@ export default function NewCase() {
       try {
         await ensureSupabaseSessionForWrites();
         const year = new Date().getFullYear().toString();
-        const prefix =
-          `${COURT_CONSTANTS.CITY_CODE}${COURT_CONSTANTS.ENTITY_CODE}` +
-          `${COURT_CONSTANTS.SPECIALTY_CODE}${COURT_CONSTANTS.DESPACHO_CODE}${year}`;
+        const prefix = buildRadicacionYearPrefix(radicacion, Number(year));
         const res = await supabase
           .from('cases')
           .select('radicado')
@@ -593,7 +606,7 @@ export default function NewCase() {
     return () => {
       cancelled = true;
     };
-  }, [parsedData, courtId, caseFlowType]);
+  }, [parsedData, courtId, caseFlowType, radicacion]);
 
   useEffect(() => {
     if (!parsedData || radicationResult) return;
@@ -625,6 +638,16 @@ export default function NewCase() {
     }, 2800);
     return () => window.clearTimeout(t);
   }, [radicationResult, navigate]);
+
+  useEffect(() => {
+    const text = aiAnalysis?.derechoTutelado || '';
+    if (!text.trim()) return;
+    const guessed = guessDerechoTuteladoCodeFromText(text);
+    if (guessed) {
+      setSierjuDerechoSel(guessed);
+      setSierjuClassIdSel(undefined);
+    }
+  }, [aiAnalysis?.derechoTutelado]);
 
   const clearSgdeOriginState = useCallback(() => {
     setOriginRadicado('');
@@ -724,14 +747,13 @@ export default function NewCase() {
     [caseFlowType, originRadicado, segundaKnownRadicados]
   );
 
-  const getFullRadicado = (cons: string) =>
-    buildRadicadoPrimeraInstancia(cons, {
-      cityCode: COURT_CONSTANTS.CITY_CODE,
-      entityCode: COURT_CONSTANTS.ENTITY_CODE,
-      specialtyCode: COURT_CONSTANTS.SPECIALTY_CODE,
-      despachoCode: COURT_CONSTANTS.DESPACHO_CODE,
-      instanceCode: COURT_CONSTANTS.INSTANCE_CODE,
-    });
+  const getFullRadicado = (cons: string) => {
+    const flow = caseFlowType ?? 'tutela_primera';
+    return buildRadicadoPrimeraInstancia(
+      cons,
+      radicacionCourtPrefixFromConfig(radicacion, instanceCodeForCaseType(flow)),
+    );
+  };
 
   const consecutiveNum = parseInt(consecutive.replace(/\D/g, ''), 10);
   const isSegundaFlow = caseFlowType === 'tutela_segunda';
@@ -848,19 +870,39 @@ export default function NewCase() {
         radicado: radicadoFormatted,
         caseId,
         rrCursor,
+        sustanciadores,
       });
+
+      const processDef = processForCaseType(flow);
+      const processDefinitionId =
+        processDef?.id ?? (await resolveProcessDefinitionId(flow, courtId));
 
       const claimantNames = aiAnalysis ? joinPartyField(aiAnalysis.accionantes, 'nombre') : '';
       const defendantNames = aiAnalysis ? joinPartyField(aiAnalysis.accionados, 'nombre') : '';
       const derechoText = aiAnalysis?.derechoTutelado || '';
       const guessedDerecho = guessDerechoTuteladoCodeFromText(derechoText);
+      const effectiveDerecho = sierjuDerechoSel ?? guessedDerecho;
+      const sierjuClasses = await fetchSierjuClassesForCaseType(courtId, flow);
+      const sierjuPatch = buildSierjuClassificationPatch(sierjuClasses, {
+        derechoCode: effectiveDerecho ?? null,
+        classId: sierjuClassIdSel ?? null,
+      });
       const filingForTerm = startOfLocalDay(new Date());
-      const deadlineAtIso = tenthBusinessDayDeadline(filingForTerm).toISOString();
+      let deadlineAtIso: string | null = null;
+      if (
+        processDef?.case_term_days &&
+        processDef.case_term_type === 'habiles' &&
+        flow === 'tutela_primera'
+      ) {
+        deadlineAtIso = businessDayTermEnd(filingForTerm, processDef.case_term_days).toISOString();
+      } else if (flow === 'tutela_primera') {
+        deadlineAtIso = tenthBusinessDayDeadline(filingForTerm).toISOString();
+      }
       const caseRow: Record<string, unknown> = {
         id: caseId,
         court_id: courtId,
         radicado: radicadoFormatted,
-        deadline_at: deadlineAtIso,
+        ...(deadlineAtIso ? { deadline_at: deadlineAtIso } : {}),
         claimant: claimantNames || parsedData.from || 'Anónimo',
         defendant: defendantNames || 'DESPACHO JUDICIAL',
         status: 'received',
@@ -875,7 +917,9 @@ export default function NewCase() {
         legal_hechos: aiAnalysis?.hechos || '',
         legal_pretensiones: aiAnalysis?.pretensiones || '',
         legal_derecho_tutelado: derechoText,
-        derecho_tutelado_code: guessedDerecho ?? null,
+        derecho_tutelado_code: sierjuPatch.derecho_tutelado_code,
+        sierju_process_class_id: sierjuPatch.sierju_process_class_id,
+        sierju_metadata: sierjuPatch.sierju_metadata,
         legal_identificaciones: aiAnalysis ? buildLegalIdentificaciones(aiAnalysis) : '',
         raw_html: parsedData.html || '',
         email_metadata: {
@@ -890,6 +934,7 @@ export default function NewCase() {
       if (assignedTo) caseRow.assigned_to = assignedTo;
 
       caseRow.case_type = flow;
+      if (processDefinitionId) caseRow.process_definition_id = processDefinitionId;
       if (flow === 'tutela_primera') {
         caseRow.origin_court = null;
         caseRow.origin_radicado = null;
@@ -1582,6 +1627,10 @@ export default function NewCase() {
               consecutiveLoading={consecutiveLoading}
               consecutiveReady={consecutiveReady}
               radicadoConflict={radicadoConflict}
+              radicacion={radicacion}
+              instanceCode={
+                caseFlowType ? instanceCodeForCaseType(caseFlowType) : COURT_CONSTANTS.INSTANCE_CODE
+              }
               segundaInstancia={
                 caseFlowType === 'tutela_segunda'
                   ? {
@@ -1601,6 +1650,25 @@ export default function NewCase() {
             aiAnalysis={aiAnalysis}
             onDismissAnalysis={() => setAiAnalysis(null)}
           />
+
+          {caseFlowType ? (
+            <div className="lg:col-span-12 rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3">
+              <CaseSierjuClassification
+                courtId={courtId}
+                caseType={caseFlowType}
+                processDefinitionId={processForCaseType(caseFlowType)?.id}
+                valueDerechoCode={sierjuDerechoSel}
+                valueClassId={sierjuClassIdSel}
+                disabled={isRadicating}
+                label="Clasificación SIERJU antes de radicar"
+                hint="Revise la fila del formulario estadístico. Se infiere del análisis IA si está disponible."
+                onChange={({ derechoCode, classId }) => {
+                  setSierjuDerechoSel(derechoCode);
+                  setSierjuClassIdSel(classId);
+                }}
+              />
+            </div>
+          ) : null}
 
           <div className="lg:col-span-12">
             <CaseRadicacionActions

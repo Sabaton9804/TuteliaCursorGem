@@ -30,10 +30,12 @@ import {
 } from '../../lib/case-stages-service';
 import type { UserRole } from '../../types';
 import {
-  businessDaysRemainingInTenDayWindow,
-  businessDaysRemainingWithStoredDeadline,
+  businessDayTermEnd,
+  businessDaysRemainingInTermWindow,
+  businessDaysRemainingWithStoredTermDeadline,
   startOfLocalDay,
 } from '../../lib/business-days';
+import { getCachedCaseTermBusinessDays } from '../../lib/process-definitions-service';
 import {
   businessDaysRemainingUntilSubDeadline,
   resolveSubStageDeadline,
@@ -103,25 +105,30 @@ export function CaseStagesExperience() {
     if (!filed) return null;
     try {
       const filing = startOfLocalDay(parseISO(filed));
+      const termDays = getCachedCaseTermBusinessDays(caseType);
       const remaining = dl
-        ? businessDaysRemainingWithStoredDeadline(filing, startOfLocalDay(parseISO(dl)))
-        : businessDaysRemainingInTenDayWindow(filing);
-      const end = dl ? parseISO(dl) : null;
-      return { remaining, end, valid: !end || !Number.isNaN(end.getTime()) };
+        ? businessDaysRemainingWithStoredTermDeadline(
+            filing,
+            startOfLocalDay(parseISO(dl)),
+            termDays,
+          )
+        : businessDaysRemainingInTermWindow(filing, termDays);
+      const end = dl ? parseISO(dl) : businessDayTermEnd(filing, termDays);
+      return { remaining, end, valid: !end || !Number.isNaN(end.getTime()), termDays };
     } catch {
       return null;
     }
-  }, [caseItem.createdAt, caseItem.deadlineAt]);
+  }, [caseItem.createdAt, caseItem.deadlineAt, caseType]);
 
   const plazoEtapa = useMemo(() => {
     if (!openRow) return null;
-    const label = subStageDeadlineLabel(openRow.stageCode);
+    const label = subStageDeadlineLabel(openRow.stageCode, caseType);
     if (!label) return null;
-    const end = resolveSubStageDeadline(openRow.stageCode, openRow.enteredAt, openRow.metadata);
+    const end = resolveSubStageDeadline(openRow.stageCode, openRow.enteredAt, openRow.metadata, caseType);
     if (!end) return null;
     const remaining = businessDaysRemainingUntilSubDeadline(end);
     return { label, end, remaining };
-  }, [openRow]);
+  }, [openRow, caseType]);
 
   const handleRetroceder = useCallback(async () => {
     if (!openRow) return;
@@ -375,7 +382,9 @@ export function CaseStagesExperience() {
                       </p>
                       {plazoFallar ? (
                         <p className="mt-2">
-                          <span className="font-bold">Fallar la tutela (10 días háb. desde radicación): </span>
+                          <span className="font-bold">
+                            Fallar la tutela ({plazoFallar.termDays} días háb. desde radicación):{' '}
+                          </span>
                           {plazoFallar.remaining > 0 ? (
                             <>
                               quedan <strong>{plazoFallar.remaining}</strong> día(s) hábil(es)

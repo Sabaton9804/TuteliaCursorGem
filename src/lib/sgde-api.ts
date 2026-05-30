@@ -85,6 +85,24 @@ export type MigrateSgdeOriginResult = {
   error?: string;
 };
 
+export type ImportFromSgdeResult = {
+  ok: boolean;
+  caseId: string;
+  created: boolean;
+  radicado: string;
+  originRadicado: string | null;
+  sgdeRootId: string;
+  migrated: number;
+  failed: number;
+  skipped: number;
+  errors: string[];
+  preflightStatus: SgdePreflightStatus;
+  message: string;
+  portalBaseUrl?: string;
+  error?: string;
+  code?: string;
+};
+
 export type PublishSegundaImpugnacionResult = {
   ok: boolean;
   sgdeRootId: string;
@@ -164,11 +182,27 @@ export type SgdeSyncDocumentsResult = {
   sgdeOnly: number;
   uploaded: number;
   uploadFailed: number;
+  repaired?: number;
+  imported?: number;
+  repairFailed?: number;
   items: SgdeDocumentSyncItem[];
   sgdeOnlyItems: SgdeDocumentSyncItem[];
   errors: string[];
   message: string;
   sgdeRootId: string;
+};
+
+export type SgdeRepairStorageResult = {
+  ok: boolean;
+  repaired: number;
+  imported: number;
+  failed: number;
+  skipped: number;
+  errors: string[];
+  message: string;
+  portalBaseUrl?: string;
+  error?: string;
+  code?: string;
 };
 
 export async function sgdeSyncDocuments(opts: {
@@ -195,6 +229,67 @@ export async function sgdeSyncDocuments(opts: {
     throw new Error(msg);
   }
   return body;
+}
+
+export async function sgdeRepairStorage(opts: {
+  caseId: string;
+  importSgdeOnly?: boolean;
+}): Promise<SgdeRepairStorageResult> {
+  const res = await fetch('/api/sgde/repair-storage', {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify({
+      caseId: opts.caseId,
+      importSgdeOnly: opts.importSgdeOnly !== false,
+    }),
+  });
+  const body = (await res.json().catch(() => ({}))) as SgdeRepairStorageResult & {
+    error?: string;
+    code?: string;
+  };
+  if (!res.ok) {
+    const msg =
+      body.code === 'USER_NOT_CONFIGURED'
+        ? 'Configure su usuario y contraseña SGDE en Ajustes.'
+        : body.error || `Error al reparar Storage (${res.status})`;
+    throw new Error(msg);
+  }
+  return body;
+}
+
+export type SgdeDocumentViewUrlResult = {
+  signedUrl: string;
+  storagePath: string;
+  repaired: boolean;
+};
+
+export async function sgdeDocumentViewUrl(opts: {
+  caseId: string;
+  documentId: string;
+}): Promise<SgdeDocumentViewUrlResult> {
+  const res = await fetch('/api/sgde/document-view-url', {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify({
+      caseId: opts.caseId,
+      documentId: opts.documentId,
+    }),
+  });
+  const body = (await res.json().catch(() => ({}))) as SgdeDocumentViewUrlResult & {
+    error?: string;
+    code?: string;
+  };
+  if (!res.ok) {
+    throw new Error(body.error || `No se pudo abrir el PDF (${res.status})`);
+  }
+  if (!body.signedUrl) {
+    throw new Error('Respuesta sin URL firmada.');
+  }
+  return {
+    signedUrl: body.signedUrl,
+    storagePath: body.storagePath,
+    repaired: body.repaired === true,
+  };
 }
 
 export async function sgdeCreateExpediente(opts: {
@@ -319,6 +414,42 @@ export async function sgdePublishSegundaImpugnacion(opts: {
       body.code === 'USER_NOT_CONFIGURED'
         ? 'Configure su usuario y contraseña SGDE en Ajustes.'
         : body.error || `Error al publicar en SGDE (${res.status})`;
+    throw new Error(msg);
+  }
+  return body;
+}
+
+export async function sgdeImportExpediente(opts: {
+  caseType: 'tutela_primera' | 'tutela_segunda';
+  radicado: string;
+  sgdeNodeIdHint?: string | null;
+  originCourt?: string;
+  appellant?: CaseAppellant | null;
+  originRuling?: CaseOriginRuling | null;
+  forceMigrate?: boolean;
+}): Promise<ImportFromSgdeResult> {
+  const res = await fetch('/api/sgde/import-expediente', {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify({
+      caseType: opts.caseType,
+      radicado: opts.radicado.replace(/\D/g, ''),
+      sgdeNodeIdHint: opts.sgdeNodeIdHint || undefined,
+      originCourt: opts.originCourt,
+      appellant: opts.appellant || undefined,
+      originRuling: opts.originRuling || undefined,
+      forceMigrate: opts.forceMigrate === true,
+    }),
+  });
+  const body = (await res.json().catch(() => ({}))) as ImportFromSgdeResult & {
+    error?: string;
+    code?: string;
+  };
+  if (!res.ok) {
+    const msg =
+      body.code === 'USER_NOT_CONFIGURED'
+        ? 'Configure su usuario y contraseña SGDE en Ajustes.'
+        : body.error || `Error al importar desde SGDE (${res.status})`;
     throw new Error(msg);
   }
   return body;

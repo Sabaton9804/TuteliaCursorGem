@@ -1,13 +1,14 @@
 import type { Case, CaseStatus, SustanciadorAssignmentMode } from '../types';
 import {
-  businessDaysRemainingInTenDayWindow,
-  businessDaysRemainingWithStoredDeadline,
+  businessDayTermEnd,
+  businessDaysRemainingInTermWindow,
+  businessDaysRemainingWithStoredTermDeadline,
   startOfLocalDay,
-  tenthBusinessDayDeadline,
 } from './business-days';
 import { DERECHO_TUTELADO_LABELS, resolveDerechoTuteladoCodeForInforme } from './sierju-case-codes';
 import type { ExpedienteAssignee } from './court-staff-assignees';
 import { resolveAssigneeForCase } from './court-staff-assignees';
+import { getCachedCaseTermBusinessDays } from './process-definitions-service';
 
 export type { ExpedienteAssignee } from './court-staff-assignees';
 
@@ -118,13 +119,15 @@ export interface ExpedienteViewRow {
   stage: BoardStage;
   assignee: ExpedienteAssignee;
   derechoTag: string;
-  /** Días hábiles restantes del término de 10 desde radicación (puede ser ≤0). */
+  /** Días hábiles restantes del término global del proceso (puede ser ≤0). */
   businessDaysRemaining: number;
   urgency: UrgencyLevel;
   filingDate: Date;
   deadlineDate: Date;
   /** 0–100 para barra de avance del término. */
   termProgressPercent: number;
+  /** Días hábiles del término global (desde process_definitions). */
+  caseTermBusinessDays: number;
 }
 
 export function buildExpedienteViewRow(
@@ -132,14 +135,16 @@ export function buildExpedienteViewRow(
   courtAssignmentMode?: SustanciadorAssignmentMode | null
 ): ExpedienteViewRow {
   const filingDate = startOfLocalDay(new Date(c.createdAt));
+  const caseTermBusinessDays = getCachedCaseTermBusinessDays(c.caseType);
   const storedDeadline =
     c.deadlineAt?.trim() && !Number.isNaN(Date.parse(c.deadlineAt))
       ? startOfLocalDay(new Date(c.deadlineAt))
       : null;
-  const deadlineDate = storedDeadline ?? tenthBusinessDayDeadline(filingDate);
+  const deadlineDate =
+    storedDeadline ?? businessDayTermEnd(filingDate, caseTermBusinessDays);
   const remaining = storedDeadline
-    ? businessDaysRemainingWithStoredDeadline(filingDate, storedDeadline)
-    : businessDaysRemainingInTenDayWindow(filingDate);
+    ? businessDaysRemainingWithStoredTermDeadline(filingDate, storedDeadline, caseTermBusinessDays)
+    : businessDaysRemainingInTermWindow(filingDate, caseTermBusinessDays);
   const stage = caseToBoardStage(c);
   const urgency = urgencyFromRemainingBusinessDays(remaining, c.status, stage);
   const assignee = resolveAssigneeForCase(c.assignedTo, c.id, courtAssignmentMode);
@@ -147,7 +152,7 @@ export function buildExpedienteViewRow(
 
   let termProgressPercent = Math.min(
     100,
-    Math.max(0, ((10 - Math.max(0, remaining)) / 10) * 100)
+    Math.max(0, ((caseTermBusinessDays - Math.max(0, remaining)) / caseTermBusinessDays) * 100)
   );
   if (stage === 'archivado' || stage === 'fallo_notificado') {
     termProgressPercent = 100;
@@ -163,6 +168,7 @@ export function buildExpedienteViewRow(
     filingDate,
     deadlineDate,
     termProgressPercent,
+    caseTermBusinessDays,
   };
 }
 

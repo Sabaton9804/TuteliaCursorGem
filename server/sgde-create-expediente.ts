@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { SgdeClient } from './sgde-client';
 import {
   buildSgdeExpedienteProperties,
-  courtRadicacionCode12,
+  courtRadicacionCode12FromRow,
   tipoDocumentalSgdeFromFileName,
   uploadOrderPriority,
 } from './sgde-tutela-metadata';
@@ -32,6 +32,10 @@ type CaseRow = {
 type CourtSgdeRow = {
   id: string;
   name: string;
+  dane_code: string | null;
+  entity_code: string | null;
+  specialty_code: string | null;
+  despacho_number: string | null;
   sgde_parent_node_id: string | null;
   sgde_upload_docs_on_create: boolean | null;
 };
@@ -76,7 +80,7 @@ export async function createExpedienteInSgde(opts: {
 
   const { data: courtRow, error: courtErr } = await admin
     .from('courts')
-    .select('id, name, sgde_parent_node_id, sgde_upload_docs_on_create')
+    .select('id, name, dane_code, entity_code, specialty_code, despacho_number, sgde_parent_node_id, sgde_upload_docs_on_create')
     .eq('id', c.court_id)
     .maybeSingle();
   if (courtErr || !courtRow?.id) {
@@ -110,7 +114,7 @@ export async function createExpedienteInSgde(opts: {
       String(process.env.SGDE_PARENT_EXPEDIENTES_NODE_ID || '').trim();
 
     if (!parentId) {
-      parentId = (await client.resolveParentContainer(courtRadicacionCode12())) || '';
+      parentId = (await client.resolveParentContainer(courtRadicacionCode12FromRow(court))) || '';
     }
 
     if (!parentId) {

@@ -84,6 +84,27 @@ function evaluateRecommended(leaves: SgdePdfLeaf[]): {
   return { found, missing };
 }
 
+export function notebookCodeFromSgdeFolderPath(
+  folderPath: string | undefined,
+  fallback: string
+): string {
+  const segments = (folderPath || '')
+    .split(/\s*\/\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (segments.length === 0) return fallback;
+  const cdo =
+    segments.find((s) => /\d*cdo/i.test(s) || /cuaderno/i.test(s)) ??
+    (segments.length >= 2 ? segments[1] : segments[0]);
+  const inst = /segunda\s*instancia/i.test(segments[0] || '') ? 'SI' : 'PI';
+  const slug = cdo
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_|_$/g, '')
+    .toUpperCase()
+    .slice(0, 36);
+  return slug ? `${inst}_${slug}` : fallback;
+}
+
 export function sgdeFilenameToProtocolName(raw: string, orden?: string): string {
   const base = raw.replace(/\.[^.]+$/i, '').trim() || 'DocumentoSgde';
   const words = base.split(/[^a-zA-Z0-9]+/).filter((w) => w.length > 0);
@@ -324,6 +345,7 @@ export async function migrateSgdeOriginToCase(opts: {
         continue;
       }
 
+      const nbFromPath = notebookCodeFromSgdeFolderPath(leaf.folderPath, notebookCode);
       const docRows = [
         {
           case_id: caseId,
@@ -335,7 +357,7 @@ export async function migrateSgdeOriginToCase(opts: {
           storage_path: up.path,
           is_from_link: false,
           sort_order: sortOrder++,
-          notebook_code: notebookCode,
+          notebook_code: nbFromPath,
           sgde_id: leaf.id,
           sgde_folder_path: leaf.folderPath || null,
           sgde_sync_status: 'linked',

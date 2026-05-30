@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Copy, FileDown, FileText, Gavel, Loader2, RefreshCw, Send } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { DESPACHO_STAFF } from '../../lib/court-staff-assignees';
+import { getCachedNameByRole } from '../../lib/court-staff-cache';
 import { downloadCaseDocxFromStoragePath } from '../../lib/download-case-docx';
 import type {
   Case,
@@ -137,8 +137,9 @@ function hasMeaningfulReviewMarkup(row: CaseWordReview): boolean {
   }
 }
 
-const JUEZ_REVISION_ORGANIGRAMA =
-  DESPACHO_STAFF.find((p) => p.courtRole === 'judge')?.name?.trim() || '—';
+function judgeNameForReview(): string {
+  return getCachedNameByRole('judge') || '—';
+}
 
 export function CaseWordReviewPanel({
   caseId,
@@ -405,7 +406,7 @@ export function CaseWordReviewPanel({
                     <p className="mt-1 text-xs font-semibold text-indigo-900">{STATUS_LABEL[r.status]}</p>
                     <p className="mt-1.5 text-[10px] leading-snug text-slate-500">
                       Revisión judicial de referencia:{' '}
-                      <span className="font-semibold text-slate-700">{JUEZ_REVISION_ORGANIGRAMA}</span>
+                      <span className="font-semibold text-slate-700">{judgeNameForReview()}</span>
                     </p>
                     <div className="mt-2 flex flex-wrap items-center gap-2">
                       <p className="break-all font-mono text-[10px] text-slate-500" title="UUID de la fila case_word_reviews">
