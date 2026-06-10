@@ -7,6 +7,7 @@ import {
   type CaseStageCode,
 } from './case-workflow-stages';
 import { filterToMvpProductScope, isMvpRadicableCaseType } from './process-product-scope';
+import { caseTermBusinessDaysFromDecreto2591 } from './decreto-2591-plazos';
 
 export type LoadedProcessDefinition = ProcessDefinitionRow & {
   stages: ProcessStageDefinitionRow[];
@@ -68,15 +69,13 @@ export function getCachedStageDefinitionId(
   return getCachedStageDefinition(caseType, stageCode)?.id ?? null;
 }
 
-const DEFAULT_CASE_TERM_BUSINESS_DAYS = 10;
-
-/** Plazo global del caso (días hábiles desde radicación). Tutela: 10 por defecto. */
+/** Plazo global del caso (días hábiles). Decreto 2591/1991: art. 29 (1ª) y art. 32 (2ª). */
 export function getCachedCaseTermBusinessDays(caseType: CaseType | undefined): number {
   const def = getCachedProcessDefinitionByCaseType(caseType);
   if (def?.case_term_type === 'habiles' && def.case_term_days != null && def.case_term_days > 0) {
     return def.case_term_days;
   }
-  return DEFAULT_CASE_TERM_BUSINESS_DAYS;
+  return caseTermBusinessDaysFromDecreto2591(caseType);
 }
 
 /** Plazo secundario de una etapa (contestación, impugnación, etc.) desde BD. */

@@ -7,6 +7,7 @@ import fs from 'fs';
 import multer from 'multer';
 import axios from 'axios';
 import OpenAI from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import {
   extraerTextoPlanoDocx,
@@ -15,6 +16,7 @@ import {
 } from './docx-plantilla-server';
 import { catalogoTextoParaPromptIA } from './src/lib/plantilla-marcadores-catalog.ts';
 import type { DocumentTemplateTipo } from './src/types.ts';
+import { PRECEDENT_SEARCH_CONFIG } from './src/config/precedentSearch.ts';
 import { detectActaRepartoInPdfBuffer } from './pdf-acta-detect';
 import { createPrecedentsFileRouter } from './precedents-routes';
 import { SgdeClient, getDefaultSgdeBaseUrl } from './server/sgde-client';
@@ -32,9 +34,11 @@ import { requireAuthenticatedCaller } from './server/outlook-auth';
 import {
   aggregateChunkMatches,
   buildChunksForPrecedent,
+  buildSyntheticSearchCard,
   createEmbedding1536,
   embedTextsBatch,
   insertPrecedentChunkRows,
+  reindexPrecedent,
   vectorToPgString,
   type MatchPrecedentChunkRow,
 } from './server/precedent-chunks-service.js';
@@ -43,9 +47,24 @@ import {
   normalizeRadicado,
   PRECEDENT_RADICADO_PENDIENTE,
 } from './server/precedent-radicado.js';
+import {
+  classifyPrecedentSource,
+  fetchCourtMetaForPrecedent,
+  type PrecedentSourceType,
+} from './server/precedent-source-classify.js';
 import { createOpenAiTlsInsecureFetch } from './server/openai-insecure-fetch.js';
 import { analyzeCaseDocumentPiece } from './server/analyze-piece-service.js';
 import { reviewJudicialText } from './server/ai-review-text-service.js';
+import {
+  inferLegalSpecialtyFromRadicado,
+  normalizeLegalSpecialty,
+  type LegalSpecialtyCode,
+} from './src/lib/precedent-legal-specialties.ts';
+import {
+  inferIssuerCategoryFromCorporation,
+  normalizeIssuerCategory,
+  type IssuerCategoryCode,
+} from './src/lib/precedent-issuer-category.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -100,8 +119,9 @@ function loadProjectEnv() {
   }
 
   const hasOpenAi = Boolean(process.env.OPENAI_API_KEY?.trim());
+  const hasGemini = Boolean(process.env.GEMINI_API_KEY?.trim());
   console.log(
-    `[tutelia] OPENAI_API_KEY: ${hasOpenAi ? 'OK' : 'NO'}. ` +
+    `[tutelia] OPENAI_API_KEY: ${hasOpenAi ? 'OK' : 'NO'}. GEMINI_API_KEY: ${hasGemini ? 'OK' : 'NO'}. ` +
       `OPENAI_TLS_INSECURE (HTTPS relajado hacia OpenAI): ${isOpenAiTlsInsecureEnv() ? 'SÍ' : 'no'}. ` +
       `SGDE_TLS relajado: ${isSgdeTlsInsecure() ? 'SÍ' : 'no'}. ` +
       `Raíz server: ${projectRoot}. cwd: ${cwd}. ` +
@@ -125,6 +145,8 @@ function applyOpenAiTlsDevBypass() {
 
 loadProjectEnv();
 applyOpenAiTlsDevBypass();
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
 /**
  * Si `npm run dev` arrancó antes de que existiera `.env`, el primer `loadProjectEnv` no leyó nada.
@@ -292,7 +314,6 @@ async function requireCaseAccessForCaller(
   };
 }
 
-type PrecedentSourceType = 'despacho' | 'jurisprudencia';
 
 const CASE_DOCUMENTS_BUCKET = 'case-documents';
 const PRECEDENT_PDF_SIGNED_URL_TTL_SEC = 3600;
@@ -347,7 +368,100 @@ async function enrichPrecedentSearchResultsWithStoragePath(
 }
 
 const PRECEDENT_ROW_SELECT =
-  'id, court_id, source_case_id, source_type, source_corporation, radicado, right_protected, defendant, ruling_sense, legal_arguments, summary, decision_date, tags, source_storage_path, created_at, updated_at';
+  'id, court_id, source_case_id, source_type, source_corporation, legal_specialty, issuer_category, radicado, right_protected, defendant, ruling_sense, legal_arguments, summary, decision_date, tags, source_storage_path, index_status, created_at, updated_at';
+
+const LEGAL_SPECIALTY_JSON_ENUM = [
+  'tutela',
+  'civil',
+  'laboral',
+  'familia',
+  'penal',
+  'administrativo',
+  'agrario',
+  'constitucional',
+  'contencioso',
+  'comercial',
+  'mixto',
+  'otro',
+] as const;
+
+const ISSUER_CATEGORY_JSON_ENUM = [
+  'corte_constitucional',
+  'corte_suprema',
+  'consejo_estado',
+  'tribunal',
+  'juzgado',
+  'juzgado_pequenas_causas',
+  'comision',
+  'otro',
+] as const;
+
+function resolveLegalSpecialtyForPrecedent(
+  fromIa: string | undefined,
+  radicado: string,
+  userHint?: string | undefined
+): LegalSpecialtyCode {
+  const hint = normalizeLegalSpecialty(userHint);
+  if (hint) return hint;
+  const ia = normalizeLegalSpecialty(fromIa);
+  if (ia) return ia;
+  const fromRad = inferLegalSpecialtyFromRadicado(radicado);
+  if (fromRad) return fromRad;
+  return 'otro';
+}
+
+function resolveIssuerCategoryForPrecedent(
+  fromIa: string | undefined,
+  sourceCorporation: string,
+  userHint?: string | undefined
+): IssuerCategoryCode {
+  const hint = normalizeIssuerCategory(userHint);
+  if (hint) return hint;
+  const ia = normalizeIssuerCategory(fromIa);
+  if (ia) return ia;
+  const fromCorp = inferIssuerCategoryFromCorporation(sourceCorporation);
+  if (fromCorp) return fromCorp;
+  return 'otro';
+}
+
+async function requireCallerCourtAccess(
+  req: express.Request,
+  courtIdParam: string
+): Promise<
+  | { ok: true; admin: SupabaseClient; courtId: string }
+  | { ok: false; status: number; message: string }
+> {
+  const authHdr = String(req.headers.authorization || '');
+  const m = /^Bearer\s+(.+)$/i.exec(authHdr);
+  const token = m?.[1]?.trim();
+  if (!token) {
+    return { ok: false, status: 401, message: 'Se requiere sesión (Authorization: Bearer).' };
+  }
+  let admin: SupabaseClient;
+  try {
+    admin = getSupabaseAdmin();
+  } catch (e) {
+    return { ok: false, status: 503, message: String((e as Error)?.message || 'Supabase no configurado en servidor.') };
+  }
+  const { data: authData, error: authErr } = await admin.auth.getUser(token);
+  if (authErr || !authData?.user?.id) {
+    return { ok: false, status: 401, message: 'Sesión inválida o expirada.' };
+  }
+  const uid = authData.user.id;
+  const { data: prof, error: profErr } = await admin
+    .from('profiles')
+    .select('court_id')
+    .eq('id', uid)
+    .maybeSingle();
+  if (profErr || !prof?.court_id) {
+    return { ok: false, status: 403, message: 'Perfil sin despacho asignado.' };
+  }
+  const profileCourt = String(prof.court_id);
+  if (courtIdParam !== profileCourt) {
+    return { ok: false, status: 403, message: 'No autorizado para este despacho.' };
+  }
+  return { ok: true, admin, courtId: profileCourt };
+}
 
 async function requirePrecedentCourtAccessForCaller(
   req: express.Request,
@@ -427,6 +541,8 @@ async function insertPrecedentRow(opts: {
   summary: string;
   decisionDate: string | null;
   tags: string[];
+  legalSpecialty: LegalSpecialtyCode;
+  issuerCategory: IssuerCategoryCode;
   logIndexFromFileDebug?: boolean;
 }) {
   const {
@@ -444,6 +560,8 @@ async function insertPrecedentRow(opts: {
     summary,
     decisionDate,
     tags,
+    legalSpecialty,
+    issuerCategory,
     logIndexFromFileDebug,
   } = opts;
   const radicadoNorm = normalizeRadicado(radicado);
@@ -468,16 +586,27 @@ async function insertPrecedentRow(opts: {
   });
   const chunkTexts = chunks.map((c) => c.text);
   const vectors = await embedTextsBatch(openai, chunkTexts);
-  const embStr0 = vectorToPgString(vectors[0]);
+  const searchCardText = buildSyntheticSearchCard({
+    right_protected: rightProtected,
+    ruling_sense: rulingSense,
+    summary,
+  });
+  const parentVector = await createEmbedding1536(openai, searchCardText);
+  const embParent = vectorToPgString(parentVector);
 
   if (logIndexFromFileDebug) {
     console.log(
       '[precedents/index-from-file] fragmentos:',
       chunks.length,
-      '; vector padre (= chunk 0), dimensión=',
-      vectors[0]?.length
+      '; vector padre (= ficha sintética), dimensión=',
+      parentVector.length
     );
-    console.log('[precedents/index-from-file] longitud string pgvector padre:', embStr0.length);
+    console.log(
+      '[precedents/index-from-file] ficha sintética (chars):',
+      searchCardText.length,
+      '; pgvector padre (chars):',
+      embParent.length
+    );
   }
 
   const { data, error } = await supabase
@@ -487,6 +616,8 @@ async function insertPrecedentRow(opts: {
       source_case_id: caseId || null,
       source_type: sourceType,
       source_corporation: sourceCorporation,
+      legal_specialty: legalSpecialty,
+      issuer_category: issuerCategory,
       radicado: radicadoNorm,
       right_protected: rightProtected,
       defendant,
@@ -495,7 +626,8 @@ async function insertPrecedentRow(opts: {
       summary,
       decision_date: decisionDate,
       tags,
-      embedding: embStr0,
+      embedding: embParent,
+      index_status: 'pending',
     })
     .select(PRECEDENT_ROW_SELECT)
     .single();
@@ -504,8 +636,13 @@ async function insertPrecedentRow(opts: {
   const precedentId = String(data.id);
   try {
     await insertPrecedentChunkRows(supabase, precedentId, courtId, chunks, vectors);
+    const { error: readyErr } = await supabase
+      .from('precedents')
+      .update({ index_status: 'ready' })
+      .eq('id', precedentId);
+    if (readyErr) throw readyErr;
   } catch (chunkErr: any) {
-    await supabase.from('precedents').delete().eq('id', precedentId);
+    await supabase.from('precedents').update({ index_status: 'failed' }).eq('id', precedentId);
     const msg = String(chunkErr?.message || chunkErr || '');
     throw new Error(
       msg.includes('precedent_chunks') || msg.includes('match_precedent_chunks') || msg.includes('does not exist')
@@ -514,7 +651,7 @@ async function insertPrecedentRow(opts: {
     );
   }
 
-  return data;
+  return { ...data, index_status: 'ready' };
 }
 
 function parseDecisionDateYmd(raw: string): string | null {
@@ -536,6 +673,8 @@ const PRECEDENT_EXTRACT_SCHEMA = {
     legal_arguments: { type: 'string' },
     decision_date: { type: 'string' },
     defendant: { type: 'string' },
+    legal_specialty: { type: 'string', enum: [...LEGAL_SPECIALTY_JSON_ENUM] },
+    issuer_category: { type: 'string', enum: [...ISSUER_CATEGORY_JSON_ENUM] },
   },
   required: [
     'radicado',
@@ -546,6 +685,8 @@ const PRECEDENT_EXTRACT_SCHEMA = {
     'legal_arguments',
     'decision_date',
     'defendant',
+    'legal_specialty',
+    'issuer_category',
   ],
 } as const;
 
@@ -558,6 +699,8 @@ type PrecedentExtract = {
   legal_arguments: string;
   decision_date: string;
   defendant: string;
+  legal_specialty: string;
+  issuer_category: string;
 };
 
 const PRECEDENT_SHORT_EXTRACT_SCHEMA = {
@@ -568,16 +711,22 @@ const PRECEDENT_SHORT_EXTRACT_SCHEMA = {
     source_corporation: { type: 'string' },
     right_protected: { type: 'string' },
     ruling_sense: { type: 'string' },
+    summary: { type: 'string' },
     decision_date: { type: 'string' },
     defendant: { type: 'string' },
+    legal_specialty: { type: 'string', enum: [...LEGAL_SPECIALTY_JSON_ENUM] },
+    issuer_category: { type: 'string', enum: [...ISSUER_CATEGORY_JSON_ENUM] },
   },
   required: [
     'radicado',
     'source_corporation',
     'right_protected',
     'ruling_sense',
+    'summary',
     'decision_date',
     'defendant',
+    'legal_specialty',
+    'issuer_category',
   ],
 } as const;
 
@@ -586,36 +735,50 @@ type PrecedentShortExtract = {
   source_corporation: string;
   right_protected: string;
   ruling_sense: string;
+  summary: string;
   decision_date: string;
   defendant: string;
+  legal_specialty: string;
+  issuer_category: string;
 };
+
+function buildPrecedentSummaryFallback(extracted: PrecedentExtract): string {
+  const s = String(extracted.summary || '').trim();
+  if (s.length >= 20) return s;
+  const combo = [extracted.ruling_sense, extracted.right_protected].filter(Boolean).join(' — ').trim();
+  if (combo.length >= 20) return combo;
+  const args = String(extracted.legal_arguments || '').trim();
+  if (args.length >= 80) return args.slice(0, 400).trim();
+  return combo || 'Resumen pendiente de revisión manual.';
+}
 
 async function extractPrecedentWithOpenAiPdf(openai: OpenAI, pdfBase64: string): Promise<PrecedentExtract> {
   const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 
-  const promptLargo = `Eres secretario judicial en Colombia. Lee el PDF adjunto (sentencia, auto, providencia o fallo de tutela u otro acto judicial).
+  const promptLargo = `Eres secretario judicial en Colombia. Lee el PDF adjunto (cualquier providencia judicial: tutela, sentencia civil, laboral, contencioso, penal cuando proceda, auto, interlocutorio, ejecutivo, ordinario u otro acto con decisión o trámite relevante).
 Tu salida debe ser ÚNICAMENTE prosa continua en español: sin títulos, sin viñetas, sin numeraciones, sin JSON, sin markdown.
-Redacta un solo texto corrido que integre de forma natural: hechos relevantes del caso; derechos fundamentales invocados o analizados; posición del accionado y de las partes frente al conflicto; ratio decidendi; regla o criterio jurídico aplicado; sentido del fallo y las razones del tribunal.
+Redacta un solo texto corrido que integre de forma natural: tipo de actuación y despacho o corporación que la profiere; hechos o antecedentes relevantes del caso; pretensiones o derechos invocados por la parte actora; posición de la parte demandada o accionada; fundamentos normativos y jurisprudenciales aplicados; criterio jurídico central o ratio decidendi; sentido de la decisión y sus efectos.
 El texto debe tener al menos 2500 caracteres. Si el documento tiene consideraciones jurídicas extensas, incorpóralas con fidelidad (no omitas pasajes sustanciales). No inventes hechos ajenos al acto.`;
 
-  const resLargo = await openai.responses.create({
-    model,
-    input: [
-      {
-        role: 'user',
-        content: [
-          { type: 'input_text', text: promptLargo },
-          {
-            type: 'input_file',
-            filename: 'sentencia.pdf',
-            file_data: `data:application/pdf;base64,${pdfBase64}`,
-          },
-        ],
-      },
-    ],
-  });
+  const geminiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!geminiKey) {
+    throw new Error(
+      'Falta GEMINI_API_KEY para extraer texto del PDF (Llamada 1). Configúrela en .env y reinicie npm run dev.'
+    );
+  }
 
-  let textoExtraido = String(resLargo.output_text || '').trim();
+  const geminiModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-preview-05-20' });
+  const geminiLargo = await geminiModel.generateContent([
+    promptLargo,
+    {
+      inlineData: {
+        mimeType: 'application/pdf',
+        data: pdfBase64,
+      },
+    },
+  ]);
+  const geminiLargoResponse = geminiLargo.response;
+  let textoExtraido = String(geminiLargoResponse.text() || '').trim();
   textoExtraido = textoExtraido.replace(/^```[\w]*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
 
   const textoParaContexto =
@@ -628,13 +791,16 @@ Texto extraído del fallo:
 ${textoParaContexto}
 ---
 
-Campos del JSON:
-- radicado: número o referencia del proceso si aparece (ej. 11001-03-24-000-12345-00, T-760/08).
-- source_corporation: juzgado, tribunal o corte que emitió el acto.
-- right_protected: materia o derecho(s) tutelado(s) en una frase breve.
-- ruling_sense: sentido del fallo en una línea (concede, niega, inadmite, etc.).
+Campos del JSON (no dejes vacíos si el texto los contiene):
+- radicado: número CUI de 23 dígitos o referencia (T-760/08, SU-062/18).
+- source_corporation: juzgado, tribunal o corte que emitió el acto (nombre completo).
+- right_protected: materia o pretensión principal del proceso en una frase (mín. 15 caracteres).
+- ruling_sense: sentido del fallo (concede, niega, inadmite, revoca, etc.; mín. 8 caracteres).
+- summary: resumen ejecutivo agnóstico al tipo de proceso. Debe incluir en prosa continua: tipo de actuación, materia, hechos centrales, posición de las partes, sentido de la decisión y criterio jurídico aplicado. Entre 4 y 8 oraciones.
 - decision_date: AAAA-MM-DD si se deduce con claridad; si no, cadena vacía.
-- defendant: accionado o entidad principal; si no aplica, "—".`;
+- defendant: demandado, accionado o entidad principal; si no aplica, "—".
+- legal_specialty: una de tutela, civil, laboral, familia, penal, administrativo, agrario, constitucional, contencioso, comercial, mixto, otro — según el tipo de proceso del acto (la tutela es la misma figura en todo el país; use tutela cuando el acto sea acción de tutela).
+- issuer_category: categoría de la corporación que profiere el acto: corte_constitucional, corte_suprema, consejo_estado, tribunal, juzgado, juzgado_pequenas_causas, comision, otro — deducido del nombre del despacho en source_corporation.`;
 
   const resCortos = await openai.responses.create({
     model,
@@ -656,6 +822,15 @@ Campos del JSON:
   const ruling_sense = String(short.ruling_sense || '').trim();
   const decision_date = String(short.decision_date || '').trim();
   const defendant = String(short.defendant || '').trim();
+  const summary = String(short.summary || '').trim();
+  const legal_specialty = resolveLegalSpecialtyForPrecedent(
+    String(short.legal_specialty || ''),
+    radicado
+  );
+  const issuer_category = resolveIssuerCategoryForPrecedent(
+    String(short.issuer_category || ''),
+    source_corporation
+  );
 
   const metaLine = [
     `Radicado: ${radicado}`,
@@ -671,10 +846,12 @@ Campos del JSON:
     source_corporation,
     right_protected,
     ruling_sense,
-    summary: '',
+    summary,
     legal_arguments: `${textoExtraido}\n\n${metaLine}`,
     decision_date,
     defendant,
+    legal_specialty,
+    issuer_category,
   };
 }
 
@@ -684,9 +861,11 @@ async function extractPrecedentWithOpenAiPlainText(openai: OpenAI, plainText: st
   const prompt = `Eres secretario judicial en Colombia. El siguiente texto fue extraído de un documento Word (.docx) judicial.
 Extrae los mismos campos que si fuera un PDF de sentencia. Responde SOLO con el JSON indicado.
 
-Campos:
-- radicado, source_corporation, right_protected, ruling_sense, decision_date (AAAA-MM-DD o vacío), defendant (o "—") según las mismas reglas que para PDF.
-- summary: opcional, una sola frase de titular o cadena vacía; el texto largo para embedding va en legal_arguments.
+Campos (obligatorio rellenar si constan en el documento):
+- radicado, source_corporation, right_protected, ruling_sense, decision_date (AAAA-MM-DD o vacío), defendant (o "—").
+- legal_specialty: tutela | civil | laboral | familia | penal | administrativo | agrario | constitucional | contencioso | comercial | mixto | otro.
+- issuer_category: corte_constitucional | corte_suprema | consejo_estado | tribunal | juzgado | juzgado_pequenas_causas | comision | otro.
+- summary: resumen ejecutivo 2–4 oraciones para tabla (mín. 40 caracteres si hay contenido suficiente).
 - legal_arguments: texto corrido en español, sin títulos, sin viñetas, sin numeraciones, prosa continua optimizada para embedding semántico. Mínimo 2500 caracteres. Debe integrar obligatoriamente en el discurso: (1) hechos relevantes del caso, (2) derechos fundamentales invocados o analizados, (3) posición del accionado o partes, (4) ratio decidendi, (5) regla o criterio aplicado, (6) sentido del fallo y por qué el tribunal así decide. Sin inventar hechos ajenos al documento.
 
 --- TEXTO DEL DOCUMENTO ---
@@ -705,7 +884,16 @@ ${slice}`;
     },
   });
   const content = result.output_text || '{}';
-  return JSON.parse(content) as PrecedentExtract;
+  const parsed = JSON.parse(content) as PrecedentExtract;
+  parsed.legal_specialty = resolveLegalSpecialtyForPrecedent(
+    parsed.legal_specialty,
+    String(parsed.radicado || '')
+  );
+  parsed.issuer_category = resolveIssuerCategoryForPrecedent(
+    parsed.issuer_category,
+    String(parsed.source_corporation || '')
+  );
+  return parsed;
 }
 
 function mapAiError(error: any) {
@@ -800,9 +988,12 @@ const handlePrecedentsAttachPdf: express.RequestHandler = async (req, res) => {
 const handlePrecedentsIndexFromFile: express.RequestHandler = async (req, res) => {
   try {
     const body = req.body as Record<string, string | undefined>;
+    const legalSpecialtyHint = String(body.legalSpecialty || body.legal_specialty || '').trim();
+    const issuerCategoryHint = String(body.issuerCategory || body.issuer_category || '').trim();
     const courtId = String(body.courtId || '').trim();
-    const sourceTypeRaw = String(body.sourceType || 'jurisprudencia').trim().toLowerCase();
-    const sourceType: PrecedentSourceType = sourceTypeRaw === 'despacho' ? 'despacho' : 'jurisprudencia';
+    const sourceTypeHintRaw = String(body.sourceType || body.sourceTypeHint || '').trim().toLowerCase();
+    const sourceTypeHint: PrecedentSourceType | null =
+      sourceTypeHintRaw === 'despacho' || sourceTypeHintRaw === 'jurisprudencia' ? sourceTypeHintRaw : null;
     const sourceCorporationFallback = String(body.sourceCorporation || '').trim();
     const radicadoHint = String(body.radicadoHint || '').trim();
 
@@ -885,16 +1076,24 @@ const handlePrecedentsIndexFromFile: express.RequestHandler = async (req, res) =
       radicado = normalizeRadicado(rawRadicado);
     }
 
-    let sourceCorporation: string | null = null;
-    if (sourceType === 'jurisprudencia') {
-      sourceCorporation =
-        String(extracted.source_corporation || '').trim() || sourceCorporationFallback || null;
-      if (!sourceCorporation) {
-        return res.status(422).json({
-          error:
-            'No se identificó la corporación en el documento. Elija «Corporación (respaldo)» en el formulario o use un archivo con encabezado claro.',
-        });
-      }
+    const supabase = getSupabaseAdmin();
+    const courtMeta = await fetchCourtMetaForPrecedent(supabase, courtId);
+    const extractedCorp = String(extracted.source_corporation || '').trim() || sourceCorporationFallback;
+    const classified = classifyPrecedentSource({
+      court: courtMeta,
+      sourceCorporation: extractedCorp,
+      radicado,
+      userHint: sourceTypeHint,
+    });
+    const sourceType = classified.sourceType;
+    let sourceCorporation: string | null = classified.sourceCorporation;
+    if (sourceType === 'jurisprudencia' && !sourceCorporation && extractedCorp) {
+      sourceCorporation = extractedCorp;
+    }
+    if (sourceType === 'jurisprudencia' && !sourceCorporation) {
+      warnings.push(
+        'No se identificó corporación externa; quedó como jurisprudencia de referencia sin corporación.'
+      );
     }
 
     let defendantOut = String(extracted.defendant || '').trim();
@@ -902,7 +1101,12 @@ const handlePrecedentsIndexFromFile: express.RequestHandler = async (req, res) =
 
     const rightProtected = String(extracted.right_protected || '').trim() || 'Materia no determinada';
     const rulingSense = String(extracted.ruling_sense || '').trim() || 'Sentido no determinado';
-    const summary = String(extracted.summary || '').trim() || 'Sin resumen automático.';
+    const summary = buildPrecedentSummaryFallback(extracted);
+    if (rightProtected === 'Materia no determinada' || rulingSense === 'Sentido no determinado') {
+      warnings.push(
+        'La IA no completó materia o sentido del fallo. Revise la fila en la tabla y edite si hace falta.'
+      );
+    }
     const legalArguments =
       String(extracted.legal_arguments || '').trim() || 'Sin detalle de argumentos automático.';
     if ([rightProtected, rulingSense, summary, legalArguments].join(' ').trim().length < 30) {
@@ -914,8 +1118,17 @@ const handlePrecedentsIndexFromFile: express.RequestHandler = async (req, res) =
 
     const decisionDate = parseDecisionDateYmd(extracted.decision_date);
     const tags = sourceType === 'jurisprudencia' && sourceCorporation ? [sourceCorporation] : [];
+    const legalSpecialty = resolveLegalSpecialtyForPrecedent(
+      extracted.legal_specialty,
+      radicado,
+      legalSpecialtyHint
+    );
+    const issuerCategory = resolveIssuerCategoryForPrecedent(
+      extracted.issuer_category,
+      sourceCorporation,
+      issuerCategoryHint
+    );
 
-    const supabase = getSupabaseAdmin();
     const data = await insertPrecedentRow({
       openai,
       supabase,
@@ -931,6 +1144,8 @@ const handlePrecedentsIndexFromFile: express.RequestHandler = async (req, res) =
       summary,
       decisionDate,
       tags,
+      legalSpecialty,
+      issuerCategory,
       logIndexFromFileDebug: true,
     });
     if (isPdf) {
@@ -940,9 +1155,14 @@ const handlePrecedentsIndexFromFile: express.RequestHandler = async (req, res) =
         .select(PRECEDENT_ROW_SELECT)
         .eq('id', data.id)
         .single();
-      return res.json({ precedent: refreshed ?? data, extracted, warnings });
+      return res.json({
+        precedent: refreshed ?? data,
+        extracted,
+        warnings,
+        classified: { sourceType, reason: classified.reason },
+      });
     }
-    return res.json({ precedent: data, extracted, warnings });
+    return res.json({ precedent: data, extracted, warnings, classified: { sourceType, reason: classified.reason } });
   } catch (error: any) {
     console.error('precedents/index-from-file:', error);
     const msg = String(error?.message || '');
@@ -1406,6 +1626,15 @@ Instrucciones obligatorias para los campos de texto:
       const decisionDateRaw = b.decisionDate != null ? String(b.decisionDate).trim() : '';
       const decisionDate = decisionDateRaw ? decisionDateRaw.slice(0, 10) : null;
       const tags = Array.isArray(b.tags) ? b.tags : [];
+      const legalSpecialty = resolveLegalSpecialtyForPrecedent(
+        String(b.legalSpecialty || b.legal_specialty || ''),
+        radicado
+      );
+      const issuerCategory = resolveIssuerCategoryForPrecedent(
+        String(b.issuerCategory || b.issuer_category || ''),
+        String(b.sourceCorporation || ''),
+        String(b.issuerCategory || b.issuer_category || '')
+      );
       const sourceTypeRaw = String(b.sourceType || 'despacho').trim().toLowerCase();
       const sourceType = sourceTypeRaw === 'jurisprudencia' ? 'jurisprudencia' : 'despacho';
       const sourceCorporation =
@@ -1440,6 +1669,8 @@ Instrucciones obligatorias para los campos de texto:
         summary,
         decisionDate,
         tags,
+        legalSpecialty,
+        issuerCategory,
       });
       return res.json({ precedent: data });
     } catch (error: any) {
@@ -1453,6 +1684,48 @@ Instrucciones obligatorias para los campos de texto:
         return res.status(mapped.status).json({ error: mapped.message });
       }
       return res.status(500).json({ error: msg || 'Error al indexar precedente' });
+    }
+  });
+
+  app.get('/api/precedents', async (req, res) => {
+    try {
+      const courtId = String(req.query.courtId || '').trim();
+      if (!courtId) {
+        return res.status(400).json({ error: 'courtId es requerido' });
+      }
+      const acc = await requireCallerCourtAccess(req, courtId);
+      if (acc.ok === false) {
+        return res.status(acc.status).json({ error: acc.message });
+      }
+
+      const sourceTypeRaw = String(req.query.sourceType || '').trim().toLowerCase();
+      let query = acc.admin
+        .from('precedents')
+        .select(PRECEDENT_ROW_SELECT, { count: 'exact' })
+        .eq('court_id', courtId);
+      if (sourceTypeRaw === 'despacho' || sourceTypeRaw === 'jurisprudencia') {
+        query = query.eq('source_type', sourceTypeRaw);
+      }
+
+      const page = Math.max(1, parseInt(String(req.query.page || '1'), 10) || 1);
+      const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize || '25'), 10) || 25));
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+
+      const { data, error, count } = await query
+        .order('decision_date', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false })
+        .range(from, to);
+      if (error) throw error;
+
+      return res.json({ precedents: data ?? [], total: count ?? 0 });
+    } catch (error: any) {
+      console.error('precedents/list:', error);
+      const msg = String(error?.message || '');
+      if (msg.includes('Faltan SUPABASE') || msg.includes('SUPABASE_SERVICE_ROLE')) {
+        return res.status(503).json({ error: msg });
+      }
+      return res.status(500).json({ error: msg || 'Error al listar precedentes' });
     }
   });
 
@@ -1476,12 +1749,15 @@ Instrucciones obligatorias para los campos de texto:
       const { data: chunkRows, error: chunkErr } = await supabase.rpc('match_precedent_chunks', {
         query_embedding: embStr,
         match_court_id: courtId,
-        match_count: 48,
-        match_threshold: 0.22,
+        match_count: PRECEDENT_SEARCH_CONFIG.CHUNK_LIMIT,
+        match_threshold: PRECEDENT_SEARCH_CONFIG.CHUNK_MATCH_THRESHOLD,
       });
 
       if (!chunkErr && Array.isArray(chunkRows) && chunkRows.length > 0) {
-        const aggregated = aggregateChunkMatches(chunkRows as MatchPrecedentChunkRow[], 3);
+        const aggregated = aggregateChunkMatches(
+          chunkRows as MatchPrecedentChunkRow[],
+          PRECEDENT_SEARCH_CONFIG.TOP_PRECEDENTS
+        );
         const results = aggregated as unknown as Array<Record<string, unknown>>;
         await enrichPrecedentSearchResultsWithStoragePath(supabase, results);
         return res.json({ results: aggregated });
@@ -1494,8 +1770,8 @@ Instrucciones obligatorias para los campos de texto:
       const { data, error } = await supabase.rpc('match_precedents', {
         query_embedding: embStr,
         match_court_id: courtId,
-        match_count: 3,
-        match_threshold: 0.3,
+        match_count: PRECEDENT_SEARCH_CONFIG.LEGACY_TOP,
+        match_threshold: PRECEDENT_SEARCH_CONFIG.LEGACY_MATCH_THRESHOLD,
       });
       if (error) throw error;
       const legacy = (Array.isArray(data) ? data : []).map((row: Record<string, unknown>) => ({
@@ -1576,8 +1852,40 @@ Instrucciones obligatorias para los campos de texto:
         const raw = b.decision_date == null ? '' : String(b.decision_date).trim();
         patch.decision_date = raw ? parseDecisionDateYmd(raw) : null;
       }
+      if (b.right_protected !== undefined) {
+        patch.right_protected = String(b.right_protected ?? '').trim();
+      }
+      if (b.summary !== undefined) {
+        patch.summary = String(b.summary ?? '').trim();
+      }
+      if (b.legal_arguments !== undefined) {
+        patch.legal_arguments = String(b.legal_arguments ?? '').trim();
+      }
+      if (b.legal_specialty !== undefined) {
+        const spec = normalizeLegalSpecialty(String(b.legal_specialty ?? ''));
+        if (!spec) {
+          return res.status(400).json({ error: 'legal_specialty no válida' });
+        }
+        patch.legal_specialty = spec;
+      }
+      if (b.issuer_category !== undefined) {
+        const cat = normalizeIssuerCategory(String(b.issuer_category ?? ''));
+        if (!cat) {
+          return res.status(400).json({ error: 'issuer_category no válida' });
+        }
+        patch.issuer_category = cat;
+      }
 
-      const allowed = ['radicado', 'ruling_sense', 'decision_date'] as const;
+      const allowed = [
+        'radicado',
+        'ruling_sense',
+        'decision_date',
+        'right_protected',
+        'summary',
+        'legal_arguments',
+        'legal_specialty',
+        'issuer_category',
+      ] as const;
       const extra = Object.keys(b).filter((k) => !allowed.includes(k as (typeof allowed)[number]));
       if (extra.length) {
         return res.status(400).json({ error: `Campos no permitidos: ${extra.join(', ')}` });
@@ -1586,7 +1894,6 @@ Instrucciones obligatorias para los campos de texto:
         return res.status(400).json({ error: 'Nada que actualizar' });
       }
 
-      // No re-embeddear ni re-chunkear: el vector y precedent_chunks conservan el texto indexado original.
       const { data, error } = await acc.admin
         .from('precedents')
         .update(patch)
@@ -1594,7 +1901,16 @@ Instrucciones obligatorias para los campos de texto:
         .select(PRECEDENT_ROW_SELECT)
         .single();
       if (error) throw error;
-      return res.json({ precedent: data });
+
+      const body: { precedent: typeof data; reindex_warning?: string } = { precedent: data };
+      try {
+        const openai = getOpenAiClient();
+        await reindexPrecedent(precedentId, acc.admin, openai);
+      } catch (reindexErr) {
+        console.error('precedents/patch reindex:', reindexErr);
+        body.reindex_warning = 'Metadatos guardados. Reindexación pendiente.';
+      }
+      return res.json(body);
     } catch (error: any) {
       console.error('precedents/patch:', error);
       const msg = String(error?.message || '');

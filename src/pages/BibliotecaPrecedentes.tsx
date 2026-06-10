@@ -8,6 +8,21 @@ import { PRECEDENT_RADICADO_PENDIENTE } from '../lib/precedent-constants';
 import { useSessionCourt } from '../contexts/SessionCourtContext';
 import { PrecedentSourceBadge } from '../components/expediente/PrecedentSourceBadge';
 import { PrecedentPdfPreviewModal } from '../components/precedentes/PrecedentPdfPreviewModal';
+import { PrecedentSpecialtyBadge } from '../components/precedentes/PrecedentSpecialtyBadge';
+import { PrecedentIssuerCategoryBadge } from '../components/precedentes/PrecedentIssuerCategoryBadge';
+import {
+  LEGAL_SPECIALTY_CODES,
+  LEGAL_SPECIALTY_LABELS,
+  type LegalSpecialtyCode,
+} from '../lib/precedent-legal-specialties';
+import {
+  ISSUER_CATEGORY_CODES,
+  ISSUER_CATEGORY_LABELS,
+  type IssuerCategoryCode,
+} from '../lib/precedent-issuer-category';
+import ListPagination, { LIST_PAGE_SIZE_DEFAULT } from '../components/ui/ListPagination';
+import { supabaseRange } from '../lib/list-pagination';
+import type { ListPageSizeOption } from '../lib/list-pagination';
 
 const CORPORACIONES = [
   { value: 'Corte Constitucional', label: 'Corte Constitucional' },
@@ -23,6 +38,8 @@ type ListTab = 'despacho' | 'jurisprudencia';
 type PrecRow = {
   id: string;
   source_type: string;
+  legal_specialty: string | null;
+  issuer_category: string | null;
   source_corporation: string | null;
   radicado: string;
   right_protected: string;
@@ -109,10 +126,14 @@ export default function BibliotecaPrecedentes() {
   const [jMsg, setJMsg] = useState<string | null>(null);
 
   const fileInputRef = React.useRef<HTMLInputElement>(null);
-  const [uploadKind, setUploadKind] = useState<'jurisprudencia' | 'despacho'>('jurisprudencia');
-  const [uploadCorp, setUploadCorp] = useState<string>(CORPORACIONES[0].value);
-  const [uploadCorpOtra, setUploadCorpOtra] = useState('');
+  const [uploadCorpFallback, setUploadCorpFallback] = useState('');
   const [uploadRadicadoHint, setUploadRadicadoHint] = useState('');
+  const [uploadLegalSpecialty, setUploadLegalSpecialty] = useState<LegalSpecialtyCode | ''>('');
+  const [specialtyFilter, setSpecialtyFilter] = useState<LegalSpecialtyCode | ''>('');
+  const [issuerFilter, setIssuerFilter] = useState<IssuerCategoryCode | ''>('');
+  const [listPage, setListPage] = useState(1);
+  const [listPageSize, setListPageSize] = useState<ListPageSizeOption>(LIST_PAGE_SIZE_DEFAULT);
+  const [listTotal, setListTotal] = useState(0);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
   const [uploadMsgTone, setUploadMsgTone] = useState<'success' | 'warn' | 'error'>('success');
@@ -147,47 +168,49 @@ export default function BibliotecaPrecedentes() {
       setUploadMsgTone('error');
       return;
     }
-    if (uploadKind === 'jurisprudencia' && uploadCorp === '__otra__' && !uploadCorpOtra.trim()) {
-      setUploadMsg('Indique el nombre de la corporación en «Otra» (se usa si el PDF no lo deja claro).');
-      setUploadMsgTone('error');
-      return;
-    }
     const fd = new FormData();
     fd.append('archivo', file);
     fd.append('courtId', courtId);
-    fd.append('sourceType', uploadKind);
-    if (uploadKind === 'jurisprudencia') {
-      const corpFallback = uploadCorp === '__otra__' ? uploadCorpOtra.trim() : uploadCorp;
-      if (corpFallback) fd.append('sourceCorporation', corpFallback);
-    }
+    const corpFallback = uploadCorpFallback.trim();
+    if (corpFallback) fd.append('sourceCorporation', corpFallback);
     const hint = uploadRadicadoHint.trim();
     if (hint) fd.append('radicadoHint', hint);
+    if (uploadLegalSpecialty) fd.append('legalSpecialty', uploadLegalSpecialty);
+    // issuer_category se infiere de corporación en servidor; opcional hint futuro
     setUploadBusy(true);
     try {
       const res = await fetch('/api/precedents/index-from-file', { method: 'POST', body: fd });
       const j = (await res.json().catch(() => ({}))) as {
         error?: string;
-        precedent?: { id: string };
+        precedent?: { id: string; source_type?: string };
         warnings?: string[];
+        classified?: { sourceType?: string; reason?: string };
       };
       if (!res.ok) throw new Error(typeof j.error === 'string' ? j.error : 'No se pudo indexar el archivo');
       const warnings = Array.isArray(j.warnings) ? j.warnings.filter((w) => typeof w === 'string' && w.trim()) : [];
+      const autoTab: ListTab =
+        j.classified?.sourceType === 'despacho' || j.precedent?.source_type === 'despacho'
+          ? 'despacho'
+          : 'jurisprudencia';
+      const tipoLabel = autoTab === 'despacho' ? 'fallo del despacho' : 'jurisprudencia de referencia';
       if (warnings.length > 0) {
         setUploadMsg(
-          `Archivo indexado. ${warnings.join(' ')} Complete el radicado en la tabla si aplica.`
+          `Indexado como ${tipoLabel}. ${warnings.join(' ')} Revise radicado, materia y sentido en la tabla.`
         );
         setUploadMsgTone('warn');
       } else {
-        setUploadMsg('Archivo indexado correctamente. Ya puede buscarlo en la lista y en la búsqueda semántica.');
+        setUploadMsg(
+          `Indexado como ${tipoLabel}. Radicado, materia y sentido quedaron en la tabla; ya puede buscarlo.`
+        );
         setUploadMsgTone('success');
       }
       setUploadRadicadoHint('');
-      setUploadCorp(CORPORACIONES[0].value);
-      setUploadCorpOtra('');
+      setUploadCorpFallback('');
       setUploadFileKey((k) => k + 1);
       if (input) input.value = '';
-      setListTab(uploadKind);
-      await load(uploadKind);
+      setListTab(autoTab);
+      setListPage(1);
+      await load(autoTab, 1);
     } catch (ex) {
       setUploadMsg(ex instanceof Error ? ex.message : 'Error');
       setUploadMsgTone('error');
@@ -197,36 +220,48 @@ export default function BibliotecaPrecedentes() {
   }
 
   const load = useCallback(
-    async (tabOverride?: ListTab) => {
+    async (tabOverride?: ListTab, pageOverride?: number) => {
       const tab = tabOverride ?? listTab;
+      const page = pageOverride ?? listPage;
       setLoading(true);
       setErr(null);
       try {
-        const { data, error } = await supabase
+        const { from, to } = supabaseRange(page, listPageSize);
+        let q = supabase
           .from('precedents')
           .select(
-            'id, source_type, source_corporation, radicado, right_protected, defendant, ruling_sense, summary, decision_date, source_case_id, source_storage_path, created_at'
+            'id, source_type, legal_specialty, issuer_category, source_corporation, radicado, right_protected, defendant, ruling_sense, summary, decision_date, source_case_id, source_storage_path, created_at',
+            { count: 'exact' }
           )
           .eq('court_id', courtId)
-          .eq('source_type', tab)
+          .eq('source_type', tab);
+        if (specialtyFilter) q = q.eq('legal_specialty', specialtyFilter);
+        if (issuerFilter) q = q.eq('issuer_category', issuerFilter);
+        const { data, error, count } = await q
           .order('decision_date', { ascending: false, nullsFirst: false })
           .order('created_at', { ascending: false })
-          .limit(300);
+          .range(from, to);
         if (error) throw error;
         setRows((data as PrecRow[]) ?? []);
+        setListTotal(count ?? 0);
       } catch (e) {
         setErr(e instanceof Error ? e.message : 'Error al cargar precedentes');
         setRows([]);
+        setListTotal(0);
       } finally {
         setLoading(false);
       }
     },
-    [courtId, listTab]
+    [courtId, listTab, listPage, listPageSize, specialtyFilter, issuerFilter]
   );
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    setListPage(1);
+  }, [listTab, listPageSize, specialtyFilter, issuerFilter]);
 
   async function patchPrecedentRadicado(rowId: string, rawValue: string) {
     setRowPatchingId(rowId);
@@ -432,9 +467,11 @@ export default function BibliotecaPrecedentes() {
           vector para búsqueda.
         </p>
         <p className="max-w-3xl text-sm text-slate-600">
-          Dos fuentes en listado: <strong className="text-sky-800">fallos del despacho</strong> (expediente o archivo
-          histórico) y <strong className="text-emerald-800">jurisprudencia de referencia</strong> (corte/tribunal). La
-          búsqueda semántica mezcla ambas. Sugerencias por expediente en <strong>Síntesis</strong>.
+          Al subir un PDF o Word, la IA clasifica si es <strong className="text-sky-800">fallo del despacho</strong> o{' '}
+          <strong className="text-emerald-800">jurisprudencia externa</strong>, asigna la <strong>especialidad</strong>{' '}
+          (tutela, civil, laboral, familia, agrario, etc.), la <strong>categoría de corporación</strong> (Corte
+          Constitucional, Suprema, Tribunal, Juzgado…) y rellena radicado y materia. Filtre la tabla por especialidad y
+          por categoría.
         </p>
       </header>
 
@@ -443,31 +480,10 @@ export default function BibliotecaPrecedentes() {
           Subir sentencia o fallo (PDF / Word) — extracción con IA
         </h2>
         <p className="mb-4 max-w-3xl text-xs leading-relaxed text-slate-600">
-          No necesita copiar y pegar: adjunte el archivo. El servidor envía el documento al modelo, rellena los campos y
-          guarda el embedding. Use PDF con texto seleccionable (no solo imagen escaneada sin OCR) o un .docx con el
-          texto del fallo.
+          Adjunte el archivo: la IA detecta corporación y radicado, decide si es de este despacho o de otra corporación, y
+          completa la tabla (radicado, materia, sentido). PDF con texto seleccionable o .docx con contenido.
         </p>
-        <div className="flex flex-wrap gap-3 border-b border-violet-100 pb-4">
-          <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-800">
-            <input
-              type="radio"
-              name="uploadKind"
-              checked={uploadKind === 'jurisprudencia'}
-              onChange={() => setUploadKind('jurisprudencia')}
-            />
-            Jurisprudencia / otra corporación
-          </label>
-          <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-800">
-            <input
-              type="radio"
-              name="uploadKind"
-              checked={uploadKind === 'despacho'}
-              onChange={() => setUploadKind('despacho')}
-            />
-            Fallo histórico de este despacho
-          </label>
-        </div>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-2">
           <label className="flex flex-col gap-1 sm:col-span-2">
             <span className="text-[11px] font-semibold text-slate-700">Archivo</span>
             <input
@@ -478,40 +494,35 @@ export default function BibliotecaPrecedentes() {
               className="text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-violet-100 file:px-3 file:py-2 file:text-xs file:font-bold file:text-violet-900"
             />
           </label>
-          {uploadKind === 'jurisprudencia' ? (
-            <>
-              <label className="flex flex-col gap-1">
-                <span className="text-[11px] font-semibold text-slate-700">
-                  Corporación (respaldo si el PDF no la deja clara)
-                </span>
-                <select
-                  className="input-modern text-sm"
-                  value={uploadCorp}
-                  onChange={(e) => setUploadCorp(e.target.value)}
-                >
-                  {CORPORACIONES.map((c) => (
-                    <option key={c.value} value={c.value}>
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {uploadCorp === '__otra__' ? (
-                <label className="flex flex-col gap-1">
-                  <span className="text-[11px] font-semibold text-slate-700">Nombre «Otra»</span>
-                  <input
-                    className="input-modern text-sm"
-                    value={uploadCorpOtra}
-                    onChange={(e) => setUploadCorpOtra(e.target.value)}
-                    placeholder="Ej. Tribunal Superior de Cali"
-                  />
-                </label>
-              ) : (
-                <div className="hidden sm:block" aria-hidden />
-              )}
-            </>
-          ) : null}
-          <label className="flex flex-col gap-1 sm:col-span-2">
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold text-slate-700">
+              Corporación (opcional, solo si el PDF no la trae)
+            </span>
+            <input
+              className="input-modern text-sm"
+              value={uploadCorpFallback}
+              onChange={(e) => setUploadCorpFallback(e.target.value)}
+              placeholder="Ej. Corte Constitucional, Juzgado 051 Civil…"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold text-slate-700">
+              Especialidad (opcional; si vacío, la IA la infiere)
+            </span>
+            <select
+              className="input-modern text-sm"
+              value={uploadLegalSpecialty}
+              onChange={(e) => setUploadLegalSpecialty((e.target.value || '') as LegalSpecialtyCode | '')}
+            >
+              <option value="">— Inferir con IA —</option>
+              {LEGAL_SPECIALTY_CODES.map((code) => (
+                <option key={code} value={code}>
+                  {LEGAL_SPECIALTY_LABELS[code]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
             <span className="text-[11px] font-semibold text-slate-700">
               Radicado o referencia (opcional, si el documento no lo trae claro)
             </span>
@@ -596,11 +607,15 @@ export default function BibliotecaPrecedentes() {
                       className="flex min-w-0 flex-col rounded-xl border border-slate-200 bg-white p-3 text-xs shadow-sm"
                     >
                       <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
-                        <PrecedentSourceBadge
-                          sourceType={r.source_type}
-                          sourceCorporation={r.source_corporation}
-                          compact
-                        />
+                        <div className="flex flex-wrap items-center gap-1">
+                          <PrecedentSourceBadge
+                            sourceType={r.source_type}
+                            sourceCorporation={r.source_corporation}
+                            compact
+                          />
+                          <PrecedentSpecialtyBadge code={r.legal_specialty} />
+                          <PrecedentIssuerCategoryBadge code={r.issuer_category} />
+                        </div>
                         <span className="shrink-0 font-bold tabular-nums text-violet-700">{pct}%</span>
                       </div>
                       <span
@@ -666,7 +681,10 @@ export default function BibliotecaPrecedentes() {
       <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-1">
         <button
           type="button"
-          onClick={() => setListTab('despacho')}
+          onClick={() => {
+            setListTab('despacho');
+            setListPage(1);
+          }}
           className={`rounded-t-lg px-4 py-2 text-xs font-bold uppercase tracking-wide transition-colors ${
             listTab === 'despacho'
               ? 'border border-b-0 border-slate-200 bg-white text-sky-800'
@@ -677,7 +695,10 @@ export default function BibliotecaPrecedentes() {
         </button>
         <button
           type="button"
-          onClick={() => setListTab('jurisprudencia')}
+          onClick={() => {
+            setListTab('jurisprudencia');
+            setListPage(1);
+          }}
           className={`rounded-t-lg px-4 py-2 text-xs font-bold uppercase tracking-wide transition-colors ${
             listTab === 'jurisprudencia'
               ? 'border border-b-0 border-slate-200 bg-white text-emerald-900'
@@ -688,14 +709,77 @@ export default function BibliotecaPrecedentes() {
         </button>
       </div>
 
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Especialidad</span>
+        <button
+          type="button"
+          onClick={() => {
+            setSpecialtyFilter('');
+            setListPage(1);
+          }}
+          className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
+            !specialtyFilter ? 'bg-accent/15 text-accent' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+          }`}
+        >
+          Todas
+        </button>
+        {LEGAL_SPECIALTY_CODES.filter((c) => c !== 'otro').map((code) => (
+          <button
+            key={code}
+            type="button"
+            onClick={() => {
+              setSpecialtyFilter(code);
+              setListPage(1);
+            }}
+            className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
+              specialtyFilter === code ? 'bg-accent/15 text-accent' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            {LEGAL_SPECIALTY_LABELS[code]}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Corporación</span>
+        <button
+          type="button"
+          onClick={() => {
+            setIssuerFilter('');
+            setListPage(1);
+          }}
+          className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
+            !issuerFilter ? 'bg-sky-600/15 text-sky-800' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+          }`}
+        >
+          Todas
+        </button>
+        {ISSUER_CATEGORY_CODES.filter((c) => c !== 'otro').map((code) => (
+          <button
+            key={code}
+            type="button"
+            onClick={() => {
+              setIssuerFilter(code);
+              setListPage(1);
+            }}
+            className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
+              issuerFilter === code ? 'bg-sky-600/15 text-sky-800' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            {ISSUER_CATEGORY_LABELS[code]}
+          </button>
+        ))}
+      </div>
+
       <section className="card-modern overflow-hidden p-6 shadow-sm sm:p-8">
         <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
           <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">
-            {listTab === 'despacho' ? 'Fallos del despacho' : 'Jurisprudencia cargada'} ({loading ? '…' : rows.length})
+            {listTab === 'despacho' ? 'Fallos del despacho' : 'Jurisprudencia cargada'} (
+            {loading ? '…' : `${listTotal} en total`})
           </h2>
           <button
             type="button"
-            onClick={() => void load()}
+            onClick={() => void load(undefined, listPage)}
             className="text-[10px] font-bold uppercase tracking-wide text-accent hover:underline"
           >
             Actualizar lista
@@ -742,7 +826,13 @@ export default function BibliotecaPrecedentes() {
                 {rows.map((r) => (
                   <tr key={r.id} className="hover:bg-slate-50/80">
                     <td className="px-4 py-3 align-top">
-                      <PrecedentSourceBadge sourceType={r.source_type} sourceCorporation={r.source_corporation} compact />
+                      <div className="flex flex-col gap-1.5">
+                        <PrecedentSourceBadge sourceType={r.source_type} sourceCorporation={r.source_corporation} compact />
+                        <div className="flex flex-wrap gap-1">
+                          <PrecedentSpecialtyBadge code={r.legal_specialty} />
+                          <PrecedentIssuerCategoryBadge code={r.issuer_category} />
+                        </div>
+                      </div>
                     </td>
                     <td className="px-4 py-3 align-top font-mono text-xs font-semibold text-slate-900">
                       {editingRadicadoId === r.id ? (
@@ -786,8 +876,13 @@ export default function BibliotecaPrecedentes() {
                         </p>
                       ) : null}
                     </td>
-                    <td className="max-w-[200px] px-4 py-3 text-xs text-slate-700">
-                      <span className="line-clamp-3">{r.right_protected}</span>
+                    <td className="max-w-[220px] px-4 py-3 text-xs text-slate-700">
+                      <span className="line-clamp-2 font-medium text-slate-800">{r.right_protected}</span>
+                      {r.summary?.trim() && r.summary !== 'Sin resumen automático.' ? (
+                        <span className="mt-1 line-clamp-2 block text-[10px] leading-snug text-slate-500">
+                          {r.summary}
+                        </span>
+                      ) : null}
                     </td>
                     <td className="max-w-[160px] px-4 py-3 text-xs text-slate-600">
                       <span className="line-clamp-2">
@@ -842,6 +937,16 @@ export default function BibliotecaPrecedentes() {
               </tbody>
             </table>
             </div>
+            <ListPagination
+              page={listPage}
+              pageSize={listPageSize}
+              total={listTotal}
+              onPageChange={setListPage}
+              onPageSizeChange={(size) => {
+                setListPageSize(size);
+                setListPage(1);
+              }}
+            />
           </>
         )}
       </section>

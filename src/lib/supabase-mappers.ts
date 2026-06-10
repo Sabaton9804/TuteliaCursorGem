@@ -151,6 +151,15 @@ export function rowToCaseDoc(row: Record<string, unknown>, caseId: string): Docu
     ingestError: row.error ? String(row.error) : undefined,
     notebookCode: row.notebook_code ? String(row.notebook_code) : 'PI_C01_PRINCIPAL',
     fileHash: row.file_hash ? String(row.file_hash) : undefined,
+    actCode: row.act_code ? String(row.act_code) : undefined,
+    actSequence:
+      typeof row.act_sequence === 'number'
+        ? row.act_sequence
+        : row.act_sequence != null
+          ? Number(row.act_sequence)
+          : undefined,
+    partyEntity: row.party_entity ? String(row.party_entity) : undefined,
+    sourceChannel: row.source_channel ? String(row.source_channel) : undefined,
   };
 }
 

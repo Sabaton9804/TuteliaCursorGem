@@ -44,9 +44,32 @@ function mergeEnvFiles() {
   for (const [key, val] of Object.entries(merged)) {
     if (val !== '' && envUnset(process.env[key])) process.env[key] = val;
   }
+  if (envUnset(process.env.SUPABASE_ANON_KEY)) {
+    const anon =
+      merged.SUPABASE_ANON_KEY ||
+      merged.VITE_SUPABASE_ANON_KEY ||
+      merged.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+      '';
+    if (anon.trim()) process.env.SUPABASE_ANON_KEY = anon.trim();
+  }
 }
 
 mergeEnvFiles();
+
+/** Mismo bypass TLS que server.ts cuando OPENAI_TLS_INSECURE=1 (proxy/antivirus en Windows). */
+function applyDevTlsBypass() {
+  const on = String(process.env.OPENAI_TLS_INSECURE ?? process.env.SUPABASE_TLS_INSECURE ?? '')
+    .trim()
+    .toLowerCase();
+  if (on === '1' || on === 'true' || on === 'yes') {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+    console.warn(
+      '[verify:supabase] TLS en Node desactivado (OPENAI_TLS_INSECURE o SUPABASE_TLS_INSECURE). Solo diagnóstico local.'
+    );
+  }
+}
+
+applyDevTlsBypass();
 
 function normalizeSupabaseProjectUrl(raw: string): string {
   let s = raw.trim().replace(/\/+$/, '');

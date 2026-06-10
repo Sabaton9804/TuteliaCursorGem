@@ -246,13 +246,15 @@ export default function CasesList() {
               </>
             ) : tutelasFilter.kind === 'tipo' ? (
               <>
-                Listado filtrado por tipo de asunto. Tablero, lista y calendario con término de{' '}
-                <strong className="text-slate-700">10 días hábiles</strong> cuando aplica (lun–vie).
+                Listado filtrado por tipo de asunto. Plazos según D. 2591/91:{' '}
+                <strong className="text-slate-700">10 días háb.</strong> (1ª instancia, art. 29) o{' '}
+                <strong className="text-slate-700">20 días háb.</strong> (2ª instancia, art. 32).
               </>
             ) : (
               <>
-                Tablero, lista y calendario con término de <strong className="text-slate-700">10 días hábiles</strong>{' '}
-                desde radicación (lun–vie). El sustanciador se persiste en{' '}
+                Tablero, lista y calendario con plazos del D. 2591/91:{' '}
+                <strong className="text-slate-700">10 días háb.</strong> para fallar en 1ª instancia (art. 29),{' '}
+                <strong className="text-slate-700">20 días háb.</strong> en 2ª (art. 32). El sustanciador se persiste en{' '}
                 <span className="font-mono text-slate-600">assigned_to</span> según la regla del juzgado (Configuración);
                 «Mis asignadas» usa ese campo y su perfil.
               </>

@@ -15,6 +15,7 @@ import {
   BookOpen,
   Mail,
   ClipboardList,
+  Reply,
   ChevronDown,
 } from 'lucide-react';
 import { intentFreshNewCaseFromMenu } from '../../lib/new-case-nav';
@@ -35,11 +36,13 @@ const NAV_LINKS: NavLinkItem[] = [
   { name: 'Dashboard', path: '/', icon: LayoutDashboard },
   { name: 'Radicación', path: '/new', icon: PlusCircle },
   { name: 'Centro de trabajo', path: '/tasks', icon: ListTodo },
+  { name: 'Tablero sustanciador', path: '/sustanciador', icon: Scale },
   { name: 'Estadísticas', path: '/estadisticas', icon: BarChart3 },
   { name: 'Biblioteca de precedentes', path: '/biblioteca-precedentes', icon: BookOpen },
   { name: 'Plantillas', path: '/plantillas', icon: FileStack },
   { name: 'Equipo de trabajo', path: '/equipo', icon: Users },
   { name: 'Correo', path: '/correo', icon: Mail },
+  { name: 'Contestaciones', path: '/correo/contestaciones', icon: Reply },
   { name: 'Pendientes correo', path: '/correo/pendientes', icon: ClipboardList },
   { name: 'Sincronización SGDE', path: '/sgde', icon: Search },
   { name: 'Configuración', path: '/settings', icon: Settings },

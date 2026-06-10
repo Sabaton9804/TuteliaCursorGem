@@ -2,9 +2,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getParseSession } from './parse-email-sessions';
 import { parseOutlookMessageToSession } from './parse-outlook-message';
 import { supplementParseSessionFromGraphAttachments } from './outlook-graph-attachments';
+import type { MailboxGraphTarget } from './outlook-graph';
 import { replaceParseSessionAttachments } from './parse-email-sessions';
 import type { ParseSessionRow } from './parse-email-sessions';
 import type { OutlookMessageReviewRow } from './outlook-message-reviews';
+import type { ClassifyJudicialEmailResult } from './classify-judicial-email';
+import { ingestActMetadataForPiece } from './ingest-outlook-act-metadata';
 import {
   DEFAULT_NOTEBOOK_CODE,
   insertCaseDocumentRowsAdmin,
@@ -22,6 +25,7 @@ export type IngestOutlookResult = {
 
 async function resolveSessionAttachments(
   accessToken: string,
+  graphTarget: MailboxGraphTarget,
   messageId: string,
   parseSessionId: string | null
 ): Promise<ParseSessionRow[]> {
@@ -31,6 +35,7 @@ async function resolveSessionAttachments(
       let attachments = session.attachments;
       const merged = await supplementParseSessionFromGraphAttachments(
         accessToken,
+        graphTarget,
         messageId,
         attachments
       );
@@ -41,7 +46,7 @@ async function resolveSessionAttachments(
       return attachments;
     }
   }
-  const { parsed, attachments } = await parseOutlookMessageToSession(messageId, accessToken);
+  const { parsed, attachments } = await parseOutlookMessageToSession(messageId, accessToken, graphTarget);
   if (parsed.parseSessionId && attachments.length) {
     replaceParseSessionAttachments(parsed.parseSessionId, attachments);
   }
@@ -66,12 +71,13 @@ async function assertCaseInCourt(
 export async function ingestOutlookReviewToCase(opts: {
   admin: SupabaseClient;
   accessToken: string;
+  graphTarget: MailboxGraphTarget;
   courtId: string;
   userId: string;
   review: OutlookMessageReviewRow;
   caseId: string;
 }): Promise<IngestOutlookResult> {
-  const { admin, accessToken, courtId, userId, review, caseId } = opts;
+  const { admin, accessToken, graphTarget, courtId, userId, review, caseId } = opts;
 
   if (review.status !== 'pending') {
     throw new Error('Este correo ya fue revisado.');
@@ -81,10 +87,12 @@ export async function ingestOutlookReviewToCase(opts: {
 
   const attachments = await resolveSessionAttachments(
     accessToken,
+    graphTarget,
     review.outlook_message_id,
     review.parse_session_id
   );
 
+  const classificationFull = review.classification as ClassifyJudicialEmailResult;
   const classification = review.classification as {
     body_preview?: string;
     subject?: string;
@@ -96,19 +104,29 @@ export async function ingestOutlookReviewToCase(opts: {
   const uploadedPaths: string[] = [];
   const docRows: Array<Record<string, unknown>> = [];
 
+  const bodyAct = ingestActMetadataForPiece(classificationFull, 'email_body');
   const constanciaName =
-    review.proposed_ingest.find((p) => p.kind === 'email_body')?.name || 'ConstanciaCorreoDespacho';
+    bodyAct?.logicalBaseName ||
+    review.proposed_ingest.find((p) => p.kind === 'email_body')?.name ||
+    'ConstanciaCorreoDespacho';
 
-  docRows.push({
+  const emailRow: Record<string, unknown> = {
     case_id: caseId,
     name: constanciaName,
     original_name: `${subject.slice(0, 120)}.eml`,
-    type: 'email_body',
+    type: bodyAct ? 'expediente_acto' : 'email_body',
     size: Math.max(bodyPreview.length, 1),
     sort_order: sortOrder++,
     is_from_link: false,
     notebook_code: DEFAULT_NOTEBOOK_CODE,
-  });
+  };
+  if (bodyAct) {
+    emailRow.act_code = bodyAct.act_code;
+    emailRow.act_sequence = 9;
+    emailRow.source_channel = bodyAct.source_channel;
+    if (bodyAct.party_entity) emailRow.party_entity = bodyAct.party_entity;
+  }
+  docRows.push(emailRow);
 
   const proposedAtts = review.proposed_ingest.filter((p) => p.kind === 'attachment');
   const indices = new Set(proposedAtts.map((p) => p.sessionIndex));
@@ -118,8 +136,10 @@ export async function ingestOutlookReviewToCase(opts: {
     if (String(att.contentType || '').startsWith('image/')) continue;
     if (!att.buffer?.length) continue;
 
+    const attAct = ingestActMetadataForPiece(classificationFull, 'attachment');
+
     const logical = sanitizeCaseDocumentLogicalName(
-      att.originalName || att.filename,
+      attAct?.logicalBaseName || att.originalName || att.filename,
       `adjunto-${att.sessionIndex + 1}.pdf`
     );
     const up = await uploadCaseAttachmentAdmin(
@@ -134,18 +154,25 @@ export async function ingestOutlookReviewToCase(opts: {
       throw up.error;
     }
     uploadedPaths.push(up.path);
-    docRows.push({
+    const attRow: Record<string, unknown> = {
       case_id: caseId,
       name: logical.replace(/\.pdf$/i, ''),
       original_name: att.originalName || att.filename,
-      type: 'attachment',
+      type: attAct ? 'expediente_acto' : 'attachment',
       size: att.buffer.length,
       content_type: att.contentType || 'application/octet-stream',
       storage_path: up.path,
       is_from_link: false,
       sort_order: sortOrder++,
       notebook_code: DEFAULT_NOTEBOOK_CODE,
-    });
+    };
+    if (attAct) {
+      attRow.act_code = attAct.act_code;
+      attRow.act_sequence = 10;
+      attRow.source_channel = attAct.source_channel;
+      if (attAct.party_entity) attRow.party_entity = attAct.party_entity;
+    }
+    docRows.push(attRow);
   }
 
   if (docRows.length === 0) {

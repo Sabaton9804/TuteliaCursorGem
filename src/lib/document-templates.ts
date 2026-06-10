@@ -65,7 +65,11 @@ function rowToTemplate(row: Record<string, unknown>): DocumentTemplate {
     categoria:
       cat === 'despacho' || cat === 'secretaria' ? (cat as DocumentTemplateCategoria) : 'secretaria',
     tipo:
-      tipo === 'informe_ingreso' || tipo === 'auto_admisorio' || tipo === 'libre'
+      tipo === 'informe_ingreso' ||
+      tipo === 'auto_admisorio' ||
+      tipo === 'notificacion_admisorio' ||
+      tipo === 'notificacion_fallo' ||
+      tipo === 'libre'
         ? (tipo as DocumentTemplateTipo)
         : 'libre',
     nombre: String(row.nombre ?? ''),
@@ -237,6 +241,44 @@ export async function registerCaseInformeIngresoWithExpedientePdf(opts: {
     })
     .eq('id', opts.caseId);
   if (error) throw error;
+}
+
+/** Registra un PDF tipado como acto procesal en el expediente digital. */
+export async function registerCaseActoPdfEnExpediente(opts: {
+  caseId: string;
+  pdfBytes: Uint8Array;
+  displayName: string;
+  docs: Document[];
+  actCode: string;
+  actSequence?: number;
+  partyEntity?: string;
+  sourceChannel?: string;
+}): Promise<{ documentId: string }> {
+  await ensureSupabaseSessionForWrites();
+  const sortOrder = nextSortOrderInPrincipalNotebook(opts.docs);
+  const up = await uploadCaseAttachment(supabase, opts.caseId, opts.displayName, opts.pdfBytes, 'application/pdf');
+  if ('error' in up) throw up.error;
+
+  const row: Record<string, unknown> = {
+    case_id: opts.caseId,
+    name: opts.displayName.replace(/\.pdf$/i, ''),
+    original_name: opts.displayName,
+    type: 'expediente_acto',
+    content_type: 'application/pdf',
+    size: opts.pdfBytes.byteLength,
+    storage_path: up.path,
+    is_from_link: false,
+    sort_order: sortOrder,
+    notebook_code: DEFAULT_NOTEBOOK_CODE,
+    act_code: opts.actCode,
+    act_sequence: opts.actSequence ?? null,
+    source_channel: opts.sourceChannel ?? 'generado',
+  };
+  if (opts.partyEntity?.trim()) row.party_entity = opts.partyEntity.trim();
+
+  const { id: documentId } = await insertCaseDocumentRowReturningId(supabase, row);
+  await supabase.from('cases').update({ updated_at: new Date().toISOString() }).eq('id', opts.caseId);
+  return { documentId };
 }
 
 /**

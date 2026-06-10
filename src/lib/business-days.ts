@@ -1,4 +1,11 @@
 import Holidays from 'date-holidays';
+import {
+  IMPUGNACION_BUSINESS_DAYS,
+  PLAZO_FALLAR_PRIMERA_DIAS,
+  PLAZO_FALLAR_SEGUNDA_DIAS,
+} from './decreto-2591-plazos';
+
+export { IMPUGNACION_BUSINESS_DAYS, PLAZO_FALLAR_PRIMERA_DIAS, PLAZO_FALLAR_SEGUNDA_DIAS };
 
 /**
  * Días hábiles al estilo despacho judicial en Colombia:
@@ -198,11 +205,8 @@ export function businessDayTermEnd(startDate: Date, termBusinessDays: number): D
   return d;
 }
 
-/** Plazo para que accionados/entidad contesten tras notificar el auto admisorio. */
+/** Plazo para que accionados/entidad contesten tras notificar el auto admisorio (práctica despacho; informes art. 19: 1–3 días). */
 export const CONTESTACION_BUSINESS_DAYS = 2;
-
-/** Plazo para impugnar tras notificar el fallo. */
-export const IMPUGNACION_BUSINESS_DAYS = 3;
 
 export function contestacionDeadlineFrom(notifiedOn: Date): Date {
   return businessDayTermEnd(startOfLocalDay(notifiedOn), CONTESTACION_BUSINESS_DAYS);

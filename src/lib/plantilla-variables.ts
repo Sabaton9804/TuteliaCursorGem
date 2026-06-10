@@ -27,7 +27,11 @@ import { userRoleLabelEs } from './user-roles';
 import type { UserRole } from '../types';
 
 /** Firma: informe → secretario del equipo; auto → juez del equipo (`DESPACHO_STAFF`). */
-export type MapaVariablesPlantillaContext = 'informe_ingreso' | 'auto_admisorio';
+export type MapaVariablesPlantillaContext =
+  | 'informe_ingreso'
+  | 'auto_admisorio'
+  | 'notificacion_admisorio'
+  | 'notificacion_fallo';
 
 export type PlantillaBorradorOpciones = {
   toggleDefs?: DocumentTemplateToggleDef[];
@@ -142,7 +146,7 @@ export function mapaVariablesDesdeCaso(
     NOMBRE_JUEZ: nombreJuez || '—',
     NOMBRE_SECRETARIO: nombreSecretario || '—',
     FUNCIONARIO_FIRMA:
-      plantillaContext === 'informe_ingreso'
+      plantillaContext === 'informe_ingreso' || plantillaContext === 'notificacion_admisorio' || plantillaContext === 'notificacion_fallo'
         ? nombreSecretario
         : plantillaContext === 'auto_admisorio'
           ? nombreJuez
@@ -150,7 +154,9 @@ export function mapaVariablesDesdeCaso(
     CARGO_FIRMA:
       plantillaContext === 'auto_admisorio'
         ? userRoleLabelEs('judge')
-        : plantillaContext === 'informe_ingreso'
+        : plantillaContext === 'informe_ingreso' ||
+            plantillaContext === 'notificacion_admisorio' ||
+            plantillaContext === 'notificacion_fallo'
           ? userRoleLabelEs('clerk')
           : '—',
     JUZGADO_NOMBRE: membrete.informe.juzgado,
@@ -204,7 +210,94 @@ export function plantillaInformeIngresoInterna(m: PlantillasStateV2): string {
 export function cuerpoPredeterminadoPlantilla(tipo: DocumentTemplateTipo, m: PlantillasStateV2): string {
   if (tipo === 'informe_ingreso') return plantillaInformeIngresoInterna(m);
   if (tipo === 'auto_admisorio') return plantillaAutoAdmisorioInterna(m);
+  if (tipo === 'notificacion_admisorio') return plantillaNotificacionAdmisorioInterna(m);
+  if (tipo === 'notificacion_fallo') return plantillaNotificacionFalloInterna(m);
   return '';
+}
+
+export function plantillaNotificacionAdmisorioInterna(m: PlantillasStateV2): string {
+  return [
+    m.membrete.informe.juzgado,
+    m.membrete.informe.direccion,
+    m.membrete.informe.correo,
+    '',
+    'Señores',
+    '{{ACCIONADO_PRINCIPAL}}',
+    '',
+    'REF.: Notificación auto admisorio de tutela',
+    'RAD.: {{RADICACION}}',
+    '',
+    'Cordial saludo,',
+    '',
+    'Por medio del presente oficio se notifica el auto admisorio de la acción de tutela instaurada por {{ACCIONANTE}} en contra de {{ACCIONADOS_LISTA}}, radicada bajo el número {{RADICACION}}.',
+    '',
+    'Se informa que cuenta con el término legal para contestar la acción, conforme al auto que se adjunta o remite por el canal institucional.',
+    '',
+    'Atentamente,',
+    '',
+    '{{FUNCIONARIO_FIRMA}}',
+    '{{CARGO_FIRMA}}',
+    '{{JUZGADO_NOMBRE}}',
+    '{{FECHA_LETRAS}}',
+  ].join('\n');
+}
+
+export function plantillaNotificacionFalloInterna(m: PlantillasStateV2): string {
+  return [
+    m.membrete.informe.juzgado,
+    m.membrete.informe.direccion,
+    m.membrete.informe.correo,
+    '',
+    'Señores',
+    '{{ACCIONADO_PRINCIPAL}}',
+    '',
+    'REF.: Notificación fallo de tutela',
+    'RAD.: {{RADICACION}}',
+    '',
+    'Cordial saludo,',
+    '',
+    'Por medio del presente oficio se notifica el fallo de tutela proferido dentro del proceso {{RADICACION}}, instaurado por {{ACCIONANTE}} en contra de {{ACCIONADOS_LISTA}}.',
+    '',
+    'Adjunto o remite por canal institucional copia del fallo para los fines pertinentes, incluido el término de impugnación cuando aplique.',
+    '',
+    'Atentamente,',
+    '',
+    '{{FUNCIONARIO_FIRMA}}',
+    '{{CARGO_FIRMA}}',
+    '{{JUZGADO_NOMBRE}}',
+    '{{FECHA_LETRAS}}',
+  ].join('\n');
+}
+
+function textoNotificacionBorrador(
+  caseItem: Case,
+  m: PlantillasStateV2,
+  context: 'notificacion_admisorio' | 'notificacion_fallo',
+  contenidoBase?: string | null,
+): string {
+  const v = mapaVariablesDesdeCaso(caseItem, m.membrete, context);
+  const base =
+    contenidoBase?.trim() ||
+    (context === 'notificacion_admisorio'
+      ? plantillaNotificacionAdmisorioInterna(m)
+      : plantillaNotificacionFalloInterna(m));
+  return sustituirMarcadores(base, v);
+}
+
+export function textoNotificacionAdmisorioBorrador(
+  caseItem: Case,
+  m: PlantillasStateV2,
+  contenidoBase?: string | null,
+): string {
+  return textoNotificacionBorrador(caseItem, m, 'notificacion_admisorio', contenidoBase);
+}
+
+export function textoNotificacionFalloBorrador(
+  caseItem: Case,
+  m: PlantillasStateV2,
+  contenidoBase?: string | null,
+): string {
+  return textoNotificacionBorrador(caseItem, m, 'notificacion_fallo', contenidoBase);
 }
 
 export function plantillaAutoAdmisorioInterna(m: PlantillasStateV2): string {
@@ -284,6 +377,26 @@ export function cuerpoEditablePredeterminadoPlantilla(tipo: DocumentTemplateTipo
       '{{BLOQUE_MEDIDA_PROVISIONAL}}',
       '',
       'COMUNÍQUESE Y CÚMPLASE.',
+    ].join('\n');
+  }
+  if (tipo === 'notificacion_admisorio') {
+    return [
+      'Por medio del presente oficio se notifica el auto admisorio de la acción de tutela instaurada por {{ACCIONANTE}} en contra de {{ACCIONADOS_LISTA}}, radicada bajo el número {{RADICACION}}.',
+      '',
+      'Atentamente,',
+      '',
+      '{{FUNCIONARIO_FIRMA}}',
+      '{{CARGO_FIRMA}}',
+    ].join('\n');
+  }
+  if (tipo === 'notificacion_fallo') {
+    return [
+      'Por medio del presente oficio se notifica el fallo de tutela proferido dentro del proceso {{RADICACION}}, instaurado por {{ACCIONANTE}} en contra de {{ACCIONADOS_LISTA}}.',
+      '',
+      'Atentamente,',
+      '',
+      '{{FUNCIONARIO_FIRMA}}',
+      '{{CARGO_FIRMA}}',
     ].join('\n');
   }
   return '';

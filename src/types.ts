@@ -36,7 +36,12 @@ export type CaseOriginRuling = 'concedio' | 'nego';
 /** Plantillas documentales por despacho (tabla `document_templates`). */
 export type DocumentTemplateCategoria = 'despacho' | 'secretaria';
 
-export type DocumentTemplateTipo = 'informe_ingreso' | 'auto_admisorio' | 'libre';
+export type DocumentTemplateTipo =
+  | 'informe_ingreso'
+  | 'auto_admisorio'
+  | 'notificacion_admisorio'
+  | 'notificacion_fallo'
+  | 'libre';
 
 /**
  * Opción condicional del despacho.
@@ -207,6 +212,14 @@ export interface Document {
   notebookCode?: string;
   /** SHA-256 hex del binario (invalidación de análisis IA). */
   fileHash?: string;
+  /** Código del acto procesal (`case_act_types.code`). */
+  actCode?: string;
+  /** Orden humano opcional (01, 02…) dentro del cuaderno. */
+  actSequence?: number;
+  /** Entidad accionada u otra parte (p. ej. respuesta Colpensiones). */
+  partyEntity?: string;
+  /** Canal de ingreso: manual, correo, generado, sgde, radicacion. */
+  sourceChannel?: string;
 }
 
 export interface Action {

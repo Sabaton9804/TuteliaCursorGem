@@ -1,8 +1,7 @@
 import { simpleParser } from 'mailparser';
-import { graphFetch, graphRequest } from './outlook-graph';
+import { graphFetch, graphRequest, type MailboxGraphTarget } from './outlook-graph';
+import { graphMailboxAbsoluteUrl, graphMailboxPath } from './outlook-mailbox-target';
 import type { ParseSessionRow } from './parse-email-sessions';
-
-const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
 export type OutlookAttachmentKind = 'file' | 'reference' | 'item' | 'other';
 
@@ -68,30 +67,41 @@ function mapRow(
   };
 }
 
-async function fetchAttachmentRows(accessToken: string, messageId: string): Promise<GraphAttachmentRow[]> {
+async function fetchAttachmentRows(
+  accessToken: string,
+  target: MailboxGraphTarget,
+  messageId: string
+): Promise<GraphAttachmentRow[]> {
   const data = await graphRequest<{ value?: GraphAttachmentRow[] }>(
     accessToken,
-    `/me/messages/${outlookMessagePathId(messageId)}/attachments`
+    graphMailboxPath(
+      target,
+      `/messages/${outlookMessagePathId(messageId)}/attachments`
+    )
   );
   return data.value ?? [];
 }
 
 async function expandItemAttachmentRows(
   accessToken: string,
+  target: MailboxGraphTarget,
   parentMessageId: string,
   attachmentId: string
 ): Promise<{ rows: GraphAttachmentRow[]; innerMessageId?: string }> {
   try {
     const row = await graphRequest<GraphAttachmentRow>(
       accessToken,
-      `/me/messages/${outlookMessagePathId(parentMessageId)}/attachments/${outlookMessagePathId(attachmentId)}?$expand=microsoft.graph.itemattachment/item($expand=attachments)`
+      `${graphMailboxPath(
+        target,
+        `/messages/${outlookMessagePathId(parentMessageId)}/attachments/${outlookMessagePathId(attachmentId)}`
+      )}?$expand=microsoft.graph.itemattachment/item($expand=attachments)`
     );
     const innerMessageId = row.item?.id ? String(row.item.id) : undefined;
     if (Array.isArray(row.item?.attachments) && row.item.attachments.length) {
       return { rows: row.item.attachments, innerMessageId };
     }
     if (innerMessageId) {
-      return { rows: await fetchAttachmentRows(accessToken, innerMessageId), innerMessageId };
+      return { rows: await fetchAttachmentRows(accessToken, target, innerMessageId), innerMessageId };
     }
   } catch (e) {
     console.warn('[outlook] expand itemAttachment:', (e as Error)?.message || e);
@@ -101,10 +111,14 @@ async function expandItemAttachmentRows(
 
 async function downloadItemAttachmentMime(
   accessToken: string,
+  target: MailboxGraphTarget,
   messageId: string,
   attachmentId: string
 ): Promise<Buffer | null> {
-  const url = `${GRAPH_BASE}/me/messages/${outlookMessagePathId(messageId)}/attachments/${outlookMessagePathId(attachmentId)}/$value`;
+  const url = graphMailboxAbsoluteUrl(
+    target,
+    `/messages/${outlookMessagePathId(messageId)}/attachments/${outlookMessagePathId(attachmentId)}/$value`
+  );
   const res = await graphFetch(accessToken, url);
   if (!res.ok) return null;
   return Buffer.from(await res.arrayBuffer());
@@ -115,9 +129,10 @@ async function downloadItemAttachmentMime(
  */
 export async function listMessageAttachmentsMeta(
   accessToken: string,
+  target: MailboxGraphTarget,
   messageId: string
 ): Promise<OutlookAttachmentMeta[]> {
-  const top = await fetchAttachmentRows(accessToken, messageId);
+  const top = await fetchAttachmentRows(accessToken, target, messageId);
   const result: OutlookAttachmentMeta[] = [];
 
   for (const row of top) {
@@ -125,6 +140,7 @@ export async function listMessageAttachmentsMeta(
     if (kind === 'item' && row.id) {
       const { rows: nested, innerMessageId } = await expandItemAttachmentRows(
         accessToken,
+        target,
         messageId,
         row.id
       );
@@ -152,10 +168,14 @@ export async function listMessageAttachmentsMeta(
 
 export async function downloadFileAttachmentBuffer(
   accessToken: string,
+  target: MailboxGraphTarget,
   messageId: string,
   attachmentId: string
 ): Promise<Buffer> {
-  const url = `${GRAPH_BASE}/me/messages/${outlookMessagePathId(messageId)}/attachments/${outlookMessagePathId(attachmentId)}/$value`;
+  const url = graphMailboxAbsoluteUrl(
+    target,
+    `/messages/${outlookMessagePathId(messageId)}/attachments/${outlookMessagePathId(attachmentId)}/$value`
+  );
   const res = await graphFetch(accessToken, url);
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -170,11 +190,12 @@ function attachmentFingerprint(name: string, size: number): string {
 
 async function buffersFromItemAttachment(
   accessToken: string,
+  target: MailboxGraphTarget,
   parentMessageId: string,
   attachmentId: string,
   displayName: string
 ): Promise<ParseSessionRow[]> {
-  const mime = await downloadItemAttachmentMime(accessToken, parentMessageId, attachmentId);
+  const mime = await downloadItemAttachmentMime(accessToken, target, parentMessageId, attachmentId);
   if (!mime?.length) return [];
 
   try {
@@ -209,10 +230,11 @@ async function buffersFromItemAttachment(
  */
 export async function supplementParseSessionFromGraphAttachments(
   accessToken: string,
+  target: MailboxGraphTarget,
   messageId: string,
   existing: ParseSessionRow[]
 ): Promise<ParseSessionRow[]> {
-  const meta = await listMessageAttachmentsMeta(accessToken, messageId);
+  const meta = await listMessageAttachmentsMeta(accessToken, target, messageId);
   const seen = new Set(existing.map((a) => attachmentFingerprint(a.originalName || a.filename, a.size)));
 
   const extra: ParseSessionRow[] = [];
@@ -233,7 +255,7 @@ export async function supplementParseSessionFromGraphAttachments(
     if (att.kind === 'file' && !att.isInline) {
       try {
         const msgId = att.sourceMessageId || messageId;
-        const buffer = await downloadFileAttachmentBuffer(accessToken, msgId, att.id);
+        const buffer = await downloadFileAttachmentBuffer(accessToken, target, msgId, att.id);
         if (!buffer.length) continue;
         pushRow({
           filename: att.name,
@@ -246,7 +268,13 @@ export async function supplementParseSessionFromGraphAttachments(
         console.warn(`[outlook] adjunto ${att.name}:`, (e as Error)?.message || e);
       }
     } else if (att.kind === 'item') {
-      const fromMime = await buffersFromItemAttachment(accessToken, messageId, att.id, att.name);
+      const fromMime = await buffersFromItemAttachment(
+        accessToken,
+        target,
+        messageId,
+        att.id,
+        att.name
+      );
       for (const row of fromMime) {
         pushRow({
           filename: row.filename,
@@ -273,6 +301,7 @@ function safeAttachmentFilename(name: string): string {
 /** Descarga el contenido binario de un adjunto listado por `listMessageAttachmentsMeta`. */
 export async function downloadOutlookAttachmentContent(
   accessToken: string,
+  target: MailboxGraphTarget,
   outerMessageId: string,
   att: Pick<OutlookAttachmentMeta, 'id' | 'kind' | 'sourceMessageId' | 'name' | 'contentType'>
 ): Promise<{ buffer: Buffer; contentType: string; filename: string }> {
@@ -281,7 +310,7 @@ export async function downloadOutlookAttachmentContent(
   }
   if (att.kind === 'file') {
     const msgId = att.sourceMessageId || outerMessageId;
-    const buffer = await downloadFileAttachmentBuffer(accessToken, msgId, att.id);
+    const buffer = await downloadFileAttachmentBuffer(accessToken, target, msgId, att.id);
     if (!buffer.length) throw new Error('El adjunto está vacío.');
     return {
       buffer,
@@ -290,7 +319,13 @@ export async function downloadOutlookAttachmentContent(
     };
   }
   if (att.kind === 'item') {
-    const rows = await buffersFromItemAttachment(accessToken, outerMessageId, att.id, att.name);
+    const rows = await buffersFromItemAttachment(
+      accessToken,
+      target,
+      outerMessageId,
+      att.id,
+      att.name
+    );
     if (rows.length === 1 && rows[0].buffer?.length) {
       return {
         buffer: rows[0].buffer,

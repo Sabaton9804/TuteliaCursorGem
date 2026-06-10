@@ -10,6 +10,32 @@ function parseOutlookClientError(status: number, body: { error?: string }): stri
   return `Error del servidor (${status}).`;
 }
 
+const OUTLOOK_MAILBOX_STORAGE_KEY = 'tutelia_outlook_active_mailbox_id';
+
+let activeMailboxIdMemory: string | null = null;
+
+function readStoredMailboxId(): string | null {
+  try {
+    return sessionStorage.getItem(OUTLOOK_MAILBOX_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function getOutlookActiveMailboxId(): string | null {
+  return activeMailboxIdMemory ?? readStoredMailboxId();
+}
+
+export function setOutlookActiveMailboxId(id: string | null): void {
+  activeMailboxIdMemory = id;
+  try {
+    if (id) sessionStorage.setItem(OUTLOOK_MAILBOX_STORAGE_KEY, id);
+    else sessionStorage.removeItem(OUTLOOK_MAILBOX_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 async function authHeaders(): Promise<HeadersInit> {
   await ensureSupabaseSessionForWrites();
   const { data } = await supabase.auth.getSession();
@@ -19,17 +45,94 @@ async function authHeaders(): Promise<HeadersInit> {
       'Inicie sesión en Tutelia (no use solo modo local sin Supabase) para conectar Outlook.'
     );
   }
-  return { Authorization: `Bearer ${token}` };
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+  const mailboxId = getOutlookActiveMailboxId();
+  if (mailboxId) headers['X-Tutelia-Mailbox-Id'] = mailboxId;
+  return headers;
 }
+
+export type OutlookCourtMailbox = {
+  id: string;
+  courtId: string;
+  courtName: string;
+  upn: string;
+  displayName: string;
+  isPrimary: boolean;
+};
+
+export type OutlookActiveMailbox = {
+  id: string;
+  upn: string;
+  displayName: string;
+  courtId: string;
+  courtName?: string;
+};
 
 export type OutlookStatus = {
   enabled: boolean;
   configured: boolean;
   connected: boolean;
+  /** Cuenta OAuth del funcionario (legado: mailboxEmail). */
   mailboxEmail: string | null;
+  oauthAccountEmail?: string | null;
+  graphMode?: 'legacy_me' | 'shared_mailbox' | null;
+  activeCourtId?: string | null;
+  activeMailbox?: OutlookActiveMailbox | null;
+  legacyMeAllowed?: boolean;
+  requireExplicitMailbox?: boolean;
   /** URI que debe estar registrada en Microsoft Entra (Autenticación → Web). */
   redirectUri?: string;
 };
+
+export type OutlookMailboxesResponse = {
+  mailboxes: OutlookCourtMailbox[];
+  activeMailboxId: string | null;
+  activeCourtId: string | null;
+  graphMode: 'legacy_me' | 'shared_mailbox' | null;
+  legacyMeAllowed: boolean;
+  requireExplicitMailbox: boolean;
+};
+
+export async function fetchOutlookMailboxes(): Promise<OutlookMailboxesResponse> {
+  const res = await fetch('/api/outlook/mailboxes', { headers: await authHeaders() });
+  const j = (await res.json().catch(() => ({}))) as OutlookMailboxesResponse & { error?: string };
+  if (!res.ok) throw new Error(j.error || 'No se pudo listar buzones del despacho.');
+  return j;
+}
+
+export async function fetchOutlookContext(): Promise<{
+  activeMailboxId: string | null;
+  activeMailbox: OutlookActiveMailbox | null;
+  graphMode: 'legacy_me' | 'shared_mailbox' | null;
+  requireExplicitMailbox: boolean;
+}> {
+  const res = await fetch('/api/outlook/context', { headers: await authHeaders() });
+  const j = (await res.json().catch(() => ({}))) as {
+    activeMailboxId?: string | null;
+    activeMailbox?: OutlookActiveMailbox | null;
+    graphMode?: 'legacy_me' | 'shared_mailbox' | null;
+    requireExplicitMailbox?: boolean;
+    error?: string;
+  };
+  if (!res.ok) throw new Error(j.error || 'No se pudo consultar contexto de correo.');
+  return {
+    activeMailboxId: j.activeMailboxId ?? null,
+    activeMailbox: j.activeMailbox ?? null,
+    graphMode: j.graphMode ?? null,
+    requireExplicitMailbox: Boolean(j.requireExplicitMailbox),
+  };
+}
+
+export async function setOutlookMailboxContext(mailboxId: string): Promise<void> {
+  const res = await fetch('/api/outlook/context', {
+    method: 'PUT',
+    headers: { ...(await authHeaders()), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mailboxId }),
+  });
+  const j = (await res.json().catch(() => ({}))) as { error?: string };
+  if (!res.ok) throw new Error(j.error || 'No se pudo seleccionar el buzón.');
+  setOutlookActiveMailboxId(mailboxId);
+}
 
 export type OutlookFolderKey = 'inbox' | 'drafts' | 'sentitems' | 'deleteditems' | 'junkemail';
 
@@ -88,6 +191,28 @@ export async function fetchOutlookFolders(): Promise<OutlookFolderSummary[]> {
   const j = (await res.json().catch(() => ({}))) as { folders?: OutlookFolderSummary[]; error?: string };
   if (!res.ok) throw new Error(j.error || 'Error al consultar carpetas.');
   return j.folders ?? [];
+}
+
+export async function fetchMessagesReviewStatus(
+  messageIds: string[]
+): Promise<Record<string, OutlookMessageReviewListStatus>> {
+  const ids = [...new Set(messageIds.map((id) => id.trim()).filter(Boolean))];
+  if (!ids.length) return {};
+  const res = await fetch('/api/outlook/messages/review-status', {
+    method: 'POST',
+    headers: { ...(await authHeaders()), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messageIds: ids }),
+  });
+  const j = (await res.json().catch(() => ({}))) as Record<string, OutlookMessageReviewListStatus> & {
+    error?: string;
+  };
+  if (!res.ok) throw new Error(parseOutlookClientError(res.status, j));
+  const out: Record<string, OutlookMessageReviewListStatus> = {};
+  for (const id of ids) {
+    const v = j[id];
+    out[id] = v === 'pending' || v === 'ingested' ? v : null;
+  }
+  return out;
 }
 
 export async function fetchOutlookMessages(opts?: {
@@ -223,6 +348,9 @@ export type OutlookEmailClasificacion = {
 };
 
 export type OutlookReviewStatus = 'pending' | 'rejected' | 'ingested';
+
+/** Estado en cola de revisión para mensajes visibles en la bandeja (batch). */
+export type OutlookMessageReviewListStatus = 'pending' | 'ingested' | null;
 
 export type OutlookProposedIngestPiece =
   | { kind: 'email_body'; name: string; label: string }

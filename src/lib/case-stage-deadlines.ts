@@ -90,7 +90,7 @@ export function subStageDeadlineLabel(stageCode: CaseStageCode, caseType?: CaseT
     return `Contestación de accionados (${days} días hábiles)`;
   }
   if (stageCode === 'TERMINO_IMPUGNACION') {
-    return `Impugnación (${days} días hábiles)`;
+    return `Impugnación (${days} días hábiles — D. 2591/91 art. 31)`;
   }
   if (days > 0) {
     return `Plazo de etapa (${days} días hábiles)`;

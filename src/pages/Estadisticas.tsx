@@ -141,7 +141,7 @@ export default function Estadisticas() {
       setLoading(false);
       return;
     }
-    setCases((data || []).map((r) => rowToCase(r as Record<string, unknown>)));
+    setCases((data || []).map((r) => rowToCase(r as unknown as Record<string, unknown>)));
     setLoading(false);
   }, [courtId]);
 

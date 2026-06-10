@@ -114,6 +114,9 @@ function describeCaseFieldChange(key: string, oldVal: unknown, newVal: unknown):
     case 'decision_type':
       if (eqJson(oldVal, newVal)) return null;
       return 'modificó la clasificación o el tipo de decisión (SIERJU)';
+    case 'decision_at':
+      if (eqJson(oldVal, newVal)) return null;
+      return 'modificó la fecha de la decisión (SIERJU)';
     default:
       break;
   }
@@ -145,6 +148,7 @@ function describeCaseActionsRow(r: Record<string, unknown>, operation: CaseAudit
     if (typ === 'manual_entry') return `creó una actuación manual: ${desc}`;
     if (typ === 'ai_synthesis') return `registró constancia en actuaciones: ${desc}`;
     if (typ === 'status_change') return `registró cambio de estado en actuaciones: ${desc}`;
+    if (typ === 'decision_at') return desc ? `registró fecha de decisión: ${desc}` : 'registró fecha de decisión';
     if (typ === 'derecho_tutelado_code' || typ === 'decision_type')
       return `registró clasificación en actuaciones: ${desc}`;
     return `creó una actuación: ${desc}`;

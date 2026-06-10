@@ -74,6 +74,19 @@ import {
   saveLocalExtraCuadernos,
   type ExpedienteCuadernoExtra,
 } from '../../lib/expediente-extra-cuadernos';
+import { ExpedienteActTimeline } from './ExpedienteActTimeline';
+import {
+  ExpedienteUploadActDialog,
+  type ExpedienteUploadActPayload,
+} from './ExpedienteUploadActDialog';
+import {
+  inferActCodeFromDocument,
+  labelForActCode,
+  nextActSequenceForDocs,
+  sortDocumentsByActTimeline,
+  suggestedLogicalNameForAct,
+  uploadableActsForCaseType,
+} from '../../lib/case-act-types';
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
@@ -150,6 +163,10 @@ function extChipClass(ext: string): string {
 }
 
 function badgeFor(doc: Document): { text: string; className: string } {
+  const actLabel = labelForActCode(inferActCodeFromDocument(doc));
+  if (actLabel) {
+    return { text: actLabel, className: 'bg-indigo-50 text-indigo-900 border border-indigo-100' };
+  }
   if (doc.type === 'email_body')
     return { text: 'Constancia ingreso', className: 'bg-slate-100 text-slate-600 border border-slate-200' };
   if (doc.type === 'informe_ingreso_expediente')
@@ -513,6 +530,10 @@ export function ExpedienteDigitalPanel({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [piezaMenuId, setPiezaMenuId] = useState<string | null>(null);
   const [piezaBusqueda, setPiezaBusqueda] = useState('');
+  const [uploadActDialog, setUploadActDialog] = useState<{
+    files: File[];
+    notebookCode: string;
+  } | null>(null);
   const [expandedNb, setExpandedNb] = useState<Set<string>>(() => new Set());
   const pickNbRef = useRef(DEFAULT_NOTEBOOK_CODE);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -577,8 +598,14 @@ export function ExpedienteDigitalPanel({
   };
 
   const piezasForNotebook = useCallback(
-    (code: string) => filterByNotebook(docs, code).filter(isExpedientePiezaListable),
-    [docs]
+    (code: string) => {
+      const list = filterByNotebook(docs, code).filter(isExpedientePiezaListable);
+      if (caseItem.caseType === 'tutela_primera') {
+        return sortDocumentsByActTimeline(list, caseItem.caseType);
+      }
+      return list;
+    },
+    [docs, caseItem.caseType],
   );
 
   const piezasFiltradasFor = useCallback(
@@ -608,6 +635,69 @@ export function ExpedienteDigitalPanel({
     return null;
   };
 
+  const uploadFilesToExpediente = useCallback(
+    async (payload: {
+      files: File[];
+      notebookCode: string;
+      actCode?: string;
+      partyEntity?: string;
+    }) => {
+      const { files, notebookCode, actCode, partyEntity } = payload;
+      setUploadingNb(notebookCode);
+      try {
+        await ensureSupabaseSessionForWrites();
+        let order = maxSortOrder(docs, notebookCode);
+        for (const file of files) {
+          order += 1;
+          const logicalName = actCode
+            ? suggestedLogicalNameForAct(actCode, { partyEntity, originalFilename: file.name })
+            : file.name;
+          const body = new Uint8Array(await file.arrayBuffer());
+          const up = await uploadCaseAttachment(
+            supabase,
+            caseId,
+            logicalName,
+            body,
+            file.type || 'application/octet-stream',
+          );
+          if ('error' in up) throw up.error;
+          const displayName = logicalName.replace(/\.[^.]+$/, '');
+          const row: Record<string, unknown> = {
+            case_id: caseId,
+            name: displayName,
+            original_name: file.name,
+            type: actCode ? 'expediente_acto' : 'expediente_upload',
+            content_type: file.type || 'application/octet-stream',
+            size: file.size,
+            storage_path: up.path,
+            is_from_link: false,
+            sort_order: order,
+            notebook_code: notebookCode,
+          };
+          if (actCode) {
+            row.act_code = actCode;
+            row.act_sequence = nextActSequenceForDocs(docs, actCode);
+            row.source_channel = 'manual';
+            if (partyEntity?.trim()) row.party_entity = partyEntity.trim();
+          }
+          const ins = await insertCaseDocumentRows(supabase, [row]);
+          if (ins.error) {
+            await handleDataPermissionError(ins.error, 'create', 'case_documents');
+            throw ins.error;
+          }
+        }
+        await onRefetchDocs();
+      } catch (e) {
+        console.error(e);
+        setUploadErr(e instanceof Error ? e.message : 'No se pudo subir el archivo.');
+        throw e;
+      } finally {
+        setUploadingNb(null);
+      }
+    },
+    [caseId, docs, onRefetchDocs],
+  );
+
   const handleFiles = useCallback(
     async (list: FileList | null) => {
       if (!list?.length) return;
@@ -621,43 +711,32 @@ export function ExpedienteDigitalPanel({
           return;
         }
       }
-      setUploadingNb(notebookCode);
-      try {
-        await ensureSupabaseSessionForWrites();
-        let order = maxSortOrder(docs, notebookCode);
-        for (const file of files) {
-          order += 1;
-          const body = new Uint8Array(await file.arrayBuffer());
-          const up = await uploadCaseAttachment(supabase, caseId, file.name, body, file.type || 'application/octet-stream');
-          if ('error' in up) throw up.error;
-          const row = {
-            case_id: caseId,
-            name: file.name,
-            original_name: file.name,
-            type: 'expediente_upload',
-            content_type: file.type || 'application/octet-stream',
-            size: file.size,
-            storage_path: up.path,
-            is_from_link: false,
-            sort_order: order,
-            notebook_code: notebookCode,
-          };
-          const ins = await insertCaseDocumentRows(supabase, [row]);
-          if (ins.error) {
-            await handleDataPermissionError(ins.error, 'create', 'case_documents');
-            throw ins.error;
-          }
-        }
-        await onRefetchDocs();
-      } catch (e) {
-        console.error(e);
-        setUploadErr(e instanceof Error ? e.message : 'No se pudo subir el archivo.');
-      } finally {
-        setUploadingNb(null);
+      if (caseItem.caseType === 'tutela_primera' && uploadableActsForCaseType(caseItem.caseType).length > 0) {
+        setUploadActDialog({ files, notebookCode });
         if (fileInputRef.current) fileInputRef.current.value = '';
+        return;
+      }
+      await uploadFilesToExpediente({ files, notebookCode });
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    },
+    [caseItem.caseType, uploadFilesToExpediente],
+  );
+
+  const confirmUploadWithAct = useCallback(
+    async (payload: ExpedienteUploadActPayload) => {
+      setUploadActDialog(null);
+      try {
+        await uploadFilesToExpediente({
+          files: payload.files,
+          notebookCode: payload.notebookCode,
+          actCode: payload.actCode,
+          partyEntity: payload.partyEntity,
+        });
+      } catch {
+        /* uploadFilesToExpediente ya registró el error */
       }
     },
-    [caseId, docs, onRefetchDocs]
+    [uploadFilesToExpediente],
   );
 
   function friendlyCaseUpdateError(rawIn: unknown): string {
@@ -901,7 +980,7 @@ export function ExpedienteDigitalPanel({
       >
         <div className="flex shrink-0 flex-col items-center gap-0.5 pt-0.5">
           <span className="text-[10px] font-semibold tabular-nums text-slate-400">
-            {String(listIndex + 1).padStart(2, '0')}
+            {String(doc.actSequence ?? listIndex + 1).padStart(2, '0')}
           </span>
           <span className={`rounded px-1 py-0.5 text-[8px] font-bold ${extChipClass(ext)}`}>{ext}</span>
         </div>
@@ -976,6 +1055,10 @@ export function ExpedienteDigitalPanel({
         list.length === 0 ? (
           <div className="mb-2 shrink-0 rounded-md border border-sky-200/90 bg-sky-50/90 px-2 py-1.5 text-[9px] leading-snug text-sky-950">
             Sin demanda/anexos aquí. Suba PDF abajo o use SGDE /{' '}
+            <Link to="/correo/contestaciones" className="font-semibold underline">
+              Contestaciones (correo)
+            </Link>{' '}
+            o{' '}
             <Link to="/correo/pendientes" className="font-semibold underline">
               Correo pendientes
             </Link>
@@ -1062,6 +1145,18 @@ export function ExpedienteDigitalPanel({
 
   return (
     <div id="panel-documentos" className="scroll-mt-24 flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+      <ExpedienteUploadActDialog
+        open={Boolean(uploadActDialog)}
+        files={uploadActDialog?.files ?? []}
+        notebookCode={uploadActDialog?.notebookCode ?? defaultNb}
+        caseType={caseItem.caseType}
+        busy={Boolean(uploadingNb)}
+        onCancel={() => setUploadActDialog(null)}
+        onConfirm={confirmUploadWithAct}
+      />
+      {caseItem.caseType === 'tutela_primera' ? (
+        <ExpedienteActTimeline docs={docs} caseType={caseItem.caseType} />
+      ) : null}
       <ExpedienteSignSgdeDialog
         open={Boolean(signDoc)}
         caseId={caseId}

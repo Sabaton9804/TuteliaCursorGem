@@ -6,6 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import { Link, useNavigate } from 'react-router-dom';
 import { useCaseDetail } from '../../contexts/CaseDetailContext';
 import { formatRadicado } from '../../lib/formatters';
+import { plazoFallarAjusteManualHint, plazoFallarLabelForCase } from '../../lib/decreto-2591-plazos';
 import { CASE_STATUS_LABEL } from './case-detail-status-labels';
 import { PrecedentSourceBadge } from './PrecedentSourceBadge';
 
@@ -366,7 +367,7 @@ export function CaseSintesisPanel({
               {caseItem.operationalStatus?.trim() || 'Sin dato en expediente'}
             </li>
             <li>
-              <span className="font-semibold text-slate-500">Plazo para fallar (10 días háb. desde radicación): </span>
+              <span className="font-semibold text-slate-500">{plazoFallarLabelForCase(caseItem.caseType)}: </span>
               {caseItem.deadlineAt && isValid(parseISO(caseItem.deadlineAt))
                 ? format(parseISO(caseItem.deadlineAt), "EEEE d 'de' MMMM yyyy", { locale: es })
                 : 'No registrado — use el desplegable siguiente o el backfill de plazos'}
@@ -385,7 +386,7 @@ export function CaseSintesisPanel({
 
         <details className="group border-t border-slate-100 bg-slate-50/50 px-4 py-2 sm:px-6 sm:py-2.5">
           <summary className="cursor-pointer list-none py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-slate-400 hover:text-slate-600 [&::-webkit-details-marker]:hidden before:mr-1.5 before:inline-block before:text-slate-300 before:transition-transform before:content-['▸'] group-open:before:rotate-90">
-            Ajuste manual del plazo para fallar (10 días háb. desde radicación, excepcional)
+            {plazoFallarAjusteManualHint(caseItem.caseType)}
           </summary>
           <div className="mt-2 space-y-2 border-t border-slate-100/90 pt-2 pb-1 text-[10px] text-slate-500">
             <p className="leading-snug">

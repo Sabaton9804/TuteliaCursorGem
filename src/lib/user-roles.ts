@@ -17,7 +17,12 @@ export function parseUserRole(raw: unknown): UserRole {
   const alias: Record<string, UserRole> = {
     magistrado: 'judge',
     juez: 'judge',
+    secretario: 'clerk',
+    'secretario(a)': 'clerk',
+    'oficial mayor': 'official',
+    oficial_mayor: 'official',
     'asistente judicial': 'asistente_judicial',
+    asistente: 'asistente_judicial',
   };
   const mapped = alias[s] ?? s;
   return (ALL_ROLES as readonly string[]).includes(mapped) ? (mapped as UserRole) : 'admin';
@@ -29,7 +34,7 @@ export function userRoleLabelEs(role: UserRole): string {
     admin: 'Administrador',
     judge: 'Juez',
     clerk: 'Secretario(a)',
-    official: 'Funcionario',
+    official: 'Oficial mayor',
     sustanciador: 'Sustanciador(a)',
     escribiente: 'Escribiente',
     asistente_judicial: 'Asistente judicial',

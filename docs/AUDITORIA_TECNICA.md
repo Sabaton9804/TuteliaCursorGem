@@ -258,7 +258,7 @@ Interfaces TypeScript que reflejan las tablas anteriores (`Case`, `Document`, `A
 | Acumulación de procesos | Mismo array: «No hay campo ni regla». |
 | Tipos de entrada (reingreso, competencia, impedimentos) | Mismo array: `no` o no modelados. |
 | Métricas de salida finas | Parcial: depende de `decision_type` y fechas proxy (`updated_at` mencionado en comentarios del array). |
-| Plazo «Impugnación 3 días» en tablero | `ExpedientesViews.tsx` etiqueta `Imp: 3d háb. (demo)` para etapa `fallo_notificado` — calificador literal «(demo)». |
+| Plazos tutela (D. 2591/91) | `src/lib/decreto-2591-plazos.ts`, `docs/decreto-2591-plazos-tutela.md`: art. 29 (10 háb.), art. 31 (3 háb. impugnación), art. 32 (20 háb. 2ª instancia). Tablero sin «(demo)». |
 | Vista previa local sustitución marcadores DOCX | `DocxPlantillaImportSection.tsx`: función `simularTextoLocal` — simulación en cliente para vista previa, no reemplaza el flujo servidor de `aplicar`. |
 | Prisma como capa de acceso en la app | Esquema mínimo; aplicación no usa cliente Prisma en `src/` para CRUD. |
 | Políticas RLS restrictivas por tribunal en todas las tablas | `security_spec.md` y migraciones iniciales: `cases`, `case_documents`, `case_actions`, `case_word_reviews` con políticas **authenticated** amplias; `document_templates` y `case_audit_log` más acotadas; comentarios SQL piden «endurecer» en el futuro. |

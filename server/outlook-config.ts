@@ -1,13 +1,44 @@
+/** Buzones compartidos delegados (v0.4). */
+export const OUTLOOK_GRAPH_SCOPES_SHARED = [
+  'Mail.Read.Shared',
+  'Mail.ReadWrite.Shared',
+  'Mail.Send.Shared',
+] as const;
+
+/** Buzón personal /me — compatibilidad piloto. */
+export const OUTLOOK_GRAPH_SCOPES_LEGACY_ME = [
+  'Mail.Read',
+  'Mail.ReadWrite',
+  'Mail.Send',
+] as const;
+
 export const OUTLOOK_GRAPH_SCOPES = [
   'openid',
   'profile',
   'email',
   'offline_access',
   'User.Read',
-  'Mail.Read',
-  'Mail.ReadWrite',
-  'Mail.Send',
+  ...OUTLOOK_GRAPH_SCOPES_SHARED,
+  ...OUTLOOK_GRAPH_SCOPES_LEGACY_ME,
 ] as const;
+
+export function isOutlookAllowLegacyMe(): boolean {
+  const v = String(process.env.OUTLOOK_ALLOW_LEGACY_ME ?? '1').trim().toLowerCase();
+  return v !== '0' && v !== 'false' && v !== 'off';
+}
+
+export function isOutlookRequireExplicitMailbox(): boolean {
+  const v = String(process.env.OUTLOOK_REQUIRE_EXPLICIT_MAILBOX ?? '1').trim().toLowerCase();
+  return v !== '0' && v !== 'false' && v !== 'off';
+}
+
+export function outlookOAuthPrompt(): string | undefined {
+  const explicit = (process.env.OUTLOOK_OAUTH_PROMPT || '').trim();
+  if (explicit === 'none') return undefined;
+  if (explicit) return explicit;
+  if (process.env.NODE_ENV === 'production') return undefined;
+  return 'consent';
+}
 
 export type OutlookIntegrationState = {
   enabled: boolean;

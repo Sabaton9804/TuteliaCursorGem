@@ -69,7 +69,16 @@ export async function insertCaseDocumentRowsAdmin(
   admin: SupabaseClient,
   rows: Array<Record<string, unknown>>
 ) {
-  const optionalKeys = ['notebook_code', 'sgde_id', 'sgde_folder_path', 'sgde_sync_status'];
+  const optionalKeys = [
+    'notebook_code',
+    'sgde_id',
+    'sgde_folder_path',
+    'sgde_sync_status',
+    'act_code',
+    'act_sequence',
+    'party_entity',
+    'source_channel',
+  ];
   let payload = rows;
   let res = await admin.from('case_documents').insert(payload);
   while (res.error) {

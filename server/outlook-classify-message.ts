@@ -5,7 +5,7 @@ import {
   listMessageAttachmentsMeta,
   type OutlookAttachmentMeta,
 } from './outlook-graph-attachments';
-import { getMessageDetail } from './outlook-graph';
+import { getMessageDetail, type MailboxGraphTarget } from './outlook-graph';
 import { outlookMessageBodyText } from './outlook-message-body';
 import {
   createParseSession,
@@ -20,14 +20,15 @@ export type ClassifyEnqueueResult = ClassifyJudicialEmailResult & { reviewId?: s
 export async function classifyAndEnqueueOutlookMessage(opts: {
   admin: SupabaseClient;
   accessToken: string;
+  graphTarget: MailboxGraphTarget;
   courtId: string;
   userId: string;
   messageId: string;
   parseSessionId?: string;
 }): Promise<ClassifyEnqueueResult> {
-  const { admin, accessToken, courtId, userId, messageId } = opts;
+  const { admin, accessToken, graphTarget, courtId, userId, messageId } = opts;
 
-  const detail = await getMessageDetail(accessToken, messageId);
+  const detail = await getMessageDetail(accessToken, graphTarget, messageId);
   const subject = String(detail.subject ?? '');
   const bodyText =
     outlookMessageBodyText(detail) || String((detail as { bodyPreview?: string }).bodyPreview ?? '');
@@ -43,7 +44,7 @@ export async function classifyAndEnqueueOutlookMessage(opts: {
 
   let manifest: OutlookAttachmentMeta[] = [];
   try {
-    manifest = await listMessageAttachmentsMeta(accessToken, messageId);
+    manifest = await listMessageAttachmentsMeta(accessToken, graphTarget, messageId);
   } catch (e) {
     console.warn('[outlook/classify] manifest:', (e as Error)?.message || e);
   }
@@ -60,7 +61,12 @@ export async function classifyAndEnqueueOutlookMessage(opts: {
       ) ?? manifest.find((m) => m.kind === 'file' && !m.isInline);
     if (!pick) return null;
     try {
-      const { buffer, filename } = await downloadOutlookAttachmentContent(accessToken, messageId, pick);
+      const { buffer, filename } = await downloadOutlookAttachmentContent(
+        accessToken,
+        graphTarget,
+        messageId,
+        pick
+      );
       if (!buffer.length) return null;
       return { buffer, filename };
     } catch (e) {
@@ -136,17 +142,18 @@ export type InboxScanItem = {
 export async function scanInboxIntoReviewQueue(opts: {
   admin: SupabaseClient;
   accessToken: string;
+  graphTarget: MailboxGraphTarget;
   courtId: string;
   userId: string;
   folder?: import('./outlook-graph').OutlookFolderKey;
   top?: number;
 }): Promise<{ processed: InboxScanItem[]; queued: number; failed: number; skipped: number }> {
-  const { admin, accessToken, courtId, userId } = opts;
+  const { admin, accessToken, graphTarget, courtId, userId } = opts;
   const folder = opts.folder ?? 'inbox';
   const top = Math.min(Math.max(opts.top ?? 20, 1), 30);
 
   const { listFolderMessages } = await import('./outlook-graph');
-  const messages = await listFolderMessages(accessToken, folder, { top });
+  const messages = await listFolderMessages(accessToken, graphTarget, folder, { top });
 
   const processed: InboxScanItem[] = [];
   let queued = 0;
@@ -176,6 +183,7 @@ export async function scanInboxIntoReviewQueue(opts: {
       const result = await classifyAndEnqueueOutlookMessage({
         admin,
         accessToken,
+        graphTarget,
         courtId,
         userId,
         messageId,

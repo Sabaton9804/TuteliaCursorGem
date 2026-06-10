@@ -1,6 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { CaseType, UserRole } from '../types';
+import type { CaseType, Document, UserRole } from '../types';
 import { startOfLocalDay } from './business-days';
+import {
+  canRegistrarNotificacionAutoEnviada,
+  canRegistrarNotificacionFalloEnviada,
+} from './case-stage-act-gates';
 import {
   metadataForContestacionDeadline,
   metadataForImpugnacionDeadline,
@@ -17,6 +21,18 @@ import {
 import { insertWorkflowStageEntryNotifications } from './workflow-stage-notifications';
 import { ensureSupabaseSessionForWrites } from './supabase-write-auth';
 import { getCachedStageDefinitionId } from './process-definitions-service';
+import { rowToCaseDoc } from './supabase-mappers';
+
+async function resolveExpedienteDocsForGate(
+  supabase: SupabaseClient,
+  caseId: string,
+  provided?: Document[],
+): Promise<Document[]> {
+  if (provided) return provided;
+  const { data, error } = await supabase.from('case_documents').select('*').eq('case_id', caseId);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r) => rowToCaseDoc(r as Record<string, unknown>, caseId));
+}
 
 export type CaseStageRowDb = {
   id: string;
@@ -373,9 +389,14 @@ export async function applyStageTransitionNotificacionAutoEnviada(
     radicado: string;
     caseType: CaseType;
     caseAssignedTo?: string | null;
+    /** Si se omite, se consulta `case_documents` antes de avanzar etapa. */
+    expedienteDocs?: Document[];
   },
 ): Promise<void> {
   if (opts.caseType !== 'tutela_primera') return;
+  const docs = await resolveExpedienteDocsForGate(supabase, opts.caseId, opts.expedienteDocs);
+  const gate = canRegistrarNotificacionAutoEnviada(opts.caseType, docs);
+  if (!gate.ok) throw new Error('message' in gate ? gate.message : 'Faltan piezas en el expediente.');
   await ensureSupabaseSessionForWrites();
   const open = await fetchOpenStageRow(supabase, opts.caseId);
   if (!open || open.stage_code !== 'ADMISION') return;
@@ -514,9 +535,13 @@ export async function applyStageTransitionNotificacionFalloEnviada(
     radicado: string;
     caseType: CaseType;
     caseAssignedTo?: string | null;
+    expedienteDocs?: Document[];
   },
 ): Promise<void> {
   if (opts.caseType !== 'tutela_primera') return;
+  const docs = await resolveExpedienteDocsForGate(supabase, opts.caseId, opts.expedienteDocs);
+  const gate = canRegistrarNotificacionFalloEnviada(opts.caseType, docs);
+  if (!gate.ok) throw new Error('message' in gate ? gate.message : 'Faltan piezas en el expediente.');
   await ensureSupabaseSessionForWrites();
   const open = await fetchOpenStageRow(supabase, opts.caseId);
   if (!open || open.stage_code !== 'FALLO') return;

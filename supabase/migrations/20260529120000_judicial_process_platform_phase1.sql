@@ -265,10 +265,10 @@ from (
       'tutela_segunda',
       'Tutela — Segunda instancia',
       2::smallint,
-      null::int,
-      'none',
+      20::int,
+      'habiles'::text,
       'tutela_segunda',
-      'Segunda instancia; plazo global distinto al de primera.'
+      'Plazo global 20 días hábiles desde recepción del expediente (art. 32 D.2591/91).'
     ),
     (
       'consulta_desacato',

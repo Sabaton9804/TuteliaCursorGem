@@ -35,11 +35,15 @@ import { userFacingSupabaseError } from '../lib/supabase-user-error';
 const TIPO_LABEL: Record<PlantillaTipo, string> = {
   informe_ingreso: 'Informe ingreso',
   auto_admisorio: 'Auto admisorio',
+  notificacion_admisorio: 'Notificación auto',
+  notificacion_fallo: 'Notificación fallo',
   libre: 'Libre / otro',
 };
 
 const OPCIONES_NUEVA_PLANTILLA: { categoria: PlantillaCategoria; tipo: PlantillaTipo }[] = [
   { categoria: 'secretaria', tipo: 'informe_ingreso' },
+  { categoria: 'secretaria', tipo: 'notificacion_admisorio' },
+  { categoria: 'secretaria', tipo: 'notificacion_fallo' },
   { categoria: 'secretaria', tipo: 'libre' },
   { categoria: 'despacho', tipo: 'auto_admisorio' },
   { categoria: 'despacho', tipo: 'libre' },

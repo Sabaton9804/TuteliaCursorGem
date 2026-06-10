@@ -28,6 +28,12 @@ import {
   manualStageSkipTo,
   runAutomaticStageChecksOnCaseLoad,
 } from '../../lib/case-stages-service';
+import {
+  canRegistrarNotificacionAutoEnviada,
+  canRegistrarNotificacionFalloEnviada,
+  stageActGateMessage,
+} from '../../lib/case-stage-act-gates';
+import { CaseContestacionChecklistPanel } from './CaseContestacionChecklistPanel';
 import type { UserRole } from '../../types';
 import {
   businessDayTermEnd,
@@ -64,7 +70,7 @@ function roleCanRegistrarHitosSecretaria(role: UserRole | null | undefined): boo
 }
 
 export function CaseStagesExperience() {
-  const { caseItem, courtId, profile, refetch } = useCaseDetail();
+  const { caseItem, courtId, profile, refetch, docs } = useCaseDetail();
   const caseId = caseItem.id;
   const radicado = caseItem.radicado;
   const caseType = caseItem.caseType;
@@ -84,6 +90,15 @@ export function CaseStagesExperience() {
   });
 
   const pipeline = useMemo(() => pipelineForCaseType(caseType), [caseType]);
+
+  const gateNotifAuto = useMemo(
+    () => canRegistrarNotificacionAutoEnviada(caseType ?? 'tutela_primera', docs),
+    [caseType, docs],
+  );
+  const gateNotifFallo = useMemo(
+    () => canRegistrarNotificacionFalloEnviada(caseType ?? 'tutela_primera', docs),
+    [caseType, docs],
+  );
 
   useEffect(() => {
     void runAutomaticStageChecksOnCaseLoad(supabase, {
@@ -246,6 +261,7 @@ export function CaseStagesExperience() {
         radicado,
         caseType: caseType ?? 'tutela_primera',
         caseAssignedTo: assignedTo,
+        expedienteDocs: docs,
       });
       await stages.refetch();
       await refetch.refetchCase();
@@ -255,7 +271,7 @@ export function CaseStagesExperience() {
     } finally {
       setBusy(false);
     }
-  }, [caseId, courtId, radicado, caseType, assignedTo, stages.refetch, refetch]);
+  }, [caseId, courtId, radicado, caseType, assignedTo, docs, stages.refetch, refetch]);
 
   const registrarNotifFallo = useCallback(async () => {
     setBusy(true);
@@ -267,6 +283,7 @@ export function CaseStagesExperience() {
         radicado,
         caseType: caseType ?? 'tutela_primera',
         caseAssignedTo: assignedTo,
+        expedienteDocs: docs,
       });
       await stages.refetch();
       await refetch.refetchCase();
@@ -276,7 +293,7 @@ export function CaseStagesExperience() {
     } finally {
       setBusy(false);
     }
-  }, [caseId, courtId, radicado, caseType, assignedTo, stages.refetch, refetch]);
+  }, [caseId, courtId, radicado, caseType, assignedTo, docs, stages.refetch, refetch]);
 
   const registrarRemisionCorte = useCallback(async () => {
     setBusy(true);
@@ -413,6 +430,19 @@ export function CaseStagesExperience() {
                     </section>
                   ) : null}
 
+                  {caseType === 'tutela_primera' &&
+                  openRow &&
+                  (openRow.stageCode === 'TERMINO_RESPUESTA' ||
+                    openRow.stageCode === 'INGRESO_DESPACHO_FALLO') ? (
+                    <CaseContestacionChecklistPanel
+                      caseItem={caseItem}
+                      docs={docs}
+                      openStageCode={openRow.stageCode}
+                      plazoVencido={plazoEtapa != null && plazoEtapa.remaining <= 0}
+                      compact
+                    />
+                  ) : null}
+
                   {roleCanRegistrarHitosSecretaria(role) && caseType === 'tutela_primera' ? (
                     <section className="rounded-xl border border-indigo-100 bg-indigo-50/50 px-3 py-3 text-xs">
                       <p className="text-[10px] font-black uppercase tracking-widest text-indigo-700">
@@ -420,24 +450,38 @@ export function CaseStagesExperience() {
                       </p>
                       <div className="mt-2 flex flex-col gap-2">
                         {openRow?.stageCode === 'ADMISION' ? (
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void registrarNotifAuto()}
-                            className="rounded-lg bg-indigo-600 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-indigo-700 disabled:opacity-40"
-                          >
-                            Notificación enviada (auto admisorio)
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              disabled={busy || !gateNotifAuto.ok}
+                              onClick={() => void registrarNotifAuto()}
+                              className="rounded-lg bg-indigo-600 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-indigo-700 disabled:opacity-40"
+                            >
+                              Notificación enviada (auto admisorio)
+                            </button>
+                            {stageActGateMessage(gateNotifAuto) ? (
+                              <p className="text-[11px] leading-snug text-indigo-950/90">
+                                {stageActGateMessage(gateNotifAuto)}
+                              </p>
+                            ) : null}
+                          </>
                         ) : null}
                         {openRow?.stageCode === 'FALLO' ? (
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void registrarNotifFallo()}
-                            className="rounded-lg bg-indigo-600 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-indigo-700 disabled:opacity-40"
-                          >
-                            Notificación del fallo enviada
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              disabled={busy || !gateNotifFallo.ok}
+                              onClick={() => void registrarNotifFallo()}
+                              className="rounded-lg bg-indigo-600 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-indigo-700 disabled:opacity-40"
+                            >
+                              Notificación del fallo enviada
+                            </button>
+                            {stageActGateMessage(gateNotifFallo) ? (
+                              <p className="text-[11px] leading-snug text-indigo-950/90">
+                                {stageActGateMessage(gateNotifFallo)}
+                              </p>
+                            ) : null}
+                          </>
                         ) : null}
                         {openRow?.stageCode === 'EJECUTORIA' ? (
                           <button

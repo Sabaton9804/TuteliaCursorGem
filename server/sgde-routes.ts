@@ -621,7 +621,7 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
         caseId,
         documentId,
       });
-      if (!result.ok) {
+      if (result.ok === false) {
         return res.status(404).json({ error: result.error });
       }
       const portalBaseUrl = platform.portalBaseUrl;

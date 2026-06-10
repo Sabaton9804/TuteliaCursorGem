@@ -58,6 +58,13 @@ import {
   DERECHO_TUTELADO_LABELS,
   parseDecisionType,
 } from '../lib/sierju-case-codes';
+import {
+  buildCaseDecisionUpdate,
+  decisionAtIsoFromDateInput,
+  decisionDateInputFromIso,
+  DECISION_AT_FIELD_HINT,
+  formatDecisionAtDisplay,
+} from '../lib/case-decision-at';
 type ExpedienteTab = CaseDetailExpedienteTab;
 
 const TAB_QUERY_VALUES = new Set<string>([
@@ -106,6 +113,7 @@ export default function CaseDetail() {
   const [manualActSaving, setManualActSaving] = useState(false);
   const [derechoCodeSaving, setDerechoCodeSaving] = useState(false);
   const [decisionSaving, setDecisionSaving] = useState(false);
+  const [decisionAtDraft, setDecisionAtDraft] = useState('');
   const [deadlineDraft, setDeadlineDraft] = useState('');
   const [deadlineNoteDraft, setDeadlineNoteDraft] = useState('');
   const [deadlineSaving, setDeadlineSaving] = useState(false);
@@ -183,6 +191,11 @@ export default function CaseDetail() {
     }
     setDeadlineNoteDraft(caseItem.deadlineOverrideNote?.trim() ?? '');
   }, [caseItem?.id, caseItem?.deadlineAt, caseItem?.deadlineOverrideNote]);
+
+  useEffect(() => {
+    if (!caseItem) return;
+    setDecisionAtDraft(decisionDateInputFromIso(caseItem.decisionAt));
+  }, [caseItem?.id, caseItem?.decisionAt]);
 
   const refetchDocs = useCallback(async () => {
     if (!id) return;
@@ -575,14 +588,18 @@ export default function CaseDetail() {
       try {
         await ensureSupabaseSessionForWrites();
         const now = new Date().toISOString();
-        const { error: upErr } = await supabase
-          .from('cases')
-          .update({
-            decision_type: next ?? null,
-            decision_at: next ? now : null,
-            updated_at: now,
-          })
-          .eq('id', id);
+        const atIso = next
+          ? decisionAtIsoFromDateInput(decisionAtDraft) ?? now
+          : null;
+        if (next && !atIso) {
+          throw new Error('Indique la fecha de la decisión.');
+        }
+        const patch = buildCaseDecisionUpdate({
+          decisionType: next,
+          decisionAtIso: atIso,
+          nowIso: now,
+        });
+        const { error: upErr } = await supabase.from('cases').update(patch).eq('id', id);
         if (upErr) throw upErr;
 
         const { data: u } = await supabase.auth.getUser();
@@ -595,7 +612,11 @@ export default function CaseDetail() {
             : 'Tipo de decisión eliminado',
           user_id: u.user?.id ?? null,
           user_name: String(uname),
-          metadata: { previous: prev ?? null, next: next ?? null },
+          metadata: {
+            previous: prev ?? null,
+            next: next ?? null,
+            decision_at: atIso,
+          },
         });
         await refetchCase();
         await refetchActions();
@@ -608,8 +629,43 @@ export default function CaseDetail() {
         setDecisionSaving(false);
       }
     },
-    [id, caseItem, refetchCase, refetchActions]
+    [id, caseItem, decisionAtDraft, refetchCase, refetchActions]
   );
+
+  const handleSaveDecisionAt = useCallback(async () => {
+    if (!id || !caseItem?.decisionType) return;
+    const atIso = decisionAtIsoFromDateInput(decisionAtDraft);
+    if (!atIso) return;
+    const prevIso = caseItem.decisionAt?.trim() || null;
+    if (prevIso === atIso) return;
+    setDecisionSaving(true);
+    try {
+      await ensureSupabaseSessionForWrites();
+      const now = new Date().toISOString();
+      const { error: upErr } = await supabase
+        .from('cases')
+        .update({ decision_at: atIso, updated_at: now })
+        .eq('id', id);
+      if (upErr) throw upErr;
+      const { data: u } = await supabase.auth.getUser();
+      const uname = u.user?.user_metadata?.full_name || u.user?.email || 'Sistema';
+      const label = formatDecisionAtDisplay(atIso);
+      await supabase.from('case_actions').insert({
+        case_id: id,
+        type: 'decision_at',
+        description: label ? `Fecha de decisión: ${label}` : 'Fecha de decisión actualizada',
+        user_id: u.user?.id ?? null,
+        user_name: String(uname),
+        metadata: { previous: prevIso, next: atIso },
+      });
+      await refetchCase();
+      await refetchActions();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setDecisionSaving(false);
+    }
+  }, [id, caseItem, decisionAtDraft, refetchCase, refetchActions]);
 
   const handleStatusChange = async (newStatus: string) => {
     if (!id || !caseItem) return;
@@ -783,27 +839,60 @@ export default function CaseDetail() {
           onChange={handleSierjuClassificationChange}
         />
         {caseItem.status === 'judgment' || caseItem.status === 'archived' ? (
-          <div className="min-w-[200px] flex-1 space-y-1">
-            <label className="text-[9px] font-bold uppercase tracking-wider text-slate-400" htmlFor="decision-type">
-              Tipo de decisión
-            </label>
-            <div className="flex items-center gap-2">
-              <select
-                id="decision-type"
-                className="input-modern min-h-[40px] flex-1 text-xs font-medium"
-                value={caseItem.decisionType ?? ''}
-                disabled={decisionSaving}
-                onChange={(e) => void handleDecisionTypeChange(e.target.value)}
-              >
-                <option value="">Sin registrar</option>
-                {DECISION_TYPES.map((dt) => (
-                  <option key={dt} value={dt}>
-                    {DECISION_TYPE_LABELS[dt]}
-                  </option>
-                ))}
-              </select>
-              {decisionSaving ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-slate-400" aria-hidden /> : null}
+          <div className="flex min-w-0 flex-1 flex-wrap items-end gap-3">
+            <div className="min-w-[200px] flex-1 space-y-1">
+              <label className="text-[9px] font-bold uppercase tracking-wider text-slate-400" htmlFor="decision-type">
+                Tipo de decisión
+              </label>
+              <div className="flex items-center gap-2">
+                <select
+                  id="decision-type"
+                  className="input-modern min-h-[40px] flex-1 text-xs font-medium"
+                  value={caseItem.decisionType ?? ''}
+                  disabled={decisionSaving}
+                  onChange={(e) => void handleDecisionTypeChange(e.target.value)}
+                >
+                  <option value="">Sin registrar</option>
+                  {DECISION_TYPES.map((dt) => (
+                    <option key={dt} value={dt}>
+                      {DECISION_TYPE_LABELS[dt]}
+                    </option>
+                  ))}
+                </select>
+                {decisionSaving ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-slate-400" aria-hidden /> : null}
+              </div>
             </div>
+            {caseItem.decisionType ? (
+              <div className="min-w-[180px] space-y-1">
+                <label className="text-[9px] font-bold uppercase tracking-wider text-slate-400" htmlFor="decision-at">
+                  Fecha de la decisión
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    id="decision-at"
+                    type="date"
+                    className="input-modern min-h-[40px] flex-1 text-xs"
+                    value={decisionAtDraft}
+                    disabled={decisionSaving}
+                    onChange={(e) => setDecisionAtDraft(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                    disabled={decisionSaving || !decisionAtDraft.trim()}
+                    onClick={() => void handleSaveDecisionAt()}
+                  >
+                    Guardar
+                  </button>
+                </div>
+                <p className="text-[10px] leading-snug text-slate-500">{DECISION_AT_FIELD_HINT}</p>
+                {caseItem.decisionAt && formatDecisionAtDisplay(caseItem.decisionAt) ? (
+                  <p className="text-[10px] font-medium text-slate-600">
+                    Registrada: {formatDecisionAtDisplay(caseItem.decisionAt)}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : (
           <p className="pb-1 text-[11px] text-slate-400 sm:max-w-xs">

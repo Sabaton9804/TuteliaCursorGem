@@ -16,7 +16,7 @@ Hoy el modelo mezcla tres dimensiones distintas:
 |-----------|----------------|---------|
 | **Tipo de actuación** | `cases.case_type` (CHECK enum) | `tutela_primera` |
 | **Etapa del trámite** | `case_stages` + `case-workflow-stages.ts` | `ADMISION`, `FALLO` |
-| **Plazos / semáforo** | `cases.deadline_at`, `case-stage-deadlines.ts`, tablero | 10 días háb. fallo; 2 días contestación |
+| **Plazos / semáforo** | `cases.deadline_at`, `decreto-2591-plazos.ts`, tablero | D. 2591/91: 10 háb. fallo 1ª (art. 29); 20 háb. fallo 2ª (art. 32); 3 háb. impugnación (art. 31) |
 
 Además, **ciudad, entidad, especialidad y despacho CUI** están en `COURT_CONSTANTS` (código global), no en `courts`.
 

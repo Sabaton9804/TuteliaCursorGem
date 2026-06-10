@@ -12,7 +12,10 @@ import {
   statusBadgeForStage,
 } from '../../lib/expedientes-view-model';
 import { startOfLocalDay } from '../../lib/business-days';
+import { impugnacionTermShortLabel } from '../../lib/decreto-2591-plazos';
 import clsx from 'clsx';
+import ListPagination, { LIST_PAGE_SIZE_DEFAULT } from '../ui/ListPagination';
+import { pageSlice, type ListPageSizeOption } from '../../lib/list-pagination';
 
 export type ExpedientesViewMode = 'kanban' | 'lista' | 'calendario';
 
@@ -90,7 +93,7 @@ function derechoTooltip(r: ExpedienteViewRow): string | undefined {
 function daysLabel(r: ExpedienteViewRow): string {
   if (r.stage === 'archivado') return 'Cerrado';
   if (r.stage === 'fallo_redactado') return r.businessDaysRemaining <= 0 ? 'Firma (fuera término)' : 'Firma pend.';
-  if (r.stage === 'fallo_notificado') return 'Imp: 3d háb. (demo)';
+  if (r.stage === 'fallo_notificado') return impugnacionTermShortLabel();
   if (r.businessDaysRemaining <= 0) return 'Vencido';
   return `${r.businessDaysRemaining}d háb.`;
 }
@@ -162,6 +165,9 @@ function compareListaRows(a: ExpedienteViewRow, b: ExpedienteViewRow, key: Lista
 const LISTA_GRID_COLS =
   'minmax(160px,1.1fr) 110px minmax(120px,1fr) 120px minmax(72px,0.7fr) 72px 52px' as const;
 
+/** Máximo de fichas visibles por columna en tablero (el total sigue en el encabezado). */
+const KANBAN_VISIBLE_PER_COLUMN = 20;
+
 export interface ExpedientesViewsProps {
   rows: ExpedienteViewRow[];
   view: ExpedientesViewMode;
@@ -195,6 +201,8 @@ export default function ExpedientesViews({
   const [month, setMonth] = useState(() => startOfLocalDay(new Date()));
   const [listaSortKey, setListaSortKey] = useState<ListaSortKey>('dias_habiles');
   const [listaSortDir, setListaSortDir] = useState<ListaSortDir>('asc');
+  const [listaPage, setListaPage] = useState(1);
+  const [listaPageSize, setListaPageSize] = useState<ListPageSizeOption>(LIST_PAGE_SIZE_DEFAULT);
 
   const byStage = useMemo(() => {
     const m = new Map<BoardStage, ExpedienteViewRow[]>();
@@ -211,6 +219,15 @@ export default function ExpedientesViews({
     copy.sort((a, b) => compareListaRows(a, b, listaSortKey, listaSortDir));
     return copy;
   }, [rows, listaSortKey, listaSortDir]);
+
+  const pagedListRows = useMemo(
+    () => pageSlice(sortedListRows, listaPage, listaPageSize),
+    [sortedListRows, listaPage, listaPageSize]
+  );
+
+  React.useEffect(() => {
+    setListaPage(1);
+  }, [rows.length, filterKind, assigneeFilterId, derechoFilter, listaSortKey, listaSortDir, listaPageSize]);
 
   const onListaHeaderClick = (key: ListaSortKey) => {
     if (listaSortKey === key) {
@@ -340,6 +357,8 @@ export default function ExpedientesViews({
           <div className="flex gap-2 p-3 overflow-x-auto pb-4">
             {BOARD_STAGE_ORDER.map((stage) => {
               const list = byStage.get(stage) || [];
+              const visible = list.slice(0, KANBAN_VISIBLE_PER_COLUMN);
+              const hidden = list.length - visible.length;
               return (
                 <div key={stage} className="min-w-[128px] max-w-[152px] flex flex-col gap-1.5 shrink-0">
                   <div
@@ -349,9 +368,25 @@ export default function ExpedientesViews({
                     )}
                   >
                     <div className="text-[10px] font-semibold text-slate-800 leading-tight">{stageLabel(stage)}</div>
-                    <div className="text-[8px] text-slate-400 font-medium tabular-nums">{list.length}</div>
+                    <div className="text-[8px] text-slate-400 font-medium tabular-nums">
+                      {list.length}
+                      {hidden > 0 ? ` · ${visible.length} visibles` : ''}
+                    </div>
                   </div>
-                  {list.map((r) => (
+                  {hidden > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onViewChange('lista');
+                        setListaSortKey('estado');
+                        setListaSortDir('asc');
+                      }}
+                      className="rounded-md border border-dashed border-slate-300 bg-white/80 px-2 py-1 text-[8px] font-semibold text-slate-600 hover:border-accent/40 hover:text-accent"
+                    >
+                      +{hidden} más — ver en lista
+                    </button>
+                  ) : null}
+                  {visible.map((r) => (
                     <button
                       key={r.case.id}
                       type="button"
@@ -458,7 +493,7 @@ export default function ExpedientesViews({
                 );
               })}
             </div>
-            {sortedListRows.map((r) => (
+            {pagedListRows.map((r) => (
               <button
                 key={r.case.id}
                 type="button"
@@ -525,12 +560,23 @@ export default function ExpedientesViews({
                 </div>
               </button>
             ))}
+            <ListPagination
+              page={listaPage}
+              pageSize={listaPageSize}
+              total={sortedListRows.length}
+              onPageChange={setListaPage}
+              onPageSizeChange={(size) => {
+                setListaPageSize(size);
+                setListaPage(1);
+              }}
+              className="mt-3 rounded-lg border border-slate-200"
+            />
           </div>
         ) : (
           <div className="p-4">
             <div className="flex items-center justify-between mb-3">
               <div className="text-sm font-semibold text-slate-800">
-                {format(month, 'MMMM yyyy', { locale: es })} — Vencimiento término (10 días hábiles)
+                {format(month, 'MMMM yyyy', { locale: es })} — Vencimiento plazo para fallar (D. 2591/91)
               </div>
               <div className="flex gap-1.5">
                 <button
@@ -623,7 +669,7 @@ export default function ExpedientesViews({
           Cerrado / notificado
         </span>
         <span className="ml-auto text-slate-400">
-          Término: 10 días hábiles desde radicación (Colombia: festivos, Semana Santa, 17 dic., vacancia judicial).
+          Plazos: 10 d háb. fallo 1ª (art. 29) · 20 d háb. fallo 2ª (art. 32) · 3 d háb. impugnación (art. 31). Cómputo: festivos CO, Semana Santa, 17 dic., vacancia judicial.
         </span>
       </div>
     </div>

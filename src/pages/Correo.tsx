@@ -24,6 +24,9 @@ import {
   Trash2,
   ShieldAlert,
   X,
+  Reply,
+  Info,
+  ChevronDown,
 } from 'lucide-react';
 import {
   classifyOutlookMessage,
@@ -35,8 +38,15 @@ import {
   fetchOutlookMessage,
   fetchOutlookMessageAttachments,
   fetchOutlookMessages,
+  fetchMessagesReviewStatus,
   type OutlookAttachmentMeta,
+  type OutlookMessageReviewListStatus,
   fetchOutlookStatus,
+  fetchOutlookMailboxes,
+  setOutlookMailboxContext,
+  setOutlookActiveMailboxId,
+  getOutlookActiveMailboxId,
+  type OutlookCourtMailbox,
   openOutlookAttachmentInNewTab,
   parseOutlookMessageForRadicacion,
   scanOutlookInbox,
@@ -54,8 +64,31 @@ import {
   vinculoFromClassification,
 } from '../lib/outlook-expediente-vinculo';
 import { parseSegundaInstanciaClient } from '../lib/sgde-api';
+import {
+  openOutlookMessageBodyInNewTab,
+  sanitizeOutlookBodyHtml,
+} from '../lib/outlook-body-preview';
 
 const OUTLOOK_RADICACION_KEY = 'tutelia_outlook_radicacion';
+const MESSAGE_PAGE_SIZE = 40;
+const INBOX_SCAN_TOP = 20;
+const LIMITS_BANNER_KEY = 'tutelia_correo_limits_dismissed';
+
+function extractFromAddress(from: unknown): string {
+  if (!from || typeof from !== 'object') return '';
+  const ea = (from as { emailAddress?: { address?: string } }).emailAddress;
+  return ea?.address?.trim() || '';
+}
+
+function replySubjectLine(subject: string): string {
+  const s = subject.trim() || '(Sin asunto)';
+  return /^re:\s/i.test(s) ? s : `Re: ${s}`;
+}
+
+function messageWebLink(detail: Record<string, unknown> | null): string | null {
+  const link = detail?.webLink;
+  return typeof link === 'string' && /^https?:\/\//i.test(link) ? link : null;
+}
 
 function looksLikeSegundaInstanciaReparto(subject: string, bodyText: string): boolean {
   return parseSegundaInstanciaClient(subject, bodyText).isSegundaInstancia;
@@ -129,6 +162,22 @@ export default function Correo() {
   const [sendBody, setSendBody] = useState('');
   const [sending, setSending] = useState(false);
   const [scanningInbox, setScanningInbox] = useState(false);
+  const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [reviewStatusMap, setReviewStatusMap] = useState<
+    Record<string, OutlookMessageReviewListStatus>
+  >({});
+  const [limitsBannerOpen, setLimitsBannerOpen] = useState(() => {
+    try {
+      return sessionStorage.getItem(LIMITS_BANNER_KEY) !== '1';
+    } catch {
+      return true;
+    }
+  });
+  const [courtMailboxes, setCourtMailboxes] = useState<OutlookCourtMailbox[]>([]);
+  const [activeMailboxId, setActiveMailboxId] = useState<string | null>(() => getOutlookActiveMailboxId());
+  const [mailboxPickerLoading, setMailboxPickerLoading] = useState(false);
+  const [requireExplicitMailbox, setRequireExplicitMailbox] = useState(false);
 
   const loadStatus = useCallback(async () => {
     setLoadingStatus(true);
@@ -143,8 +192,41 @@ export default function Correo() {
     }
   }, []);
 
+  const loadMailboxContext = useCallback(async () => {
+    if (!status?.connected) {
+      setCourtMailboxes([]);
+      return;
+    }
+    setMailboxPickerLoading(true);
+    try {
+      const snap = await fetchOutlookMailboxes();
+      setCourtMailboxes(snap.mailboxes);
+      setRequireExplicitMailbox(snap.requireExplicitMailbox);
+      const preferred =
+        snap.activeMailboxId ||
+        snap.mailboxes.find((m) => m.isPrimary)?.id ||
+        snap.mailboxes[0]?.id ||
+        null;
+      if (preferred) {
+        setActiveMailboxId(preferred);
+        setOutlookActiveMailboxId(preferred);
+        if (!snap.activeMailboxId && snap.mailboxes.length > 0) {
+          await setOutlookMailboxContext(preferred);
+        }
+      } else {
+        setActiveMailboxId(null);
+        setOutlookActiveMailboxId(null);
+      }
+    } catch (e) {
+      console.error('outlook mailboxes:', e);
+    } finally {
+      setMailboxPickerLoading(false);
+    }
+  }, [status?.connected]);
+
   const loadFolders = useCallback(async () => {
     if (!status?.connected) return;
+    if (requireExplicitMailbox && courtMailboxes.length > 0 && !activeMailboxId) return;
     setLoadingFolders(true);
     try {
       const list = await fetchOutlookFolders();
@@ -154,34 +236,86 @@ export default function Correo() {
     } finally {
       setLoadingFolders(false);
     }
-  }, [status?.connected]);
+  }, [status?.connected, requireExplicitMailbox, courtMailboxes.length, activeMailboxId]);
 
   const loadMessages = useCallback(async () => {
     if (!status?.connected) return;
+    if (requireExplicitMailbox && courtMailboxes.length > 0 && !activeMailboxId) return;
     setLoadingMessages(true);
     setError(null);
     try {
       const list = await fetchOutlookMessages({
-        top: 40,
+        top: MESSAGE_PAGE_SIZE,
         folder: activeFolder,
         search: search.trim() || undefined,
       });
       setMessages(list);
+      setHasMoreMessages(list.length >= MESSAGE_PAGE_SIZE);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo cargar la bandeja.');
     } finally {
       setLoadingMessages(false);
     }
-  }, [status?.connected, activeFolder, search]);
+  }, [status?.connected, activeFolder, search, requireExplicitMailbox, courtMailboxes.length, activeMailboxId]);
+
+  const loadMoreMessages = useCallback(async () => {
+    if (!status?.connected || loadingMoreMessages) return;
+    setLoadingMoreMessages(true);
+    setError(null);
+    try {
+      const list = await fetchOutlookMessages({
+        top: MESSAGE_PAGE_SIZE,
+        skip: messages.length,
+        folder: activeFolder,
+        search: search.trim() || undefined,
+      });
+      setMessages((prev) => {
+        const seen = new Set(prev.map((m) => m.id));
+        return [...prev, ...list.filter((m) => !seen.has(m.id))];
+      });
+      setHasMoreMessages(list.length >= MESSAGE_PAGE_SIZE);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo cargar más correos.');
+    } finally {
+      setLoadingMoreMessages(false);
+    }
+  }, [status?.connected, activeFolder, search, messages.length, loadingMoreMessages]);
 
   const refreshMailbox = useCallback(async () => {
     await loadFolders();
     await loadMessages();
   }, [loadFolders, loadMessages]);
 
+  const handleMailboxChange = useCallback(
+    async (mailboxId: string) => {
+      if (!mailboxId || mailboxId === activeMailboxId) return;
+      setMailboxPickerLoading(true);
+      setError(null);
+      try {
+        await setOutlookMailboxContext(mailboxId);
+        setActiveMailboxId(mailboxId);
+        await loadStatus();
+        await refreshMailbox();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'No se pudo cambiar el buzón.');
+      } finally {
+        setMailboxPickerLoading(false);
+      }
+    },
+    [activeMailboxId, loadStatus, refreshMailbox]
+  );
+
   useEffect(() => {
     void loadStatus();
   }, [loadStatus]);
+
+  useEffect(() => {
+    if (status?.connected) void loadMailboxContext();
+    else {
+      setCourtMailboxes([]);
+      setActiveMailboxId(null);
+    }
+  }, [status?.connected, loadMailboxContext]);
 
   useEffect(() => {
     const outlook = searchParams.get('outlook');
@@ -209,6 +343,26 @@ export default function Correo() {
   useEffect(() => {
     if (status?.connected) void loadMessages();
   }, [status?.connected, loadMessages]);
+
+  useEffect(() => {
+    if (!status?.connected || messages.length === 0) {
+      setReviewStatusMap({});
+      return;
+    }
+    const ids = [...new Set(messages.map((m) => m.id))];
+    let cancelled = false;
+    void fetchMessagesReviewStatus(ids)
+      .then((map) => {
+        if (!cancelled) setReviewStatusMap(map);
+      })
+      .catch((e) => {
+        console.warn('outlook review-status:', e);
+        if (!cancelled) setReviewStatusMap({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [status?.connected, messages, activeFolder]);
 
   useEffect(() => {
     setSelectedId(null);
@@ -358,9 +512,9 @@ export default function Correo() {
     setScanningInbox(true);
     setError(null);
     try {
-      const summary = await scanOutlookInbox({ top: 20, folder: activeFolder });
+      const summary = await scanOutlookInbox({ top: INBOX_SCAN_TOP, folder: activeFolder });
       setBanner(
-        `Bandeja analizada: ${summary.queued} en pendientes, ${summary.skipped} ya estaban, ${summary.failed} con error. Revise en «Pendientes».`
+        `Analizados los ${INBOX_SCAN_TOP} más recientes de esta carpeta: ${summary.queued} en pendientes, ${summary.skipped} ya estaban, ${summary.failed} con error. Revise en «Pendientes».`
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo analizar la bandeja.');
@@ -406,6 +560,7 @@ export default function Correo() {
       setParseSessionId(result.parseSessionId);
       if (result.reviewId) {
         setBanner('Correo enviado a la cola de pendientes. Revise y apruebe el ingreso cuando esté listo.');
+        setReviewStatusMap((prev) => ({ ...prev, [messageId]: 'pending' }));
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo analizar el correo.');
@@ -487,6 +642,49 @@ export default function Correo() {
     selectedSubject,
     bodyType === 'html' ? bodyContent.replace(/<[^>]+>/g, ' ') : bodyContent
   );
+  const outlookWebLink = messageWebLink(messageDetail);
+  const replyToAddress =
+    extractFromAddress(messageDetail?.from) ||
+    extractFromAddress(messages.find((m) => m.id === selectedId)?.from);
+
+  const handleOpenBodyInNewTab = () => {
+    if (!bodyContent.trim()) {
+      setError('Este mensaje no tiene cuerpo para abrir en otra pestaña.');
+      return;
+    }
+    try {
+      openOutlookMessageBodyInNewTab({
+        subject: selectedSubject,
+        bodyContent,
+        bodyType,
+      });
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo abrir el cuerpo del mensaje.');
+    }
+  };
+
+  const handleReplyPrefill = () => {
+    if (!replyToAddress) {
+      setError('No se pudo obtener el remitente para responder.');
+      return;
+    }
+    setSendTo(replyToAddress);
+    setSendCc('');
+    setSendSubject(replySubjectLine(selectedSubject));
+    setSendBody('');
+    setComposeOpen(true);
+    setError(null);
+  };
+
+  const dismissLimitsBanner = () => {
+    setLimitsBannerOpen(false);
+    try {
+      sessionStorage.setItem(LIMITS_BANNER_KEY, '1');
+    } catch {
+      /* ignore */
+    }
+  };
 
   return (
     <motion.div
@@ -507,6 +705,7 @@ export default function Correo() {
               type="button"
               disabled={scanningInbox || classifying}
               onClick={() => void handleScanInbox()}
+              title={`Clasifica con IA hasta los ${INBOX_SCAN_TOP} correos más recientes de la carpeta activa`}
               className="inline-flex items-center gap-2 rounded-xl border border-violet-300 bg-violet-600 px-4 py-2 text-xs font-bold uppercase tracking-widest text-white hover:bg-violet-700 disabled:opacity-60"
             >
               {scanningInbox ? (
@@ -552,6 +751,50 @@ export default function Correo() {
         <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-medium text-red-800">{error}</div>
       ) : null}
 
+      {status?.connected && limitsBannerOpen ? (
+        <div className="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3 text-sm text-slate-700">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 gap-2">
+              <Info className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" aria-hidden />
+              <div className="min-w-0 space-y-1.5">
+                <p className="font-semibold text-slate-800">Qué hace y qué no hace esta bandeja</p>
+                <ul className="list-inside list-disc space-y-0.5 text-xs leading-relaxed text-slate-600">
+                  <li>
+                    <strong>Sí:</strong> leer correos, radicar, analizar con IA, ingreso vía Pendientes, enviar correo
+                    nuevo.
+                  </li>
+                  <li>
+                    <strong>No (aún):</strong> responder en el mismo hilo, adjuntos al redactar ni firma automática.
+                  </li>
+                  <li>
+                    Para contestar con historial y adjuntos use <strong>Abrir en Outlook</strong> o{' '}
+                    <strong>Responder</strong> (abre un borrador simple; no es respuesta en hilo).
+                  </li>
+                </ul>
+                <p className="text-[11px] text-slate-500">
+                  Roadmap interno:{' '}
+                  <Link
+                    to="/docs/roadmap"
+                    className="font-medium text-accent underline decoration-accent/30 hover:decoration-accent"
+                  >
+                    prioridades Correo (v0.2 → v0.3)
+                  </Link>
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={dismissLimitsBanner}
+              className="shrink-0 rounded-lg p-1.5 text-slate-400 hover:bg-white hover:text-slate-600"
+              title="Ocultar hasta la próxima sesión"
+              aria-label="Ocultar aviso"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="card-modern p-6 space-y-4">
         <motion.div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
           <Mail className="h-4 w-4 text-accent" aria-hidden />
@@ -576,23 +819,72 @@ export default function Correo() {
             </Link>
           </div>
         ) : status.connected ? (
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-slate-700">
-              Conectado como <strong>{status.mailboxEmail}</strong>
-            </p>
-            <button
-              type="button"
-              onClick={() => void handleDisconnect()}
-              className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-500 hover:text-red-600"
-            >
-              <Unplug className="h-4 w-4" aria-hidden />
-              Desconectar
-            </button>
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-1 text-sm text-slate-700">
+                <p>
+                  Sesión Microsoft:{' '}
+                  <strong>{status.oauthAccountEmail || status.mailboxEmail}</strong>
+                </p>
+                {status.activeMailbox ? (
+                  <p>
+                    Buzón del despacho:{' '}
+                    <strong>{status.activeMailbox.displayName}</strong>{' '}
+                    <span className="font-mono text-xs text-slate-500">({status.activeMailbox.upn})</span>
+                  </p>
+                ) : status.graphMode === 'legacy_me' ? (
+                  <p className="text-amber-800/90">Modo piloto: bandeja personal (/me).</p>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleDisconnect()}
+                className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-500 hover:text-red-600"
+              >
+                <Unplug className="h-4 w-4" aria-hidden />
+                Desconectar
+              </button>
+            </div>
+            {courtMailboxes.length > 0 ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3">
+                <label className="flex flex-col gap-2 text-xs font-bold uppercase tracking-widest text-slate-500">
+                  Buzón institucional del despacho
+                  <div className="relative">
+                    <select
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-800"
+                      value={activeMailboxId || ''}
+                      disabled={mailboxPickerLoading}
+                      onChange={(e) => void handleMailboxChange(e.target.value)}
+                    >
+                      <option value="" disabled>
+                        Seleccione un buzón…
+                      </option>
+                      {courtMailboxes.map((mb) => (
+                        <option key={mb.id} value={mb.id}>
+                          {mb.displayName || mb.upn} — {mb.courtName}
+                        </option>
+                      ))}
+                    </select>
+                    {mailboxPickerLoading ? (
+                      <Loader2 className="pointer-events-none absolute right-3 top-2.5 h-4 w-4 animate-spin text-slate-400" />
+                    ) : (
+                      <ChevronDown className="pointer-events-none absolute right-3 top-2.5 h-4 w-4 text-slate-400" />
+                    )}
+                  </div>
+                </label>
+                {requireExplicitMailbox && !activeMailboxId ? (
+                  <p className="mt-2 text-xs text-amber-800">
+                    Debe elegir el buzón compartido antes de listar o analizar correos.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : (
           <motion.div className="space-y-3">
             <p className="text-sm text-slate-600">
-              Autorice a Tutelia a leer y enviar correo en su nombre (permisos Mail.Read y Mail.Send en Microsoft Entra).
+              Autorice a Tutelia con su cuenta corporativa. Se solicitan permisos delegados para buzones compartidos
+              (Mail.Read.Shared, Mail.Send.Shared) y, en piloto, su bandeja personal.
             </p>
             {status.redirectUri ? (
               <div className="rounded-xl border border-amber-100 bg-amber-50/80 px-4 py-3 text-xs leading-relaxed text-amber-950">
@@ -621,7 +913,15 @@ export default function Correo() {
 
       {composeOpen && status?.connected ? (
         <form onSubmit={(e) => void handleSend(e)} className="card-modern space-y-4 p-6">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Nuevo mensaje</p>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+            {sendSubject.startsWith('Re:') ? 'Responder (borrador simple)' : 'Nuevo mensaje'}
+          </p>
+          {sendSubject.startsWith('Re:') ? (
+            <p className="text-xs text-amber-800/90">
+              Esto envía un correo nuevo, no continúa el hilo en Outlook. Para respuesta con historial use{' '}
+              <strong>Abrir en Outlook</strong> en el mensaje seleccionado.
+            </p>
+          ) : null}
           <input
             type="text"
             placeholder="Para (correos separados por coma)"
@@ -760,9 +1060,23 @@ export default function Correo() {
                               <Mail className="mt-0.5 h-4 w-4 shrink-0 text-accent" aria-hidden />
                             )}
                             <div className="min-w-0 flex-1">
-                              <p className={`truncate text-sm ${msg.isRead ? 'font-medium text-slate-600' : 'font-bold text-slate-900'}`}>
-                                {msg.subject || '(Sin asunto)'}
-                              </p>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <p
+                                  className={`min-w-0 flex-1 truncate text-sm ${msg.isRead ? 'font-medium text-slate-600' : 'font-bold text-slate-900'}`}
+                                >
+                                  {msg.subject || '(Sin asunto)'}
+                                </p>
+                                {reviewStatusMap[msg.id] === 'pending' ? (
+                                  <span className="inline-flex shrink-0 items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
+                                    Pendiente
+                                  </span>
+                                ) : null}
+                                {reviewStatusMap[msg.id] === 'ingested' ? (
+                                  <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-900">
+                                    Vinculado
+                                  </span>
+                                ) : null}
+                              </div>
                               <p className="truncate text-xs text-slate-400">{formatFrom(msg)}</p>
                               {messageDateIso(msg) ? (
                                 <p className="mt-1 text-[10px] text-slate-400">
@@ -779,6 +1093,23 @@ export default function Correo() {
                 </ul>
               )}
             </div>
+            {messages.length > 0 && hasMoreMessages ? (
+              <div className="border-t border-slate-50 p-3">
+                <button
+                  type="button"
+                  disabled={loadingMoreMessages || loadingMessages}
+                  onClick={() => void loadMoreMessages()}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white py-2 text-xs font-bold uppercase tracking-widest text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {loadingMoreMessages ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  ) : (
+                    <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                  )}
+                  Cargar más
+                </button>
+              </div>
+            ) : null}
           </div>
 
           <div className="card-modern flex min-h-[24rem] flex-col lg:col-span-3">
@@ -872,6 +1203,41 @@ export default function Correo() {
                   ) : null}
 
                   <motion.div className="mt-3 flex flex-wrap gap-2">
+                    {outlookWebLink ? (
+                      <a
+                        href={outlookWebLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold uppercase tracking-widest text-slate-700 hover:bg-slate-50"
+                      >
+                        <ExternalLink className="h-4 w-4" aria-hidden />
+                        Abrir en Outlook
+                      </a>
+                    ) : null}
+                    <button
+                      type="button"
+                      disabled={!bodyContent.trim()}
+                      onClick={handleOpenBodyInNewTab}
+                      className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold uppercase tracking-widest text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                      title="Abre solo el cuerpo del mensaje en una pestaña nueva (HTML sanitizado)"
+                    >
+                      <Eye className="h-4 w-4" aria-hidden />
+                      Cuerpo en pestaña
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!replyToAddress}
+                      onClick={handleReplyPrefill}
+                      className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold uppercase tracking-widest text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                      title={
+                        replyToAddress
+                          ? 'Abre Redactar con destinatario y asunto Re:'
+                          : 'Sin dirección de remitente'
+                      }
+                    >
+                      <Reply className="h-4 w-4" aria-hidden />
+                      Responder
+                    </button>
                     <button
                       type="button"
                       disabled={classifying}
@@ -972,6 +1338,14 @@ export default function Correo() {
                           >
                             {classification.tipo === 'impugnacion' ? 'Impugnación' : 'Respuesta'}
                           </span>
+                          {classification.tipo === 'respuesta_tramite' ? (
+                            <p className="text-xs text-orange-900/90">
+                              Cola del escribiente:{' '}
+                              <Link to="/correo/contestaciones" className="font-bold underline">
+                                Contestaciones pendientes
+                              </Link>
+                            </p>
+                          ) : null}
                           {classification.descripcion_breve ? (
                             <p className="text-xs text-slate-600">{classification.descripcion_breve}</p>
                           ) : null}
@@ -1080,7 +1454,7 @@ export default function Correo() {
                   {bodyType.toLowerCase() === 'html' ? (
                     <motion.div
                       className="prose prose-sm max-w-none text-slate-700"
-                      dangerouslySetInnerHTML={{ __html: bodyContent }}
+                      dangerouslySetInnerHTML={{ __html: sanitizeOutlookBodyHtml(bodyContent) }}
                     />
                   ) : (
                     <pre className="whitespace-pre-wrap font-sans text-sm text-slate-700">{bodyContent}</pre>

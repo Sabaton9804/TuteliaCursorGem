@@ -84,6 +84,24 @@ export function isMissingCaseDocumentsNotebookColumnError(err: unknown): boolean
   return /notebook_code/i.test(msg) && (/schema cache/i.test(msg) || /could not find the/i.test(msg));
 }
 
+export function isMissingCaseDocumentsActColumnError(err: unknown): boolean {
+  const msg = String(
+    err && typeof err === 'object' && 'message' in err ? (err as { message: string }).message : err
+  );
+  return /act_code|act_sequence|party_entity|source_channel/i.test(msg) && (/schema cache/i.test(msg) || /could not find the/i.test(msg));
+}
+
+export function caseDocumentRowsWithoutOptionalColumns(
+  rows: Array<Record<string, unknown>>,
+  keys: string[],
+): Array<Record<string, unknown>> {
+  return rows.map((r) => {
+    const out = { ...r };
+    for (const k of keys) delete out[k];
+    return out;
+  });
+}
+
 export function caseDocumentRowsWithoutNotebookCode(
   rows: Array<Record<string, unknown>>
 ): Array<Record<string, unknown>> {
@@ -101,15 +119,32 @@ export async function insertCaseDocumentRows(
   supabase: SupabaseClient,
   rows: Array<Record<string, unknown>>
 ) {
-  const first = await supabase.from('case_documents').insert(rows);
-  if (first.error && isMissingCaseDocumentsNotebookColumnError(first.error)) {
+  const actKeys = ['act_code', 'act_sequence', 'party_entity', 'source_channel'];
+  let res = await supabase.from('case_documents').insert(rows);
+  if (!res.error) return res;
+
+  if (isMissingCaseDocumentsActColumnError(res.error)) {
+    res = await supabase
+      .from('case_documents')
+      .insert(caseDocumentRowsWithoutOptionalColumns(rows, actKeys));
+    if (!res.error) return res;
+  }
+
+  if (isMissingCaseDocumentsNotebookColumnError(res.error)) {
     console.warn(
-      '[case_documents] Sin columna notebook_code en el proyecto Supabase; insert sin ese campo. ' +
-        'Aplique supabase/migrations/20250428160000_case_documents_notebook.sql en SQL Editor para activar cuadernos en BD.'
+      '[case_documents] Sin columna notebook_code; insert sin ese campo. Aplique migración SQL de cuadernos.'
     );
     return supabase.from('case_documents').insert(caseDocumentRowsWithoutNotebookCode(rows));
   }
-  return first;
+
+  if (res.error) {
+    const stripped = caseDocumentRowsWithoutNotebookCode(
+      caseDocumentRowsWithoutOptionalColumns(rows, actKeys),
+    );
+    return supabase.from('case_documents').insert(stripped);
+  }
+
+  return res;
 }
 
 /** Inserta una fila y devuelve su `id` (p. ej. informe de ingreso al expediente). */

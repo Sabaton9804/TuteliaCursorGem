@@ -3,9 +3,14 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   type CanonicalChunk,
   type PrecedentCanonicalInput,
+  type SyntheticSearchCardPrecedent,
   buildCanonicalPrecedentDocument,
+  buildSyntheticSearchCard,
   chunkCanonicalDocument,
 } from './precedent-chunking.js';
+
+export type { SyntheticSearchCardPrecedent };
+export { buildSyntheticSearchCard };
 
 export const EMBEDDING_MODEL = 'text-embedding-3-small';
 export const EMBEDDING_DIM = 1536;
@@ -185,4 +190,97 @@ export async function insertPrecedentChunkRows(
 export function buildChunksForPrecedent(input: PrecedentCanonicalInput): CanonicalChunk[] {
   const canonical = buildCanonicalPrecedentDocument(input);
   return chunkCanonicalDocument(canonical);
+}
+
+const PRECEDENT_REINDEX_SELECT =
+  'id, court_id, source_type, source_corporation, radicado, right_protected, defendant, ruling_sense, legal_arguments, summary';
+
+type PrecedentReindexRow = {
+  id: string;
+  court_id: string;
+  source_type: 'despacho' | 'jurisprudencia';
+  source_corporation: string | null;
+  radicado: string;
+  right_protected: string;
+  defendant: string;
+  ruling_sense: string;
+  legal_arguments: string;
+  summary: string;
+};
+
+function rowToPrecedentCanonicalInput(row: PrecedentReindexRow): PrecedentCanonicalInput {
+  const sourceType = row.source_type === 'despacho' ? 'despacho' : 'jurisprudencia';
+  return {
+    radicado: String(row.radicado || '').trim(),
+    rightProtected: String(row.right_protected || '').trim(),
+    rulingSense: String(row.ruling_sense || '').trim(),
+    defendant: String(row.defendant || '').trim() || '—',
+    legalArguments: String(row.legal_arguments || '').trim(),
+    summary: String(row.summary || '').trim(),
+    sourceType,
+    sourceCorporation: row.source_corporation ? String(row.source_corporation).trim() : null,
+  };
+}
+
+/** Reconstruye embedding padre (ficha sintética) y precedent_chunks tras editar metadatos. */
+export async function reindexPrecedent(
+  precedentId: string,
+  supabase: SupabaseClient,
+  openai: OpenAI
+): Promise<void> {
+  const { data: raw, error: readErr } = await supabase
+    .from('precedents')
+    .select(PRECEDENT_REINDEX_SELECT)
+    .eq('id', precedentId)
+    .maybeSingle();
+  if (readErr) throw readErr;
+  if (!raw?.id) throw new Error('Precedente no encontrado para reindexar.');
+
+  const row = raw as PrecedentReindexRow;
+  const courtId = String(row.court_id);
+  const canonicalInput = rowToPrecedentCanonicalInput(row);
+
+  const { error: pendingErr } = await supabase
+    .from('precedents')
+    .update({ index_status: 'pending' })
+    .eq('id', precedentId);
+  if (pendingErr) throw pendingErr;
+
+  try {
+    const { error: delErr } = await supabase.from('precedent_chunks').delete().eq('precedent_id', precedentId);
+    if (delErr) throw delErr;
+
+    const searchCardText = buildSyntheticSearchCard({
+      right_protected: row.right_protected,
+      ruling_sense: row.ruling_sense,
+      summary: row.summary,
+    });
+    const parentVector = await createEmbedding1536(openai, searchCardText);
+    const { error: embUpdErr } = await supabase
+      .from('precedents')
+      .update({ embedding: vectorToPgString(parentVector) })
+      .eq('id', precedentId);
+    if (embUpdErr) throw embUpdErr;
+
+    const chunks = buildChunksForPrecedent(canonicalInput);
+    const chunkTexts = chunks.map((c) => c.text);
+    const vectors = await embedTextsBatch(openai, chunkTexts);
+
+    try {
+      await insertPrecedentChunkRows(supabase, precedentId, courtId, chunks, vectors);
+    } catch (chunkErr) {
+      await supabase.from('precedent_chunks').delete().eq('precedent_id', precedentId);
+      await supabase.from('precedents').update({ embedding: null }).eq('id', precedentId);
+      throw chunkErr;
+    }
+
+    const { error: readyErr } = await supabase
+      .from('precedents')
+      .update({ index_status: 'ready' })
+      .eq('id', precedentId);
+    if (readyErr) throw readyErr;
+  } catch (err) {
+    await supabase.from('precedents').update({ index_status: 'failed' }).eq('id', precedentId);
+    throw err;
+  }
 }

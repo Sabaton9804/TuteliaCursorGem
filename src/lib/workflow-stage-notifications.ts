@@ -112,8 +112,9 @@ export async function insertWorkflowStageEntryNotifications(
         opts.courtId,
         SECRETARIA_NOTIFICATION_ROLES,
       );
-      const title = `Plazo de impugnación (3 días hábiles) — ${rad}`;
-      const body = 'Tras notificar el fallo. Registre impugnación o espere vencimiento para ejecutoria.';
+      const title = `Plazo de impugnación (3 días hábiles, art. 31 D.2591/91) — ${rad}`;
+      const body =
+        'Tras notificar el fallo. Registre impugnación o espere vencimiento para ejecutoria (art. 31 Decreto 2591/1991).';
       await insertNotificationRows(supabase, {
         courtId: opts.courtId,
         caseId: opts.caseId,
@@ -142,8 +143,9 @@ export async function insertWorkflowStageEntryNotifications(
     }
     case 'REMISION_CORTE': {
       const profiles = await fetchProfilesByCourtAndRoles(supabase, opts.courtId, ENCARGADO_REMISION_ROLES);
-      const title = `Pendiente remisión a Corte Constitucional — ${rad} — 10 días hábiles`;
-      const body = 'Revise la remisión y los requisitos de envío.';
+      const title = `Pendiente remisión a Corte Constitucional — ${rad} — 10 días hábiles (art. 32 D.2591/91)`;
+      const body =
+        'Dentro de los 10 días hábiles siguientes a la ejecutoria del fallo de segunda instancia (art. 32 Decreto 2591/1991).';
       await insertNotificationRows(supabase, {
         courtId: opts.courtId,
         caseId: opts.caseId,

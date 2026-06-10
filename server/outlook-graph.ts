@@ -4,8 +4,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   getOutlookCredentialEnv,
   getOutlookRedirectUri,
+  outlookOAuthPrompt,
   OUTLOOK_GRAPH_SCOPES,
 } from './outlook-config';
+import { graphMailboxAbsoluteUrl, graphMailboxPath, type MailboxGraphTarget } from './outlook-mailbox-target';
+
+export type { MailboxGraphTarget } from './outlook-mailbox-target';
 import { formatMicrosoftOAuthError, isOutlookTlsInsecureEnv } from './outlook-ms-error';
 import {
   graphThrottleUserMessage,
@@ -23,6 +27,9 @@ export type OutlookConnectionRow = {
   refresh_token: string;
   token_expires_at: string;
   scopes: string | null;
+  graph_mode?: 'legacy_me' | 'shared_mailbox' | null;
+  active_court_id?: string | null;
+  active_mailbox_id?: string | null;
 };
 
 type TokenResponse = {
@@ -54,7 +61,7 @@ export function buildOutlookAuthorizeUrl(userId: string, state: string): string 
     response_mode: 'query',
     scope: OUTLOOK_GRAPH_SCOPES.join(' '),
     state,
-    prompt: 'consent',
+    ...(outlookOAuthPrompt() ? { prompt: outlookOAuthPrompt()! } : {}),
   });
   return `${authorizeEndpoint(tenantId)}?${params.toString()}`;
 }
@@ -251,13 +258,16 @@ export function parseOutlookFolderKey(raw: string | undefined): OutlookFolderKey
   return OUTLOOK_FOLDER_KEYS.includes(key) ? key : 'inbox';
 }
 
-export async function getMailFolderOverview(accessToken: string): Promise<OutlookFolderStat[]> {
+export async function getMailFolderOverview(
+  accessToken: string,
+  target: MailboxGraphTarget
+): Promise<OutlookFolderStat[]> {
   const results: OutlookFolderStat[] = [];
   for (const id of OUTLOOK_FOLDER_KEYS) {
     try {
       const data = await graphRequest<{ totalItemCount?: number; unreadItemCount?: number }>(
         accessToken,
-        `/me/mailFolders/${id}?$select=totalItemCount,unreadItemCount`
+        `${graphMailboxPath(target, `/mailFolders/${id}`)}?$select=totalItemCount,unreadItemCount`
       );
       results.push({
         id,
@@ -275,6 +285,7 @@ export async function getMailFolderOverview(accessToken: string): Promise<Outloo
 
 export async function listFolderMessages(
   accessToken: string,
+  target: MailboxGraphTarget,
   folder: OutlookFolderKey = 'inbox',
   opts?: { top?: number; skip?: number; search?: string }
 ): Promise<GraphMessageListItem[]> {
@@ -294,29 +305,41 @@ export async function listFolderMessages(
   if (opts?.search?.trim()) params.set('$search', `"${opts.search.trim().replace(/"/g, '')}"`);
   const data = await graphRequest<{ value?: GraphMessageListItem[] }>(
     accessToken,
-    `/me/mailFolders/${folder}/messages?${params}`
+    `${graphMailboxPath(target, `/mailFolders/${folder}/messages`)}?${params}`
   );
   return data.value ?? [];
 }
 
-/** @deprecated Use listFolderMessages(accessToken, 'inbox', opts) */
+/** @deprecated Use listFolderMessages(accessToken, target, 'inbox', opts) */
 export async function listInboxMessages(
   accessToken: string,
+  target: MailboxGraphTarget,
   opts?: { top?: number; skip?: number; search?: string }
 ): Promise<GraphMessageListItem[]> {
-  return listFolderMessages(accessToken, 'inbox', opts);
+  return listFolderMessages(accessToken, target, 'inbox', opts);
 }
 
-export async function getMessageDetail(accessToken: string, messageId: string) {
+export async function getMessageDetail(
+  accessToken: string,
+  target: MailboxGraphTarget,
+  messageId: string
+) {
   return graphRequest<Record<string, unknown>>(
     accessToken,
-    `/me/messages/${encodeURIComponent(messageId)}?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,hasAttachments,isRead`
+    `${graphMailboxPath(target, `/messages/${encodeURIComponent(messageId)}`)}?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,hasAttachments,isRead,webLink`
   );
 }
 
-export async function getMessageMime(accessToken: string, messageId: string): Promise<Buffer> {
-  const url = `${GRAPH_BASE}/me/messages/${encodeURIComponent(messageId)}/$value`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+export async function getMessageMime(
+  accessToken: string,
+  target: MailboxGraphTarget,
+  messageId: string
+): Promise<Buffer> {
+  const url = graphMailboxAbsoluteUrl(
+    target,
+    `/messages/${encodeURIComponent(messageId)}/$value`
+  );
+  const res = await graphFetch(accessToken, url);
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`No se pudo descargar el correo (${res.status}): ${text.slice(0, 200)}`);
@@ -326,6 +349,7 @@ export async function getMessageMime(accessToken: string, messageId: string): Pr
 
 export async function sendMail(
   accessToken: string,
+  target: MailboxGraphTarget,
   payload: {
     subject: string;
     bodyHtml: string;
@@ -339,7 +363,7 @@ export async function sendMail(
     .map((address) => ({ emailAddress: { address: address.trim() } }))
     .filter((r) => r.emailAddress.address);
 
-  await graphRequest(accessToken, '/me/sendMail', {
+  await graphRequest(accessToken, graphMailboxPath(target, '/sendMail'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

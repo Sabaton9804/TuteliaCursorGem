@@ -1,4 +1,5 @@
 import type { Action, Case, Document, SustanciadorAssignmentMode } from '../types';
+import { plazoFallarLabelForCase } from './decreto-2591-plazos';
 import { resolveAssigneeForCase } from './court-staff-assignees';
 import { sanitizeExpedienteFilenameForDisplay } from './sanitize-expediente-filename';
 import { caseDocumentRawLabel } from './case-document-display-name';
@@ -37,9 +38,10 @@ export function buildSynthesisContextBlock(
     return raw ? sanitizeExpedienteFilenameForDisplay(raw) : 'Sin nombre';
   });
 
+  const plazoLabel = plazoFallarLabelForCase(caseItem.caseType);
   const deadlineLine = caseItem.deadlineAt?.trim()
-    ? `Plazo para fallar la tutela — 10 días hábiles desde radicación (deadline_at, ISO): ${caseItem.deadlineAt}`
-    : 'Plazo para fallar (10 días háb. desde radicación): no registrado (deadline_at vacío).';
+    ? `${plazoLabel} (deadline_at, ISO): ${caseItem.deadlineAt}`
+    : `${plazoLabel}: no registrado (deadline_at vacío).`;
 
   const lines = [
     `Accionado: ${caseItem.defendant}`,

@@ -42,6 +42,41 @@ export function precedentChunkConfig() {
   };
 }
 
+/** Campos para la ficha corta que alimenta `precedents.embedding` (búsqueda legacy). */
+export type SyntheticSearchCardPrecedent = {
+  right_protected?: string | null;
+  ruling_sense?: string | null;
+  matter?: string | null;
+  summary?: string | null;
+};
+
+const SYNTHETIC_SEARCH_CARD_MAX_CHARS = 500;
+
+function nonEmptyField(value: string | null | undefined): string | null {
+  const t = String(value ?? '').trim();
+  return t.length > 0 ? t : null;
+}
+
+/**
+ * Texto breve (~300–500 caracteres) para embedding del precedente padre:
+ * ratio / materia / sentido, sin metadatos procesales del chunk 0.
+ */
+export function buildSyntheticSearchCard(precedent: SyntheticSearchCardPrecedent): string {
+  const parts: string[] = [];
+  const rightProtected = nonEmptyField(precedent.right_protected);
+  const rulingSense = nonEmptyField(precedent.ruling_sense);
+  const matter = nonEmptyField(precedent.matter);
+  const summary = nonEmptyField(precedent.summary);
+  if (rightProtected) parts.push(rightProtected);
+  if (rulingSense) parts.push(rulingSense);
+  if (matter) parts.push(matter);
+  if (summary) parts.push(summary);
+  const joined = parts.join('\n').trim();
+  if (!joined) return '—';
+  if (joined.length <= SYNTHETIC_SEARCH_CARD_MAX_CHARS) return joined;
+  return joined.slice(0, SYNTHETIC_SEARCH_CARD_MAX_CHARS).trim();
+}
+
 export function buildCanonicalPrecedentDocument(input: PrecedentCanonicalInput): string {
   const lines: string[] = [];
   const ref = String(input.radicado || '').trim();

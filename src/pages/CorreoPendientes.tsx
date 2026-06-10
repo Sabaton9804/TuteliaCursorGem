@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -185,7 +185,15 @@ function CorreoIngestPiecePreview({
   );
 }
 
-export default function CorreoPendientes() {
+export function CorreoReviewQueue({
+  queueFilter,
+  pageTitle = 'Pendientes de ingreso',
+  pageSubtitle = 'El sistema analizó cada correo y propone el expediente y las piezas. Usted aprueba o descarta.',
+}: {
+  queueFilter?: 'contestaciones';
+  pageTitle?: string;
+  pageSubtitle?: string;
+} = {}) {
   const navigate = useNavigate();
   const [reviews, setReviews] = useState<OutlookMessageReview[]>([]);
   const [loading, setLoading] = useState(true);
@@ -217,7 +225,20 @@ export default function CorreoPendientes() {
     void load();
   }, [load]);
 
-  const selected = reviews.find((r) => r.id === selectedId) ?? null;
+  const filteredReviews = useMemo(() => {
+    if (queueFilter === 'contestaciones') {
+      return reviews.filter((r) => r.classification?.tipo === 'respuesta_tramite');
+    }
+    return reviews;
+  }, [reviews, queueFilter]);
+
+  useEffect(() => {
+    setSelectedId((prev) =>
+      prev && filteredReviews.some((r) => r.id === prev) ? prev : filteredReviews[0]?.id ?? null,
+    );
+  }, [filteredReviews]);
+
+  const selected = filteredReviews.find((r) => r.id === selectedId) ?? null;
 
   useEffect(() => {
     setPreviewPieceIndex(0);
@@ -307,18 +328,33 @@ export default function CorreoPendientes() {
             <ClipboardList className="h-4 w-4" aria-hidden />
             Revisión de correo
           </p>
-          <h1 className="text-2xl font-bold text-slate-900">Pendientes de ingreso</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            El sistema analizó cada correo y propone el expediente y las piezas. Usted aprueba o descarta.
-          </p>
+          <h1 className="text-2xl font-bold text-slate-900">{pageTitle}</h1>
+          <p className="mt-1 text-sm text-slate-500">{pageSubtitle}</p>
         </div>
-        <Link
-          to="/correo"
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold uppercase tracking-widest text-slate-600 hover:bg-slate-50"
-        >
-          <Mail className="h-4 w-4" />
-          Bandeja Outlook
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          {queueFilter === 'contestaciones' ? (
+            <Link
+              to="/correo/pendientes"
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold uppercase tracking-widest text-slate-600 hover:bg-slate-50"
+            >
+              Todos los pendientes
+            </Link>
+          ) : (
+            <Link
+              to="/correo/contestaciones"
+              className="inline-flex items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-4 py-2 text-xs font-bold uppercase tracking-widest text-orange-900 hover:bg-orange-100"
+            >
+              Contestaciones
+            </Link>
+          )}
+          <Link
+            to="/correo"
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold uppercase tracking-widest text-slate-600 hover:bg-slate-50"
+          >
+            <Mail className="h-4 w-4" />
+            Bandeja Outlook
+          </Link>
+        </div>
       </header>
 
       {banner ? (
@@ -336,24 +372,36 @@ export default function CorreoPendientes() {
       <div className="grid min-h-[520px] grid-cols-1 gap-4 lg:grid-cols-5">
         <div className="rounded-2xl border border-slate-100 bg-white shadow-sm lg:col-span-2">
           <p className="border-b border-slate-50 px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">
-            Cola ({reviews.length})
+            Cola ({filteredReviews.length})
           </p>
           {loading ? (
             <p className="flex items-center gap-2 p-6 text-sm text-slate-500">
               <Loader2 className="h-4 w-4 animate-spin" />
               Cargando…
             </p>
-          ) : reviews.length === 0 ? (
+          ) : filteredReviews.length === 0 ? (
             <p className="p-6 text-sm text-slate-500">
-              No hay correos pendientes. En{' '}
-              <Link to="/correo" className="font-semibold text-accent underline">
-                Correo
-              </Link>{' '}
-              use «Analizar bandeja» (varios a la vez) o «Analizar con IA» en un mensaje.
+              {queueFilter === 'contestaciones' ? (
+                <>
+                  No hay contestaciones pendientes. En{' '}
+                  <Link to="/correo" className="font-semibold text-accent underline">
+                    Correo
+                  </Link>{' '}
+                  analice mensajes de entidades accionadas (RV: RESPUESTA, etc.).
+                </>
+              ) : (
+                <>
+                  No hay correos pendientes. En{' '}
+                  <Link to="/correo" className="font-semibold text-accent underline">
+                    Correo
+                  </Link>{' '}
+                  use «Analizar bandeja» (varios a la vez) o «Analizar con IA» en un mensaje.
+                </>
+              )}
             </p>
           ) : (
             <ul className="max-h-[70vh] divide-y divide-slate-50 overflow-y-auto">
-              {reviews.map((r) => (
+              {filteredReviews.map((r) => (
                 <li key={r.id}>
                   <button
                     type="button"
@@ -557,4 +605,8 @@ export default function CorreoPendientes() {
       </div>
     </motion.div>
   );
+}
+
+export default function CorreoPendientes() {
+  return <CorreoReviewQueue />;
 }

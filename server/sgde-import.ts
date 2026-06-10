@@ -9,6 +9,8 @@ import {
   cuiBase21,
   deriveRadicadoSegundaInstancia,
 } from '../src/lib/radicado-cui.ts';
+import { businessDayTermEnd, startOfLocalDay } from '../src/lib/business-days.ts';
+import { caseTermBusinessDaysFromDecreto2591 } from '../src/lib/decreto-2591-plazos.ts';
 import type { CaseAppellant, CaseOriginRuling, CaseType } from '../src/types.ts';
 
 const NOTEBOOK_PI = 'PI_C01_PRINCIPAL';
@@ -175,6 +177,8 @@ export async function importExpedienteFromSgde(opts: ImportFromSgdeOpts): Promis
   if (!caseId) {
     caseId = crypto.randomUUID();
     created = true;
+    const filingForTerm = startOfLocalDay(new Date());
+    const termDays = caseTermBusinessDaysFromDecreto2591(caseType);
     const row: Record<string, unknown> = {
       id: caseId,
       court_id: courtId,
@@ -189,6 +193,7 @@ export async function importExpedienteFromSgde(opts: ImportFromSgdeOpts): Promis
       raw_text: '',
       summary: '',
       case_type: caseType,
+      deadline_at: businessDayTermEnd(filingForTerm, termDays).toISOString(),
       sgde_id: sgdeRootId,
       sgde_linked_at: now,
       sgde_sync_status: 'linked',

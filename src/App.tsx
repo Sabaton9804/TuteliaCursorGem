@@ -14,6 +14,9 @@ import BibliotecaPrecedentes from './pages/BibliotecaPrecedentes';
 import SgdeSync from './pages/SgdeSync';
 import Correo from './pages/Correo';
 import CorreoPendientes from './pages/CorreoPendientes';
+import CorreoContestaciones from './pages/CorreoContestaciones';
+import CorreoRoadmap from './pages/CorreoRoadmap';
+import SustanciadorTablero from './pages/SustanciadorTablero';
 
 const Plantillas = lazy(() => import('./pages/Plantillas'));
 
@@ -49,6 +52,9 @@ export default function App() {
           <Route path="/sgde" element={<SgdeSync />} />
           <Route path="/correo" element={<Correo />} />
           <Route path="/correo/pendientes" element={<CorreoPendientes />} />
+          <Route path="/correo/contestaciones" element={<CorreoContestaciones />} />
+          <Route path="/sustanciador" element={<SustanciadorTablero />} />
+          <Route path="/docs/roadmap" element={<CorreoRoadmap />} />
         </Routes>
       </Shell>
     </Router>

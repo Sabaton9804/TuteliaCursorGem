@@ -57,7 +57,8 @@ import {
   fetchSierjuClassesForCaseType,
 } from '../lib/sierju-catalog-service';
 import { CaseSierjuClassification } from '../components/expediente/CaseSierjuClassification';
-import { startOfLocalDay, tenthBusinessDayDeadline, businessDayTermEnd } from '../lib/business-days';
+import { startOfLocalDay, businessDayTermEnd } from '../lib/business-days';
+import { caseTermBusinessDaysFromDecreto2591 } from '../lib/decreto-2591-plazos';
 import { useSessionCourt } from '../contexts/SessionCourtContext';
 import {
   useCourtOperational,
@@ -720,9 +721,15 @@ export default function NewCase() {
       }
       setAttachments(hydrated);
       setSelectedDocIndex(0);
-      const si = extractSegundaInstanciaFromParsedEmail(data);
+      const parsedEmail = data as {
+        subject?: unknown;
+        text?: unknown;
+        html?: unknown;
+        segundaInstancia?: unknown;
+      };
+      const si = extractSegundaInstanciaFromParsedEmail(parsedEmail);
       if (shouldTriggerSgdeAfterEmailParse(si)) {
-        applySegundaInstanciaPrefill(data, { forceFlowType: true });
+        applySegundaInstanciaPrefill(parsedEmail, { forceFlowType: true });
       } else if (!caseFlowType) {
         setError('Seleccione el tipo de expediente (el correo no trajo un CUI de 23 dígitos reconocible).');
         setParsedData(null);
@@ -730,7 +737,7 @@ export default function NewCase() {
         setAttachments([]);
         return;
       } else if (caseFlowType === 'tutela_segunda') {
-        applySegundaInstanciaPrefill(data, { forceFlowType: true });
+        applySegundaInstanciaPrefill(parsedEmail, { forceFlowType: true });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error desconocido');
@@ -889,14 +896,12 @@ export default function NewCase() {
       });
       const filingForTerm = startOfLocalDay(new Date());
       let deadlineAtIso: string | null = null;
-      if (
-        processDef?.case_term_days &&
-        processDef.case_term_type === 'habiles' &&
-        flow === 'tutela_primera'
-      ) {
-        deadlineAtIso = businessDayTermEnd(filingForTerm, processDef.case_term_days).toISOString();
-      } else if (flow === 'tutela_primera') {
-        deadlineAtIso = tenthBusinessDayDeadline(filingForTerm).toISOString();
+      if (flow === 'tutela_primera' || flow === 'tutela_segunda') {
+        const termDays =
+          processDef?.case_term_type === 'habiles' && processDef.case_term_days != null && processDef.case_term_days > 0
+            ? processDef.case_term_days
+            : caseTermBusinessDaysFromDecreto2591(flow);
+        deadlineAtIso = businessDayTermEnd(filingForTerm, termDays).toISOString();
       }
       const caseRow: Record<string, unknown> = {
         id: caseId,

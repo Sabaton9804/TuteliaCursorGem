@@ -1,4 +1,4 @@
-import { getMessageMime } from './outlook-graph';
+import { getMessageMime, type MailboxGraphTarget } from './outlook-graph';
 import { supplementParseSessionFromGraphAttachments } from './outlook-graph-attachments';
 import { parseJudicialEmailFromBuffer, type ParsedJudicialEmailResponse } from './parse-judicial-email';
 import {
@@ -15,9 +15,10 @@ export type OutlookMessageSession = {
 /** Descarga MIME de Outlook, parsea y devuelve sesión en RAM (mismo flujo que POST .../parse). */
 export async function parseOutlookMessageToSession(
   messageId: string,
-  accessToken: string
+  accessToken: string,
+  target: MailboxGraphTarget
 ): Promise<OutlookMessageSession> {
-  const mime = await getMessageMime(accessToken, messageId);
+  const mime = await getMessageMime(accessToken, target, messageId);
   const parsed = await parseJudicialEmailFromBuffer(mime);
   const session = getParseSession(parsed.parseSessionId);
   if (!session) {
@@ -25,7 +26,12 @@ export async function parseOutlookMessageToSession(
   }
 
   let attachments = session.attachments;
-  const merged = await supplementParseSessionFromGraphAttachments(accessToken, messageId, attachments);
+  const merged = await supplementParseSessionFromGraphAttachments(
+    accessToken,
+    target,
+    messageId,
+    attachments
+  );
   if (merged.length !== attachments.length) {
     replaceParseSessionAttachments(parsed.parseSessionId, merged);
     attachments = merged;

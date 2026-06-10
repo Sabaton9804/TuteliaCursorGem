@@ -1,6 +1,6 @@
 /**
- * Rellena deadline_at (fin del término de 10 días hábiles desde radicación) donde falta.
- * Usa la misma lógica que la app (`tenthBusinessDayDeadline` + created_at).
+ * Rellena deadline_at donde falta (Decreto 2591/1991: 10 háb. 1ª instancia, 20 háb. 2ª).
+ * Usa la misma lógica que la app (`businessDayTermEnd` + `case_type`).
  *
  * Requiere en .env o .env.local: VITE_SUPABASE_URL (o SUPABASE_URL) y SUPABASE_SERVICE_ROLE_KEY.
  *
@@ -11,7 +11,9 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
-import { startOfLocalDay, tenthBusinessDayDeadline } from '../src/lib/business-days.ts';
+import { businessDayTermEnd, startOfLocalDay } from '../src/lib/business-days.ts';
+import { caseTermBusinessDaysFromDecreto2591 } from '../src/lib/decreto-2591-plazos.ts';
+import type { CaseType } from '../src/types.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, '..');
@@ -56,7 +58,7 @@ const supabase = createClient(normalizeSupabaseUrl(urlRaw), serviceKey, {
 async function main() {
   const { data: rows, error } = await supabase
     .from('cases')
-    .select('id, created_at')
+    .select('id, created_at, case_type')
     .is('deadline_at', null);
 
   if (error) {
@@ -70,7 +72,9 @@ async function main() {
   for (const row of list) {
     const created = row.created_at as string;
     const filing = startOfLocalDay(new Date(created));
-    const deadline = tenthBusinessDayDeadline(filing).toISOString();
+    const caseType = (row.case_type as CaseType | null) ?? 'tutela_primera';
+    const termDays = caseTermBusinessDaysFromDecreto2591(caseType);
+    const deadline = businessDayTermEnd(filing, termDays).toISOString();
     const { error: upErr } = await supabase.from('cases').update({ deadline_at: deadline }).eq('id', row.id);
     if (upErr) {
       console.error('Update falló', row.id, upErr);
