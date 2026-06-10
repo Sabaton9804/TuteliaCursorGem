@@ -27,7 +27,7 @@ insert into public.document_templates (
 )
 values
   (
-    'tpl-notif-auto-court-1',
+    'a1000001-0001-4001-8001-000000000003'::uuid,
     'court-1',
     'secretaria',
     'notificacion_admisorio',
@@ -37,7 +37,7 @@ values
     null
   ),
   (
-    'tpl-notif-fallo-court-1',
+    'a1000001-0001-4001-8001-000000000004'::uuid,
     'court-1',
     'secretaria',
     'notificacion_fallo',
