@@ -11,3 +11,8 @@ coverage/
 
 # Extracto bruto del PDF del protocolo (regenerable; no versionar)
 docs/_protocolo_raw_extract.txt
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
