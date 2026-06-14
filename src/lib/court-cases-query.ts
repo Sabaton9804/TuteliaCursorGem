@@ -23,13 +23,15 @@ export function casesListSortToOrderColumn(sort: 'updated' | 'created' | 'radica
 }
 
 export async function fetchCourtCasesForList(
-  courtId: string,
-  orderColumn: CourtCasesOrderColumn,
-  opts?: { allCourts?: boolean }
+  courtId: string | null | undefined,
+  orderColumn: CourtCasesOrderColumn
 ): Promise<Case[]> {
-  let query = supabase.from('cases').select(CASE_LIST_COLUMNS);
-  if (!opts?.allCourts) query = query.eq('court_id', courtId);
-  const { data, error } = await query.order(orderColumn, { ascending: false });
+  if (!courtId?.trim()) return [];
+  const { data, error } = await supabase
+    .from('cases')
+    .select(CASE_LIST_COLUMNS)
+    .eq('court_id', courtId)
+    .order(orderColumn, { ascending: false });
   if (error) throw error;
   return (data || []).map((r) => rowToCase(r as unknown as Record<string, unknown>));
 }

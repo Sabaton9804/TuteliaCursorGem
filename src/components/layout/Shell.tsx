@@ -12,9 +12,11 @@ import { userRoleLabelEs } from '../../lib/user-roles';
 import { UserProfile } from '../../types';
 import { SessionCourtProvider, useSessionCourt } from '../../contexts/SessionCourtContext';
 import { CourtOperationalProvider } from '../../contexts/CourtOperationalContext';
+import PlatformAdminBar from '../platform/PlatformAdminBar';
 import { AssignmentNotificationBell } from './AssignmentNotificationBell';
 import { GlobalSearch } from './GlobalSearch';
 import { AppSidebarNav } from './AppSidebarNav';
+import { AppPlatformSidebarNav } from './AppPlatformSidebarNav';
 import { useUrgentWorkflowTaskCount } from '../../hooks/useUrgentWorkflowTaskCount';
 import { motion, AnimatePresence } from 'motion/react';
 import type { Provider, User } from '@supabase/supabase-js';
@@ -26,6 +28,11 @@ interface ShellProps {
 function ShellMainWithCourtOps({ children }: { children: React.ReactNode }) {
   const { courtId } = useSessionCourt();
   return <CourtOperationalProvider courtId={courtId}>{children}</CourtOperationalProvider>;
+}
+
+function ShellHeaderSearch() {
+  const { courtId } = useSessionCourt();
+  return <GlobalSearch courtId={courtId} />;
 }
 
 const SIDEBAR_COLLAPSED_KEY = 'tutelia_sidebar_collapsed';
@@ -524,8 +531,10 @@ export default function Shell({ children }: ShellProps) {
   }
 
   const sidebarWidthClass = sidebarCollapsed ? 'md:pl-[72px]' : 'md:pl-[280px]';
+  const isPlatformRoute = location.pathname.startsWith('/plataforma');
 
   return (
+    <SessionCourtProvider profile={profile} userId={user?.uid}>
     <div className="min-h-screen flex bg-bg text-slate-900 font-sans">
       <aside
         className={`hidden md:flex flex-col bg-primary text-white shrink-0 fixed left-0 top-0 z-30 h-screen border-r border-white/10 transition-[width] duration-200 ease-out ${
@@ -558,13 +567,30 @@ export default function Shell({ children }: ShellProps) {
 
           {!sidebarCollapsed && (
             <div className="bg-white/5 p-4 rounded-xl border border-white/10 mb-8 shrink-0">
-              <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1">Despacho judicial</p>
-              <p className="text-xs font-semibold text-white/90">Juzgado 051 Civil del Circuito de Bogotá D.C.</p>
+              {isPlatformRoute ? (
+                <>
+                  <p className="text-[10px] font-bold text-indigo-300/90 uppercase tracking-widest mb-1">
+                    Consola plataforma
+                  </p>
+                  <p className="text-xs font-semibold text-white/90">
+                    Administración de despachos — sin expedientes
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1">Despacho judicial</p>
+                  <p className="text-xs font-semibold text-white/90">Juzgado 051 Civil del Circuito de Bogotá D.C.</p>
+                </>
+              )}
             </div>
           )}
 
           <nav className={`space-y-1 flex-1 ${sidebarCollapsed ? 'pb-4' : ''}`}>
-            <AppSidebarNav sidebarCollapsed={sidebarCollapsed} urgentWorkflowCount={urgentWorkflowCount} />
+            {isPlatformRoute ? (
+              <AppPlatformSidebarNav sidebarCollapsed={sidebarCollapsed} />
+            ) : (
+              <AppSidebarNav sidebarCollapsed={sidebarCollapsed} urgentWorkflowCount={urgentWorkflowCount} />
+            )}
           </nav>
         </div>
 
@@ -599,17 +625,23 @@ export default function Shell({ children }: ShellProps) {
               </button>
               <div className="min-w-0">
                 <h1 className="text-lg sm:text-xl lg:text-2xl font-bold tracking-tight text-slate-900 truncate">
-                  Resumen Operativo
+                  {isPlatformRoute ? 'Consola plataforma' : 'Resumen Operativo'}
                 </h1>
                 <p className="text-[11px] sm:text-xs text-slate-500 font-medium mt-0.5 sm:mt-1 line-clamp-2 sm:line-clamp-none">
-                  Gestión de tutelas y procesos electrónicos
+                  {isPlatformRoute
+                    ? 'Alta y gestión de juzgados — no es el tablero de tutelas'
+                    : 'Gestión de tutelas y procesos electrónicos'}
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-2 sm:gap-3 lg:gap-4 shrink-0">
-              <GlobalSearch courtId={profile?.courtId?.trim() || DEFAULT_DEMO_COURT_ID} />
-              <AssignmentNotificationBell userId={user?.uid} />
+              {!isPlatformRoute && (
+                <>
+                  <ShellHeaderSearch />
+                  <AssignmentNotificationBell userId={user?.uid} />
+                </>
+              )}
               <div
                 className="hidden sm:flex items-center gap-2 px-3 lg:px-4 py-2 bg-green-50 text-green-700 rounded-full border border-green-100 text-[11px] font-bold max-w-[min(100%,320px)]"
                 title={
@@ -644,6 +676,8 @@ export default function Shell({ children }: ShellProps) {
           </div>
         </header>
 
+        {!isPlatformRoute && <PlatformAdminBar />}
+
         {localModeWithoutSupabase && (
           <div
             role="status"
@@ -660,7 +694,19 @@ export default function Shell({ children }: ShellProps) {
         )}
 
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-10 bg-bg">
-          <SessionCourtProvider profile={profile}>
+            {isPlatformRoute ? (
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={location.pathname}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+              >
+                {children}
+              </motion.div>
+            </AnimatePresence>
+            ) : (
             <ShellMainWithCourtOps>
             <AnimatePresence mode="wait">
               <motion.div
@@ -674,7 +720,7 @@ export default function Shell({ children }: ShellProps) {
               </motion.div>
             </AnimatePresence>
             </ShellMainWithCourtOps>
-          </SessionCourtProvider>
+            )}
         </main>
       </div>
 
@@ -714,16 +760,34 @@ export default function Shell({ children }: ShellProps) {
               </div>
 
               <div className="px-6 py-4 border-b border-white/10 shrink-0">
-                <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1">Despacho judicial</p>
-                <p className="text-xs font-semibold text-white/90">Juzgado 051 Civil del Circuito de Bogotá D.C.</p>
+                {isPlatformRoute ? (
+                  <>
+                    <p className="text-[10px] font-bold text-indigo-300/90 uppercase tracking-widest mb-1">
+                      Consola plataforma
+                    </p>
+                    <p className="text-xs font-semibold text-white/90">Administración de despachos</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1">Despacho judicial</p>
+                    <p className="text-xs font-semibold text-white/90">Juzgado 051 Civil del Circuito de Bogotá D.C.</p>
+                  </>
+                )}
               </div>
 
               <nav className="flex-1 overflow-y-auto p-4 space-y-1">
-                <AppSidebarNav
-                  sidebarCollapsed={false}
-                  urgentWorkflowCount={urgentWorkflowCount}
-                  onNavigate={() => setIsSidebarOpen(false)}
-                />
+                {isPlatformRoute ? (
+                  <AppPlatformSidebarNav
+                    sidebarCollapsed={false}
+                    onNavigate={() => setIsSidebarOpen(false)}
+                  />
+                ) : (
+                  <AppSidebarNav
+                    sidebarCollapsed={false}
+                    urgentWorkflowCount={urgentWorkflowCount}
+                    onNavigate={() => setIsSidebarOpen(false)}
+                  />
+                )}
               </nav>
 
               <div className="p-6 border-t border-white/5 shrink-0">
@@ -742,5 +806,6 @@ export default function Shell({ children }: ShellProps) {
         )}
       </AnimatePresence>
     </div>
+    </SessionCourtProvider>
   );
 }

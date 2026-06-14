@@ -17,6 +17,7 @@ import CorreoPendientes from './pages/CorreoPendientes';
 import CorreoContestaciones from './pages/CorreoContestaciones';
 import CorreoRoadmap from './pages/CorreoRoadmap';
 import SustanciadorTablero from './pages/SustanciadorTablero';
+import PlatformConsole from './pages/PlatformConsole';
 
 const Plantillas = lazy(() => import('./pages/Plantillas'));
 
@@ -54,6 +55,7 @@ export default function App() {
           <Route path="/correo/pendientes" element={<CorreoPendientes />} />
           <Route path="/correo/contestaciones" element={<CorreoContestaciones />} />
           <Route path="/sustanciador" element={<SustanciadorTablero />} />
+          <Route path="/plataforma/*" element={<PlatformConsole />} />
           <Route path="/docs/roadmap" element={<CorreoRoadmap />} />
         </Routes>
       </Shell>

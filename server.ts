@@ -28,6 +28,7 @@ import {
 } from './server/sgde-segunda-instancia-parse';
 import { registerOutlookRoutes } from './server/outlook-routes';
 import { registerSgdeRoutes } from './server/sgde-routes';
+import { registerPlatformRoutes } from './server/platform-routes';
 import { createLoggedInSgdeClientForUser, sgdePlatformState } from './server/sgde-integration';
 import { isSgdeTlsInsecure } from './server/sgde-tls';
 import { requireAuthenticatedCaller } from './server/outlook-auth';
@@ -1197,6 +1198,7 @@ async function startServer() {
 
   registerOutlookRoutes(app, getSupabaseAdmin);
   registerSgdeRoutes(app, getSupabaseAdmin);
+  registerPlatformRoutes(app, getSupabaseAdmin);
 
   app.post('/api/sgde/case-tree', async (req, res) => {
     try {

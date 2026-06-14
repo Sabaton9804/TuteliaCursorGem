@@ -23,6 +23,9 @@ import {
 } from '../lib/court-cases-query';
 import { useInvalidateCourtCasesOnRealtime } from '../hooks/useCourtCasesRealtime';
 import { useSessionCourt } from '../contexts/SessionCourtContext';
+import { useTenant } from '../contexts/TenantContext';
+import { operationalCourtIdForFetch } from '../services/tenantScope';
+import PlatformCourtSelectionPrompt from '../components/platform/PlatformCourtSelectionPrompt';
 import { parseSustanciadorAssignmentMode } from '../lib/sustanciador-reparto';
 
 const STATUS_OPTIONS: { value: CaseStatus | 'all'; label: string }[] = [
@@ -61,9 +64,10 @@ function parseViewParam(v: string | null): ExpedientesViewMode {
 }
 
 export default function CasesList() {
-  const { courtId, profile: sessionCourtProfile } = useSessionCourt();
+  const { courtId } = useSessionCourt();
+  const tenant = useTenant();
+  const fetchCourtId = operationalCourtIdForFetch(tenant);
   const { sustanciadores } = useCourtOperational();
-  const allCourts = Boolean(sessionCourtProfile?.isSuperuser);
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const tutelasFilter: TutelasListFilter = useMemo(
@@ -149,8 +153,9 @@ export default function CasesList() {
   const orderCol = useMemo(() => casesListSortToOrderColumn(sortBy), [sortBy]);
 
   const { data: cases = [], isPending, error } = useQuery({
-    queryKey: [...courtCasesQueryKey(courtId, orderCol), allCourts ? 'all-courts' : 'one-court'],
-    queryFn: () => fetchCourtCasesForList(courtId, orderCol, { allCourts }),
+    queryKey: [...courtCasesQueryKey(fetchCourtId ?? 'none', orderCol), tenant.viewAsCourtId ?? 'active'],
+    queryFn: () => fetchCourtCasesForList(fetchCourtId, orderCol),
+    enabled: Boolean(fetchCourtId),
   });
 
   const { data: courtAssignmentMode } = useQuery({
@@ -228,6 +233,10 @@ export default function CasesList() {
     }
     return r;
   }, [enrichedBase, boardFilterKind, sessionProfile?.name, assigneeFilterId, derechoFilter]);
+
+  if (tenant.needsViewAsSelection) {
+    return <PlatformCourtSelectionPrompt />;
+  }
 
   return (
     <div className="space-y-8">

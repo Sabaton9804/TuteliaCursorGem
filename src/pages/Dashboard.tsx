@@ -9,6 +9,9 @@ import { buildExpedienteViewRow, type ExpedienteViewRow } from '../lib/expedient
 import { courtCasesQueryKey, fetchCourtCasesForList, type CourtCasesOrderColumn } from '../lib/court-cases-query';
 import { useInvalidateCourtCasesOnRealtime } from '../hooks/useCourtCasesRealtime';
 import { useSessionCourt } from '../contexts/SessionCourtContext';
+import { useTenant } from '../contexts/TenantContext';
+import { operationalCourtIdForFetch } from '../services/tenantScope';
+import PlatformCourtSelectionPrompt from '../components/platform/PlatformCourtSelectionPrompt';
 import { supabase } from '../lib/supabase';
 import { parseSustanciadorAssignmentMode } from '../lib/sustanciador-reparto';
 
@@ -40,15 +43,17 @@ function semaforoFromRow(row: ExpedienteViewRow) {
 }
 
 export default function Dashboard() {
-  const { courtId, profile } = useSessionCourt();
-  const allCourts = Boolean(profile?.isSuperuser);
+  const { courtId } = useSessionCourt();
+  const tenant = useTenant();
+  const fetchCourtId = operationalCourtIdForFetch(tenant);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const navigate = useNavigate();
 
   const { data: cases = [], isPending, error } = useQuery({
-    queryKey: [...courtCasesQueryKey(courtId, DASHBOARD_ORDER), allCourts ? 'all-courts' : 'one-court'],
-    queryFn: () => fetchCourtCasesForList(courtId, DASHBOARD_ORDER, { allCourts }),
+    queryKey: [...courtCasesQueryKey(fetchCourtId ?? 'none', DASHBOARD_ORDER), tenant.viewAsCourtId ?? 'active'],
+    queryFn: () => fetchCourtCasesForList(fetchCourtId, DASHBOARD_ORDER),
+    enabled: Boolean(fetchCourtId),
   });
 
   const { data: courtAssignmentMode } = useQuery({
@@ -99,6 +104,10 @@ export default function Dashboard() {
       return matchesSearch && matchesStatus;
     });
   }, [expedienteRows, searchTerm, statusFilter]);
+
+  if (tenant.needsViewAsSelection) {
+    return <PlatformCourtSelectionPrompt />;
+  }
 
   return (
     <div className="space-y-10">

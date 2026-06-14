@@ -2,7 +2,8 @@
  * Crea o actualiza el superusuario de plataforma (todos los despachos).
  *
  * Requiere: VITE_SUPABASE_URL (o SUPABASE_URL) y SUPABASE_SERVICE_ROLE_KEY en .env
- * Antes: aplicar supabase/migrations/20260526120000_profiles_superuser.sql en SQL Editor.
+ * Antes: aplicar supabase/migrations/20260526120000_profiles_superuser.sql
+ *        y 20260613120000_platform_admins.sql en SQL Editor.
  *
  * Uso: npm run seed:superuser
  * Login en Tutelia: Sabaton98 / 123456 (o variables SUPERUSER_LOGIN / SUPERUSER_PASSWORD)
@@ -135,10 +136,28 @@ if (profileErr) {
   process.exit(1);
 }
 
+const { error: platformAdminErr } = await admin.from('platform_admins').upsert(
+  {
+    user_id: userId,
+    notes: 'Seed npm run seed:superuser',
+  },
+  { onConflict: 'user_id' }
+);
+
+if (platformAdminErr) {
+  if (/platform_admins|schema cache/i.test(platformAdminErr.message)) {
+    console.warn(
+      'Aviso: falta platform_admins. Ejecute supabase/migrations/20260613120000_platform_admins.sql'
+    );
+  } else {
+    console.warn('Aviso platform_admins:', platformAdminErr.message);
+  }
+}
+
 console.log('');
 console.log('Superusuario listo.');
 console.log(`  Login Tutelia: Sabaton98`);
 console.log(`  Contraseña:    ${password}`);
 console.log(`  Email Auth:    ${email}`);
-console.log(`  Rol:           admin + is_superuser (todos los despachos)`);
+console.log(`  Rol:           admin + platform admin (todos los despachos)`);
 console.log(`  Despacho base: ${courtId}`);

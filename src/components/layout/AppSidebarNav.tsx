@@ -17,7 +17,9 @@ import {
   ClipboardList,
   Reply,
   ChevronDown,
+  Building2,
 } from 'lucide-react';
+import { useTenant } from '../../contexts/TenantContext';
 import { intentFreshNewCaseFromMenu } from '../../lib/new-case-nav';
 import {
   TUTELAS_SUBMENU,
@@ -61,6 +63,7 @@ function linkIsActive(pathname: string, path: string): boolean {
 
 export function AppSidebarNav({ sidebarCollapsed, urgentWorkflowCount, onNavigate }: Props) {
   const location = useLocation();
+  const { canAccessPlatformConsole } = useTenant();
   const [tutelasOpen, setTutelasOpen] = useState(() =>
     isTutelasRouteActive(location.pathname, location.search)
   );
@@ -194,6 +197,22 @@ export function AppSidebarNav({ sidebarCollapsed, urgentWorkflowCount, onNavigat
         <Icon className="w-4 h-4 shrink-0" />
         {!sidebarCollapsed && item.name}
         {renderUrgentBadge(showUrgent, sidebarCollapsed)}
+      </Link>
+    );
+  }
+
+  if (canAccessPlatformConsole) {
+    const platformActive = linkIsActive(location.pathname, '/plataforma');
+    items.push(
+      <Link
+        key="Consola plataforma"
+        to="/plataforma"
+        title={sidebarCollapsed ? 'Consola plataforma' : undefined}
+        onClick={onNavigate}
+        className={linkClass(platformActive, sidebarCollapsed)}
+      >
+        <Building2 className="w-4 h-4 shrink-0" />
+        {!sidebarCollapsed && 'Consola plataforma'}
       </Link>
     );
   }
