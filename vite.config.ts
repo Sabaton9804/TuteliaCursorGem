@@ -3,11 +3,13 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
 
+import { cloudflare } from "@cloudflare/vite-plugin";
+
 export default defineConfig(() => {
   return {
     /** Permite usar NEXT_PUBLIC_SUPABASE_* del .env (típico de plantillas) además de VITE_*. */
     envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), cloudflare()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
