@@ -150,10 +150,13 @@ export function buildExpedienteViewRow(
   const assignee = resolveAssigneeForCase(c.assignedTo, c.id, courtAssignmentMode);
   const derechoTag = derechoTuteladoDisplay(c);
 
-  let termProgressPercent = Math.min(
-    100,
-    Math.max(0, ((caseTermBusinessDays - Math.max(0, remaining)) / caseTermBusinessDays) * 100)
-  );
+  let termProgressPercent = 0;
+  if (caseTermBusinessDays > 0) {
+    termProgressPercent = Math.min(
+      100,
+      Math.max(0, ((caseTermBusinessDays - Math.max(0, remaining)) / caseTermBusinessDays) * 100)
+    );
+  }
   if (stage === 'archivado' || stage === 'fallo_notificado') {
     termProgressPercent = 100;
   }

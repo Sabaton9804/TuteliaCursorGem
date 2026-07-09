@@ -18,6 +18,32 @@ function isPdfMagic(buf: Buffer): boolean {
   );
 }
 
+/** PDF.js en Node exige el build legacy (ver aviso en consola del servidor). */
+async function loadPdfJsForNode() {
+  return import('pdfjs-dist/legacy/build/pdf.mjs');
+}
+
+/** Heurística /Count en el árbol de páginas cuando PDF.js no puede abrir el archivo. */
+function estimatePdfPageCountFromBytes(buf: Buffer): number | null {
+  const n = Math.min(buf.length, 512_000);
+  const s = buf.subarray(Math.max(0, buf.length - n)).toString('latin1');
+  const matches = [...s.matchAll(/\/Count\s+(\d+)/g)];
+  if (matches.length === 0) return null;
+  const last = Number(matches[matches.length - 1]?.[1]);
+  return Number.isFinite(last) && last > 0 ? last : null;
+}
+
+async function openPdfDocument(buf: Buffer) {
+  const pdfjs = await loadPdfJsForNode();
+  const loadingTask = pdfjs.getDocument({
+    data: new Uint8Array(buf),
+    useSystemFonts: true,
+    standardFontDataUrl: undefined,
+    verbosity: 0,
+  });
+  return loadingTask.promise;
+}
+
 /** Heurística rápida: muchos PDF del RAMA/JEPMS llevan el título en claro en los primeros bytes. */
 function detectFromRawBytes(buf: Buffer): boolean {
   const n = Math.min(buf.length, 900_000);
@@ -30,13 +56,7 @@ function detectFromRawBytes(buf: Buffer): boolean {
 
 async function detectFromPdfJs(buf: Buffer): Promise<boolean> {
   try {
-    const pdfjs = await import('pdfjs-dist/build/pdf.mjs');
-    const loadingTask = pdfjs.getDocument({
-      data: new Uint8Array(buf),
-      useSystemFonts: true,
-      standardFontDataUrl: undefined,
-    });
-    const pdf = await loadingTask.promise;
+    const pdf = await openPdfDocument(buf);
     const pages = Math.min(pdf.numPages, 3);
     let acc = '';
     for (let i = 1; i <= pages; i++) {
@@ -74,6 +94,17 @@ export function filenameSuggestsActaReparto(filenameLower: string): boolean {
   );
 }
 
+/** Cuenta páginas con PDF.js legacy en Node; respaldo por /Count en bytes. */
+export async function countPdfPagesInBuffer(buf: Buffer | null | undefined): Promise<number | null> {
+  if (!buf || buf.length < 100 || !isPdfMagic(buf)) return null;
+  try {
+    const pdf = await openPdfDocument(buf);
+    return pdf.numPages > 0 ? pdf.numPages : null;
+  } catch {
+    return estimatePdfPageCountFromBytes(buf);
+  }
+}
+
 /** Texto legible de las primeras páginas (acta de reparto, autos, etc.). */
 export async function extractPlainTextFromPdfBuffer(
   buf: Buffer | null | undefined,
@@ -81,13 +112,7 @@ export async function extractPlainTextFromPdfBuffer(
 ): Promise<string> {
   if (!buf || buf.length < 100 || !isPdfMagic(buf)) return '';
   try {
-    const pdfjs = await import('pdfjs-dist/build/pdf.mjs');
-    const loadingTask = pdfjs.getDocument({
-      data: new Uint8Array(buf),
-      useSystemFonts: true,
-      standardFontDataUrl: undefined,
-    });
-    const pdf = await loadingTask.promise;
+    const pdf = await openPdfDocument(buf);
     const pages = Math.min(pdf.numPages, maxPages);
     let acc = '';
     for (let i = 1; i <= pages; i++) {

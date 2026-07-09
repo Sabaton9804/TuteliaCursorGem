@@ -31,11 +31,16 @@ export const PLAZO_INFORME_AUTORIDAD_MAX_DIAS = 3;
 /** Alias usados en etapas y `business-days.ts`. */
 export const IMPUGNACION_BUSINESS_DAYS = PLAZO_IMPUGNACION_DIAS;
 
+/** Tipos con plazo perentorio para fallar según D. 2591/1991 (solo tutela). */
+export function isTutelaFalloPlazoCaseType(caseType?: CaseType): boolean {
+  return caseType === 'tutela_primera' || caseType === 'tutela_segunda';
+}
+
 /** Plazo global del caso (días hábiles) según tipo de tutela en Tutelia. */
-export function caseTermBusinessDaysFromDecreto2591(caseType?: CaseType): number {
+export function caseTermBusinessDaysFromDecreto2591(caseType?: CaseType): number | null {
   if (caseType === 'tutela_segunda') return PLAZO_FALLAR_SEGUNDA_DIAS;
-  if (caseType === 'consulta_desacato') return PLAZO_FALLAR_PRIMERA_DIAS;
-  return PLAZO_FALLAR_PRIMERA_DIAS;
+  if (caseType === 'tutela_primera') return PLAZO_FALLAR_PRIMERA_DIAS;
+  return null;
 }
 
 /** Texto corto para tablero / listas (etapa fallo notificado en primera instancia). */
@@ -43,17 +48,20 @@ export function impugnacionTermShortLabel(): string {
   return `Imp: ${PLAZO_IMPUGNACION_DIAS}d háb. (art. 31 D.2591/91)`;
 }
 
-/** Etiqueta del plazo global para fallar en ficha del expediente. */
-export function plazoFallarLabelForCase(caseType?: CaseType): string {
+/** Etiqueta del plazo global para fallar en ficha del expediente (solo tutela). */
+export function plazoFallarLabelForCase(caseType?: CaseType): string | null {
+  if (!isTutelaFalloPlazoCaseType(caseType)) return null;
   if (caseType === 'tutela_segunda') {
     return `Plazo para fallar (${PLAZO_FALLAR_SEGUNDA_DIAS} días háb. desde recepción del expediente — ${DECRETO_2591_LABEL} art. 32)`;
   }
   return `Plazo para fallar (${PLAZO_FALLAR_PRIMERA_DIAS} días háb. desde presentación de la solicitud — ${DECRETO_2591_LABEL} art. 29)`;
 }
 
-/** Nota al pie para ajuste manual del plazo global. */
-export function plazoFallarAjusteManualHint(caseType?: CaseType): string {
+/** Nota al pie para ajuste manual del plazo global (solo tutela). */
+export function plazoFallarAjusteManualHint(caseType?: CaseType): string | null {
+  if (!isTutelaFalloPlazoCaseType(caseType)) return null;
   const days = caseTermBusinessDaysFromDecreto2591(caseType);
+  if (days == null) return null;
   const art = caseType === 'tutela_segunda' ? 'art. 32' : 'art. 29';
   return `Ajuste manual del plazo para fallar (${days} días háb., ${DECRETO_2591_LABEL} ${art}, excepcional)`;
 }

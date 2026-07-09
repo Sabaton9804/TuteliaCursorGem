@@ -64,6 +64,12 @@ export const MARCADORES_CATALOGO: MarcadorCatalogoItem[] = [
     soloTipo: 'auto_admisorio',
   },
   {
+    clave: 'DESTINATARIO_OFICIO',
+    etiqueta: 'Destinatario del oficio',
+    grupo: 'partes',
+    ayuda: 'Persona, entidad o despacho destinatario',
+  },
+  {
     clave: 'VINCULADOS_LISTA',
     etiqueta: 'Terceros vinculados',
     grupo: 'partes',

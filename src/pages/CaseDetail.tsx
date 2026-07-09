@@ -52,6 +52,8 @@ import {
   markAssignmentNotificationsReadForCase,
 } from '../lib/assignment-notifications';
 import { CaseSierjuClassification } from '../components/expediente/CaseSierjuClassification';
+import { CaseCatalogMetadataPanel } from '../components/expediente/CaseCatalogMetadataPanel';
+import { isCivilCase, caseListBackHref } from '../lib/case-process-scope';
 import {
   DECISION_TYPES,
   DECISION_TYPE_LABELS,
@@ -496,7 +498,22 @@ export default function CaseDetail() {
     try {
       await ensureSupabaseSessionForWrites();
       const contextBlock = buildSynthesisContextBlock(caseItem, docs, courtAssignmentMode);
-      const summary = await summarizeCase(caseItem.claimant, caseItem.rawText || '', contextBlock);
+      const summary = await summarizeCase(caseItem.claimant, caseItem.rawText || '', contextBlock, {
+        radicado: caseItem.radicado,
+        caseType: caseItem.caseType,
+        defendant: caseItem.defendant,
+        subject: caseItem.subject,
+        status: caseItem.status,
+        operationalStatus: caseItem.operationalStatus,
+        deadlineAt: caseItem.deadlineAt,
+        assignedTo: caseItem.assignedTo,
+        legalHechos: caseItem.legalHechos,
+        legalPretensiones: caseItem.legalPretensiones,
+        legalDerechoTutelado: caseItem.legalDerechoTutelado,
+        catalogMetadata: caseItem.catalogMetadata as Record<string, unknown> | undefined,
+        documentTitles: docs.map((d) => d.originalName || d.name).filter(Boolean),
+        actionLines: actions.slice(0, 12).map((a) => a.description).filter(Boolean),
+      });
       const now = new Date().toISOString();
       await supabase.from('cases').update({ summary, updated_at: now }).eq('id', id);
 
@@ -702,13 +719,15 @@ export default function CaseDetail() {
   };
 
   const esPrimeraInstancia = (caseItem?.caseType ?? 'tutela_primera') === 'tutela_primera';
+  const esCivil = caseItem ? isCivilCase(caseItem) : false;
+  const fromProcesos = searchParams.get('from') === 'procesos';
 
   useEffect(() => {
     if (!caseItem) return;
-    if (!esPrimeraInstancia && activeTab === 'incidente_desacato') {
+    if ((!esPrimeraInstancia || esCivil) && activeTab === 'incidente_desacato') {
       setActiveTab('sintesis');
     }
-  }, [caseItem, esPrimeraInstancia, activeTab, setActiveTab]);
+  }, [caseItem, esPrimeraInstancia, esCivil, activeTab, setActiveTab]);
 
   const caseDetailContextValue = useMemo((): CaseDetailContextValue | null => {
     if (!id || !caseItem) return null;
@@ -766,7 +785,7 @@ export default function CaseDetail() {
       <header className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
         <div className="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
           <button 
-            onClick={() => navigate('/')} 
+            onClick={() => navigate(fromProcesos || esCivil ? caseListBackHref(caseItem) : '/')} 
             className="w-12 h-12 flex items-center justify-center bg-white border border-slate-100 rounded-2xl hover:bg-slate-50 transition-all text-slate-400 hover:text-accent shadow-sm shrink-0"
           >
             <ChevronLeft className="w-6 h-6" />
@@ -829,6 +848,10 @@ export default function CaseDetail() {
       </header>
 
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3 sm:gap-5">
+        {esCivil ? (
+          <CaseCatalogMetadataPanel caseItem={caseItem} />
+        ) : (
+          <>
         <CaseSierjuClassification
           courtId={caseItem.courtId}
           caseType={caseItem.caseType}
@@ -898,6 +921,8 @@ export default function CaseDetail() {
           <p className="pb-1 text-[11px] text-slate-400 sm:max-w-xs">
             El tipo de decisión se registra cuando el estado es Fallo o Archivado.
           </p>
+        )}
+          </>
         )}
       </div>
 
@@ -1069,7 +1094,7 @@ export default function CaseDetail() {
               Historial
             </span>
           </button>
-          {esPrimeraInstancia ? (
+          {esPrimeraInstancia && !esCivil ? (
             <button
               type="button"
               role="tab"
@@ -1185,6 +1210,7 @@ export default function CaseDetail() {
         >
           <CaseActuacionesPanel
             timeline={timeline}
+            caseType={caseItem.caseType}
             newActionText={newActionText}
             setNewActionText={setNewActionText}
             manualActSaving={manualActSaving}

@@ -69,6 +69,10 @@ function rowToTemplate(row: Record<string, unknown>): DocumentTemplate {
       tipo === 'auto_admisorio' ||
       tipo === 'notificacion_admisorio' ||
       tipo === 'notificacion_fallo' ||
+      tipo === 'oficio_juzgado' ||
+      tipo === 'oficio_comision' ||
+      tipo === 'oficio_requerimiento' ||
+      tipo === 'oficio_competencia' ||
       tipo === 'libre'
         ? (tipo as DocumentTemplateTipo)
         : 'libre',

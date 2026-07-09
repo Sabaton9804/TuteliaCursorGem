@@ -3,6 +3,7 @@ import { Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import type { Document } from '../../types';
 import { fetchPieceAiAnalysis, loadCachedPieceAiAnalysis } from '../../lib/piece-ai-api';
+import { isCaseDocumentPdf } from '../../lib/expediente-docx';
 import {
   PIECE_AI_DISCLAIMER,
   pieceAiEligibility,
@@ -43,6 +44,7 @@ export function ExpedientePieceAiPanel({
           caseId,
           caseDocumentId: doc.id,
           forceRefresh,
+          pdfPageCount,
         });
         setResult(res);
         setExpanded(true);
@@ -55,7 +57,7 @@ export function ExpedientePieceAiPanel({
         setRefreshing(false);
       }
     },
-    [caseId, doc.id, gate.allowed, onAnalyzed]
+    [caseId, doc.id, gate.allowed, onAnalyzed, pdfPageCount]
   );
 
   useEffect(() => {
@@ -76,10 +78,10 @@ export function ExpedientePieceAiPanel({
   }, [doc.id, doc.fileHash, refreshToken]);
 
   useEffect(() => {
-    if (refreshToken > 0 && gate.allowed) {
-      void load(false);
-    }
-  }, [refreshToken, gate.allowed, load]);
+    if (refreshToken <= 0 || !gate.allowed) return;
+    if (isCaseDocumentPdf(doc) && pdfPageCount == null) return;
+    void load(false);
+  }, [refreshToken, gate.allowed, load, doc, pdfPageCount]);
 
   const busy = loading || refreshing;
 

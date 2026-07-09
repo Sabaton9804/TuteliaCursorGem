@@ -1,13 +1,20 @@
 import { createHash } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type OpenAI from 'openai';
-import { PDFDocument } from 'pdf-lib';
+import { countPdfPagesInBuffer, extractPlainTextFromPdfBuffer } from '../pdf-acta-detect.ts';
 import { extraerTextoPlanoDocx } from '../docx-plantilla-server';
+import { downloadCaseDocumentFromSgde } from './sgde-repair-storage.js';
+import type { SgdeClient } from './sgde-client.js';
 import {
   PIECE_AI_PROMPT_VERSION,
   buildPieceAiSummaryMarkdown,
+  isCivilCaseForPieceAi,
+  isLikelyCivilCgpAutoPiece,
   type PieceAiAnalysisData,
+  type PieceAiCgpAutoAnalysisData,
+  type PieceAiGeneralAnalysisData,
 } from '../src/lib/piece-ai-analysis.ts';
+import { parseCatalogMetadata } from '../src/lib/case-catalog-metadata.ts';
 
 const CASE_DOCUMENTS_BUCKET = 'case-documents';
 const DEFAULT_MAX_PAGES = 40;
@@ -55,10 +62,11 @@ async function downloadCaseDocumentBytes(
   return Buffer.from(ab);
 }
 
-const PIECE_ANALYSIS_JSON_SCHEMA = {
+const PIECE_ANALYSIS_GENERAL_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
+    schema: { type: 'string', enum: ['general_v1'] },
     document_type: { type: 'string' },
     purpose: { type: 'string' },
     critical_dates: {
@@ -79,15 +87,141 @@ const PIECE_ANALYSIS_JSON_SCHEMA = {
     },
     utility_note: { type: 'string' },
   },
-  required: ['document_type', 'purpose', 'critical_dates', 'key_points', 'utility_note'],
+  required: ['schema', 'document_type', 'purpose', 'critical_dates', 'key_points', 'utility_note'],
 } as const;
+
+const PIECE_ANALYSIS_CGP_AUTO_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    schema: { type: 'string', enum: ['cgp_auto_v2'] },
+    document_type: { type: 'string' },
+    resolutive_summary: { type: 'string' },
+    legal_grounds: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    business_term: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        applies: { type: 'boolean' },
+        days: { type: 'integer' },
+        count_from: { type: 'string' },
+        legal_basis: { type: 'string' },
+        deadline_hint: { type: 'string' },
+        stage_note: { type: 'string' },
+      },
+      required: ['applies', 'days', 'count_from', 'legal_basis', 'deadline_hint', 'stage_note'],
+    },
+    planner_due: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        title: { type: 'string' },
+        due_note: { type: 'string' },
+        responsible: { type: 'string' },
+        priority: { type: 'string' },
+      },
+      required: ['title', 'due_note', 'responsible', 'priority'],
+    },
+    subsequent_actions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          order: { type: 'integer' },
+          action: { type: 'string' },
+          responsible: { type: 'string' },
+        },
+        required: ['order', 'action', 'responsible'],
+      },
+    },
+    informe_j51_draft: { type: 'string' },
+    cautions: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    ocr_quality_note: { type: 'string' },
+  },
+  required: [
+    'schema',
+    'document_type',
+    'resolutive_summary',
+    'legal_grounds',
+    'business_term',
+    'planner_due',
+    'subsequent_actions',
+    'informe_j51_draft',
+    'cautions',
+    'ocr_quality_note',
+  ],
+} as const;
+
+type PieceAiPromptMode = 'general_v1' | 'cgp_auto_v2';
 
 function buildPieceAiSystemPrompt(meta: {
   pieceName: string;
   systemType: string;
   notebookCode: string | null;
   radicado: string;
+  caseType: string | null;
+  tipoProceso: string | null;
+  etapa: string | null;
+  tramitePendiente: string | null;
+  mode: PieceAiPromptMode;
 }): string {
+  const contextBlock = [
+    `- Radicado: ${meta.radicado}`,
+    `- Nombre de la pieza: ${meta.pieceName}`,
+    `- Tipo técnico en sistema: ${meta.systemType || 'no indicado'}`,
+    `- Cuaderno (código): ${meta.notebookCode || 'no indicado'}`,
+    meta.caseType ? `- Clasificación caso: ${meta.caseType}` : null,
+    meta.tipoProceso ? `- Tipo de proceso: ${meta.tipoProceso}` : null,
+    meta.etapa ? `- Etapa (catálogo): ${meta.etapa}` : null,
+    meta.tramitePendiente ? `- Trámite pendiente (Planner): ${meta.tramitePendiente}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  if (meta.mode === 'cgp_auto_v2') {
+    return `Eres un asistente de secretaría civil del Juzgado 51 de Circuito (J51), especializado en procesos civiles bajo el Código General del Proceso (CGP), en particular estado civil y familia. Analizas UNA pieza del expediente — normalmente un auto o providencia firmada — para producir una lectura OPERATIVA para la secretaría, no un resumen académico.
+
+Reglas obligatorias:
+1. Basa cada campo solo en el texto de la pieza y el contexto mínimo del expediente. No inventes hechos, partes ni fechas.
+2. Si el texto es ilegible u OCR defectuoso, dilo en ocr_quality_note y sé conservador en plazos y resolución.
+3. No sustituyes la lectura obligatoria ni emites decisión judicial.
+4. Tono técnico, directo, en español colombiano.
+
+Cómputo de términos (CGP art. 118):
+- Los plazos en días son hábiles salvo que el auto diga expresamente «días calendario».
+- El término corre desde el día siguiente a la notificación personal o a la última notificación (si el auto lo ordena así). Si el auto no fija evento de inicio, usa «día siguiente a la notificación del auto» e indícalo en count_from.
+- Excluye sábados, domingos, festivos nacionales, Semana Santa (Domingo de Ramos a Domingo de Pascua), 17 de diciembre y vacancia judicial (20 dic – 10 ene).
+- Si el último día cae en inhábil, el término vence el siguiente día hábil.
+- En deadline_hint: indica días concedidos, evento de inicio y, si consta fecha del auto (YYYY-MM-DD), una fecha tentativa de vencimiento con la fórmula «tentativa: notificación + N días hábiles (art. 118 CGP)». Si no consta fecha de notificación, no calcules fecha exacta.
+
+Plazos frecuentes en autos CGP (aplica solo si el auto lo dice o se infiere con claridad):
+- Inadmisión con subsanación (art. 90 CGP): usualmente 5 días hábiles para corregir la demanda.
+- Traslado de excepciones previas: 10 días hábiles (art. 100 CGP).
+- Contestación de la demanda: 20 días hábiles (art. 371 CGP) desde notificación personal al demandado.
+- Recurso de reposición contra autos: 3 días hábiles (art. 318 CGP) desde notificación.
+
+Salida operativa requerida:
+- resolutive_summary: qué resolvió el despacho (admite, inadmite, decreta, ordena, niega, etc.) en 2-4 oraciones.
+- legal_grounds: artículos y numerales citados (p. ej. «CGP art. 90 num. 3»).
+- business_term: plazo perentorio que nace del auto; stage_note = estado procesal inmediato (p. ej. «En espera de subsanación de la demanda»).
+- planner_due: UNA tarea prioritaria para Planner/Due con título accionable, vencimiento orientativo y responsable (secretaría, escribiente, despacho).
+- subsequent_actions: 3-6 pasos posteriores al auto en orden lógico de secretaría J51 (informe de ingreso, notificación, registro en TYBA/SGDE, vigilancia de término, etc.).
+- informe_j51_draft: borrador de texto plano del informe de ingreso al despacho (encabezado «INFORME DE INGRESO AL DESPACHO», párrafo «En la fecha…» con hecho procesal del auto, sin membrete ni firma). Usa [CIUDAD] y [FECHA] si no constan.
+- cautions: riesgos operativos (término corto, notificación incompleta, recurso procedente, archivo, etc.).
+
+Contexto del expediente:
+${contextBlock}
+
+Responde únicamente con el JSON del esquema cgp_auto_v2.`;
+  }
+
   return `Eres un asistente jurídico experto en derecho procesal constitucional colombiano. Realizas una "lectura rápida asistida" de UNA sola pieza digital del expediente.
 
 Instrucciones críticas:
@@ -97,11 +231,10 @@ Instrucciones críticas:
 4. El "tipo" del sistema (${meta.systemType}) es técnico; infiere el tipo jurídico del documento (memorial, poder, dictamen, etc.).
 
 Metadata del expediente (solo contexto, no sustituye la pieza):
-- Radicado: ${meta.radicado}
-- Nombre de la pieza: ${meta.pieceName}
-- Cuaderno (código): ${meta.notebookCode || 'no indicado'}
+${contextBlock}
 
 Extrae:
+- schema: siempre "general_v1".
 - document_type: tipo jurídico del documento.
 - purpose: qué aporta o qué pide esta pieza.
 - critical_dates: fechas o plazos explícitos en el documento (date puede ser YYYY-MM-DD o texto literal).
@@ -109,10 +242,76 @@ Extrae:
 - utility_note: sugerencia operativa breve para el sustanciador al revisar el papel.`;
 }
 
+function normalizeGeneralAnalysis(parsed: Record<string, unknown>): PieceAiGeneralAnalysisData {
+  return {
+    schema: 'general_v1',
+    document_type: String(parsed.document_type || '').trim(),
+    purpose: String(parsed.purpose || '').trim(),
+    critical_dates: Array.isArray(parsed.critical_dates)
+      ? parsed.critical_dates.map((d) => {
+          const row = d as Record<string, unknown>;
+          return {
+            date: String(row?.date || '').trim(),
+            description: String(row?.description || '').trim(),
+          };
+        })
+      : [],
+    key_points: Array.isArray(parsed.key_points)
+      ? parsed.key_points.map((p) => String(p || '').trim()).filter(Boolean)
+      : [],
+    utility_note: String(parsed.utility_note || '').trim(),
+  };
+}
+
+function normalizeCgpAutoAnalysis(parsed: Record<string, unknown>): PieceAiCgpAutoAnalysisData {
+  const termRaw = (parsed.business_term ?? {}) as Record<string, unknown>;
+  const plannerRaw = (parsed.planner_due ?? {}) as Record<string, unknown>;
+  return {
+    schema: 'cgp_auto_v2',
+    document_type: String(parsed.document_type || '').trim(),
+    resolutive_summary: String(parsed.resolutive_summary || '').trim(),
+    legal_grounds: Array.isArray(parsed.legal_grounds)
+      ? parsed.legal_grounds.map((g) => String(g || '').trim()).filter(Boolean)
+      : [],
+    business_term: {
+      applies: Boolean(termRaw.applies),
+      days: Number.isFinite(Number(termRaw.days)) ? Math.max(0, Math.floor(Number(termRaw.days))) : 0,
+      count_from: String(termRaw.count_from || '').trim(),
+      legal_basis: String(termRaw.legal_basis || '').trim(),
+      deadline_hint: String(termRaw.deadline_hint || '').trim(),
+      stage_note: String(termRaw.stage_note || '').trim(),
+    },
+    planner_due: {
+      title: String(plannerRaw.title || '').trim(),
+      due_note: String(plannerRaw.due_note || '').trim(),
+      responsible: String(plannerRaw.responsible || 'secretaría').trim(),
+      priority: String(plannerRaw.priority || 'media').trim(),
+    },
+    subsequent_actions: Array.isArray(parsed.subsequent_actions)
+      ? parsed.subsequent_actions
+          .map((row) => {
+            const s = row as Record<string, unknown>;
+            return {
+              order: Number.isFinite(Number(s?.order)) ? Math.floor(Number(s.order)) : 0,
+              action: String(s?.action || '').trim(),
+              responsible: String(s?.responsible || 'secretaría').trim(),
+            };
+          })
+          .filter((s) => s.action)
+      : [],
+    informe_j51_draft: String(parsed.informe_j51_draft || '').trim(),
+    cautions: Array.isArray(parsed.cautions)
+      ? parsed.cautions.map((c) => String(c || '').trim()).filter(Boolean)
+      : [],
+    ocr_quality_note: String(parsed.ocr_quality_note || '').trim(),
+  };
+}
+
 async function callOpenAiPieceAnalysis(
   openai: OpenAI,
   opts: {
     prompt: string;
+    mode: PieceAiPromptMode;
     pdfBase64?: string;
     plainText?: string;
   }
@@ -135,35 +334,30 @@ async function callOpenAiPieceAnalysis(
     });
   }
 
+  const schema =
+    opts.mode === 'cgp_auto_v2'
+      ? PIECE_ANALYSIS_CGP_AUTO_JSON_SCHEMA
+      : PIECE_ANALYSIS_GENERAL_JSON_SCHEMA;
+  const schemaName =
+    opts.mode === 'cgp_auto_v2' ? 'lectura_operativa_auto_cgp' : 'lectura_rapida_pieza';
+
   const result = await openai.responses.create({
     model,
     input: [{ role: 'user', content: userContent }],
     text: {
       format: {
         type: 'json_schema',
-        name: 'lectura_rapida_pieza',
-        schema: PIECE_ANALYSIS_JSON_SCHEMA,
+        name: schemaName,
+        schema,
         strict: true,
       },
     },
   });
 
   const raw = result.output_text || '{}';
-  const parsed = JSON.parse(raw) as PieceAiAnalysisData;
-  return {
-    document_type: String(parsed.document_type || '').trim(),
-    purpose: String(parsed.purpose || '').trim(),
-    critical_dates: Array.isArray(parsed.critical_dates)
-      ? parsed.critical_dates.map((d) => ({
-          date: String(d?.date || '').trim(),
-          description: String(d?.description || '').trim(),
-        }))
-      : [],
-    key_points: Array.isArray(parsed.key_points)
-      ? parsed.key_points.map((p) => String(p || '').trim()).filter(Boolean)
-      : [],
-    utility_note: String(parsed.utility_note || '').trim(),
-  };
+  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  if (opts.mode === 'cgp_auto_v2') return normalizeCgpAutoAnalysis(parsed);
+  return normalizeGeneralAnalysis(parsed);
 }
 
 type CaseDocRow = {
@@ -176,7 +370,67 @@ type CaseDocRow = {
   content: string | null;
   notebook_code: string | null;
   file_hash: string | null;
+  sgde_id: string | null;
 };
+
+async function loadCaseDocumentBytes(opts: {
+  admin: SupabaseClient;
+  caseId: string;
+  doc: CaseDocRow;
+  sgdeClient: SgdeClient | null;
+}): Promise<Buffer> {
+  const { admin, caseId, doc, sgdeClient } = opts;
+  const storagePath = doc.storage_path?.trim() || '';
+
+  // Mismo origen que el visor: Storage primero; SGDE solo si falta o está vacío.
+  if (storagePath) {
+    try {
+      const storageBuf = await downloadCaseDocumentBytes(admin, storagePath);
+      if (storageBuf.length >= 100) return storageBuf;
+    } catch {
+      /* intentar SGDE */
+    }
+  }
+
+  if (sgdeClient) {
+    const sgdeBuf = await downloadCaseDocumentFromSgde({
+      client: sgdeClient,
+      admin,
+      caseId,
+      doc,
+    });
+    if (sgdeBuf?.length) return sgdeBuf;
+  }
+
+  if (storagePath) {
+    return downloadCaseDocumentBytes(admin, storagePath);
+  }
+  if (doc.content?.trim()) {
+    try {
+      return Buffer.from(doc.content, 'base64');
+    } catch {
+      throw Object.assign(new Error('Contenido de la pieza no es un archivo válido.'), { status: 400 });
+    }
+  }
+
+  if (sgdeClient) {
+    throw Object.assign(
+      new Error(
+        'No se pudo leer el PDF desde SGDE. Verifique credenciales en Ajustes e intente de nuevo.'
+      ),
+      { status: 400 }
+    );
+  }
+  if (doc.sgde_id?.trim()) {
+    throw Object.assign(
+      new Error(
+        'La pieza está vinculada a SGDE pero no hay sesión SGDE. Configure credenciales en Ajustes → Interconexión SGDE.'
+      ),
+      { status: 400 }
+    );
+  }
+  throw Object.assign(new Error('No hay archivo para analizar.'), { status: 400 });
+}
 
 type CacheRow = {
   content_hash: string;
@@ -205,14 +459,28 @@ export async function analyzeCaseDocumentPiece(opts: {
   caseId: string;
   caseDocumentId: string;
   forceRefresh?: boolean;
+  sgdeClient?: SgdeClient | null;
+  pdfPageCountHint?: number | null;
 }): Promise<AnalyzePieceResult> {
-  const { admin, openai, userId, userName, caseId, caseDocumentId, forceRefresh } = opts;
+  const {
+    admin,
+    openai,
+    userId,
+    userName,
+    caseId,
+    caseDocumentId,
+    forceRefresh,
+    sgdeClient,
+    pdfPageCountHint,
+  } = opts;
   const maxPages = pieceAiMaxPages();
   const model = pieceAiModel();
 
   const { data: docRow, error: docErr } = await admin
     .from('case_documents')
-    .select('id, case_id, name, type, content_type, storage_path, content, notebook_code, file_hash')
+    .select(
+      'id, case_id, name, type, content_type, storage_path, content, notebook_code, file_hash, sgde_id'
+    )
     .eq('id', caseDocumentId)
     .maybeSingle();
 
@@ -226,26 +494,19 @@ export async function analyzeCaseDocumentPiece(opts: {
 
   const { data: caseRow, error: caseErr } = await admin
     .from('cases')
-    .select('radicado')
+    .select('radicado, case_type, catalog_metadata')
     .eq('id', caseId)
     .maybeSingle();
   if (caseErr || !caseRow) {
     throw Object.assign(new Error('Expediente no encontrado.'), { status: 404 });
   }
 
-  const storagePath = doc.storage_path?.trim() || '';
-  let fileBuf: Buffer | null = null;
-  if (storagePath) {
-    fileBuf = await downloadCaseDocumentBytes(admin, storagePath);
-  } else if (doc.content?.trim()) {
-    try {
-      fileBuf = Buffer.from(doc.content, 'base64');
-    } catch {
-      throw Object.assign(new Error('Contenido de la pieza no es un archivo válido.'), { status: 400 });
-    }
-  } else {
-    throw Object.assign(new Error('No hay archivo para analizar.'), { status: 400 });
-  }
+  const fileBuf = await loadCaseDocumentBytes({
+    admin,
+    caseId,
+    doc,
+    sgdeClient: sgdeClient ?? null,
+  });
 
   const contentHash = sha256Hex(fileBuf);
   const pieceName = String(doc.name || 'Sin nombre');
@@ -287,11 +548,22 @@ export async function analyzeCaseDocumentPiece(opts: {
     }
   }
 
+  const catalogMeta = parseCatalogMetadata(caseRow.catalog_metadata);
+  const caseType = caseRow.case_type ? String(caseRow.case_type) : null;
+  const civilAutoPiece =
+    isCivilCaseForPieceAi(caseType, catalogMeta?.tipo_registro) &&
+    isLikelyCivilCgpAutoPiece(pieceName, doc.type);
+  const promptMode: PieceAiPromptMode = civilAutoPiece ? 'cgp_auto_v2' : 'general_v1';
   const promptMeta = {
     pieceName,
     systemType: String(doc.type || ''),
     notebookCode: doc.notebook_code ? String(doc.notebook_code) : null,
     radicado: String(caseRow.radicado || ''),
+    caseType,
+    tipoProceso: catalogMeta?.tipo_proceso ?? null,
+    etapa: catalogMeta?.etapa ?? null,
+    tramitePendiente: catalogMeta?.tramite_pendiente ?? null,
+    mode: promptMode,
   };
   const systemPrompt = buildPieceAiSystemPrompt(promptMeta);
 
@@ -300,8 +572,19 @@ export async function analyzeCaseDocumentPiece(opts: {
   let analysisData: PieceAiAnalysisData;
 
   if (pdf) {
-    const pdfDoc = await PDFDocument.load(fileBuf, { ignoreEncryption: true });
-    pageCountSent = pdfDoc.getPageCount();
+    const hinted =
+      typeof pdfPageCountHint === 'number' && pdfPageCountHint > 0
+        ? Math.floor(pdfPageCountHint)
+        : null;
+    pageCountSent = (await countPdfPagesInBuffer(fileBuf)) ?? hinted ?? 0;
+    if (pageCountSent <= 0) {
+      throw Object.assign(
+        new Error(
+          'No se pudo leer la estructura del PDF para contar páginas. Abra la pieza en el visor y reintente.'
+        ),
+        { status: 400 }
+      );
+    }
     if (pageCountSent > maxPages) {
       throw Object.assign(
         new Error(
@@ -312,10 +595,31 @@ export async function analyzeCaseDocumentPiece(opts: {
     }
     const pdfBase64 = fileBuf.toString('base64');
     tokenEstimate = Math.ceil(pdfBase64.length / 4);
-    analysisData = await callOpenAiPieceAnalysis(openai, {
-      prompt: systemPrompt,
-      pdfBase64,
-    });
+    try {
+      analysisData = await callOpenAiPieceAnalysis(openai, {
+        prompt: systemPrompt,
+        mode: promptMode,
+        pdfBase64,
+      });
+    } catch (pdfErr) {
+      const plain = await extractPlainTextFromPdfBuffer(fileBuf, maxPages);
+      const trimmed = plain.trim();
+      if (!trimmed) throw pdfErr;
+      if (trimmed.length > MAX_DOCX_CHARS) {
+        throw Object.assign(
+          new Error(
+            `El texto extraído del PDF supera ${MAX_DOCX_CHARS.toLocaleString('es-CO')} caracteres. Revise el archivo manualmente.`
+          ),
+          { status: 400 }
+        );
+      }
+      tokenEstimate = Math.ceil(trimmed.length / 4);
+      analysisData = await callOpenAiPieceAnalysis(openai, {
+        prompt: systemPrompt,
+        mode: promptMode,
+        plainText: trimmed,
+      });
+    }
   } else {
     const text = await extraerTextoPlanoDocx(fileBuf);
     const trimmed = text.trim();
@@ -337,6 +641,7 @@ export async function analyzeCaseDocumentPiece(opts: {
     tokenEstimate = Math.ceil(trimmed.length / 4);
     analysisData = await callOpenAiPieceAnalysis(openai, {
       prompt: systemPrompt,
+      mode: promptMode,
       plainText: trimmed,
     });
   }

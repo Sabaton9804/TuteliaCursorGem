@@ -55,6 +55,7 @@ import {
 } from './server/precedent-source-classify.js';
 import { createOpenAiTlsInsecureFetch } from './server/openai-insecure-fetch.js';
 import { analyzeCaseDocumentPiece } from './server/analyze-piece-service.js';
+import { generateCaseSynthesis } from './server/synthesize-case-service.js';
 import { reviewJudicialText } from './server/ai-review-text-service.js';
 import {
   inferLegalSpecialtyFromRadicado,
@@ -196,7 +197,7 @@ function setupProjectEnvWatch() {
 
 setupProjectEnvWatch();
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT || '3451');
 const BODY_LIMIT = '100mb';
 
 let openAiClientSingleton: OpenAI | null = null;
@@ -1398,43 +1399,45 @@ async function startServer() {
 
   app.post('/api/ai/summarize', async (req, res) => {
     try {
-      const { claim, rawText, contextBlock } = req.body || {};
-      if (!rawText) {
-        return res.status(400).json({ error: 'rawText es requerido' });
-      }
+      const body = req.body || {};
+      const claim = String(body.claim || '');
+      const rawText = typeof body.rawText === 'string' ? body.rawText : '';
+      const contextBlock = typeof body.contextBlock === 'string' ? body.contextBlock : '';
+      const caseType = body.caseType ? String(body.caseType) : null;
+      const catalogMetadata =
+        body.catalogMetadata && typeof body.catalogMetadata === 'object'
+          ? (body.catalogMetadata as Record<string, unknown>)
+          : null;
 
-      const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
       const openai = getOpenAiClient();
-      const ctx =
-        typeof contextBlock === 'string' && contextBlock.trim().length > 0
-          ? `\n### Datos del expediente en el sistema (plazos, piezas, asignación)\n${contextBlock.trim()}\n`
-          : '';
-
-      const prompt = `
-Eres un asistente juridico especializado en derecho constitucional colombiano.
-Tu tarea es sintetizar los puntos clave de una demanda de tutela por urgencia y el estado procesal útil para el despacho.
-
-REMITENTE/ACCIONANTE: ${claim || 'No especificado'}
-${ctx}
-CUERPO DEL CORREO/DEMANDA (texto principal):
-${rawText}
-
-FORMATO DE SALIDA (USAR MARKDOWN):
-### Sintesis Operativa
-**1. Derechos presuntamente vulnerados:** (Lista breve)
-**2. Hechos relevantes:** (Maximo 3 puntos clave)
-**3. Pretension principal:** (Sintesis de lo pedido)
-**4. Urgencia detectada:** (Por que es urgente o si hay riesgo de dano irremediable)
-**5. Plazos, traslados y contestaciones:** (A partir del bloque de expediente y del texto: términos para el accionado, traslados, respuestas de la EPS u otros; si no consta indique «No consta en los datos suministrados»)
-**6. Piezas y seguimiento:** (Relacione brevemente las piezas listadas con la controversia, si aplica)
-`;
-
-      const result = await openai.responses.create({
-        model,
-        input: prompt,
+      const text = await generateCaseSynthesis(openai, {
+        radicado: String(body.radicado || ''),
+        caseType,
+        claimant: claim,
+        defendant: String(body.defendant || ''),
+        subject: body.subject ? String(body.subject) : null,
+        status: body.status ? String(body.status) : null,
+        operationalStatus: body.operationalStatus ? String(body.operationalStatus) : null,
+        deadlineAt: body.deadlineAt ? String(body.deadlineAt) : null,
+        assignedTo: body.assignedTo ? String(body.assignedTo) : null,
+        legalHechos: body.legalHechos ? String(body.legalHechos) : null,
+        legalPretensiones: body.legalPretensiones ? String(body.legalPretensiones) : null,
+        legalDerechoTutelado: body.legalDerechoTutelado ? String(body.legalDerechoTutelado) : null,
+        rawText: rawText || null,
+        catalogMetadata,
+        documentTitles: Array.isArray(body.documentTitles)
+          ? body.documentTitles.map((t: unknown) => String(t)).filter(Boolean)
+          : undefined,
+        actionLines: Array.isArray(body.actionLines)
+          ? body.actionLines.map((t: unknown) => String(t)).filter(Boolean)
+          : undefined,
       });
 
-      return res.json({ text: result.output_text || '' });
+      if (!text.trim() && !rawText.trim() && !contextBlock.trim()) {
+        return res.status(400).json({ error: 'Sin datos suficientes para sintetizar el expediente.' });
+      }
+
+      return res.json({ text });
     } catch (error: any) {
       console.error('OpenAI summarize error:', error);
       const mapped = mapAiError(error);
@@ -1448,6 +1451,9 @@ FORMATO DE SALIDA (USAR MARKDOWN):
       const caseId = String(body.caseId || '').trim();
       const caseDocumentId = String(body.caseDocumentId || '').trim();
       const forceRefresh = Boolean(body.forceRefresh);
+      const rawPageCount = Number(body.pdfPageCount);
+      const pdfPageCountHint =
+        Number.isFinite(rawPageCount) && rawPageCount > 0 ? Math.floor(rawPageCount) : null;
 
       if (!caseId || !caseDocumentId) {
         return res.status(400).json({ error: 'caseId y caseDocumentId son requeridos' });
@@ -1477,6 +1483,14 @@ FORMATO DE SALIDA (USAR MARKDOWN):
         'Sistema';
 
       const openai = getOpenAiClient();
+
+      let sgdeClient: import('./server/sgde-client.js').SgdeClient | null = null;
+      const platform = sgdePlatformState();
+      if (platform.available) {
+        const logged = await createLoggedInSgdeClientForUser(acc.admin, uid);
+        if (!('error' in logged)) sgdeClient = logged.client;
+      }
+
       const out = await analyzeCaseDocumentPiece({
         admin: acc.admin,
         openai,
@@ -1485,6 +1499,8 @@ FORMATO DE SALIDA (USAR MARKDOWN):
         caseId,
         caseDocumentId,
         forceRefresh,
+        sgdeClient,
+        pdfPageCountHint,
       });
 
       return res.json({
@@ -1932,7 +1948,17 @@ Instrucciones obligatorias para los campos de texto:
       const file = multerReq.file;
       const tipoRaw = String((req.body as { tipo?: string })?.tipo ?? 'libre');
       const tipo: DocumentTemplateTipo =
-        tipoRaw === 'informe_ingreso' || tipoRaw === 'auto_admisorio' || tipoRaw === 'libre' ? tipoRaw : 'libre';
+        tipoRaw === 'informe_ingreso' ||
+        tipoRaw === 'auto_admisorio' ||
+        tipoRaw === 'notificacion_admisorio' ||
+        tipoRaw === 'notificacion_fallo' ||
+        tipoRaw === 'oficio_juzgado' ||
+        tipoRaw === 'oficio_comision' ||
+        tipoRaw === 'oficio_requerimiento' ||
+        tipoRaw === 'oficio_competencia' ||
+        tipoRaw === 'libre'
+          ? tipoRaw
+          : 'libre';
       if (!file?.buffer?.length) {
         return res.status(400).json({ error: 'Adjunte un archivo .docx' });
       }

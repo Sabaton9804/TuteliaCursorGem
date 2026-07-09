@@ -201,8 +201,19 @@ export function sortDocumentsByActTimeline(docs: Document[], caseType: CaseType 
   return [...docs].sort((a, b) => {
     const actA = inferActCodeFromDocument(a);
     const actB = inferActCodeFromDocument(b);
-    const seqA = a.actSequence ?? (actA ? (bandByCode.get(actA) ?? 50) * 100 : (a.order ?? 0));
-    const seqB = b.actSequence ?? (actB ? (bandByCode.get(actB) ?? 50) * 100 : (b.order ?? 0));
+    // act_sequence en piezas SGDE es rama:idDocumento (pares), no banda de acto procesal.
+    const seqA =
+      actA && a.actSequence != null
+        ? a.actSequence
+        : actA
+          ? (bandByCode.get(actA) ?? 50) * 100
+          : (a.order ?? 0);
+    const seqB =
+      actB && b.actSequence != null
+        ? b.actSequence
+        : actB
+          ? (bandByCode.get(actB) ?? 50) * 100
+          : (b.order ?? 0);
     if (seqA !== seqB) return seqA - seqB;
     return (a.order ?? 0) - (b.order ?? 0);
   });

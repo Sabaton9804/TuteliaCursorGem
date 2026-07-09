@@ -50,11 +50,15 @@ export default function Dashboard() {
   const [statusFilter, setStatusFilter] = useState('all');
   const navigate = useNavigate();
 
-  const { data: cases = [], isPending, error } = useQuery({
+  const casesQueryEnabled = Boolean(fetchCourtId) && !tenant.loading;
+
+  const { data: cases = [], isFetching, error, fetchStatus } = useQuery({
     queryKey: [...courtCasesQueryKey(fetchCourtId ?? 'none', DASHBOARD_ORDER), tenant.viewAsCourtId ?? 'active'],
     queryFn: () => fetchCourtCasesForList(fetchCourtId, DASHBOARD_ORDER),
-    enabled: Boolean(fetchCourtId),
+    enabled: casesQueryEnabled,
   });
+
+  const listLoading = casesQueryEnabled && (isFetching || fetchStatus === 'fetching');
 
   const { data: courtAssignmentMode } = useQuery({
     queryKey: ['court-sustanciador-mode', courtId],
@@ -188,7 +192,7 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {isPending ? (
+              {listLoading ? (
                 <tr>
                   <td colSpan={5} className="p-12 text-center text-sm text-slate-400 animate-pulse font-medium">
                     Consultando expedientes…

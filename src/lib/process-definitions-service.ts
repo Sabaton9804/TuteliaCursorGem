@@ -6,7 +6,7 @@ import {
   STAGE_LABEL_ES,
   type CaseStageCode,
 } from './case-workflow-stages';
-import { filterToMvpProductScope, isMvpRadicableCaseType } from './process-product-scope';
+import { filterToEnabledCourtProcesses, isMvpRadicableCaseType } from './process-product-scope';
 import { caseTermBusinessDaysFromDecreto2591 } from './decreto-2591-plazos';
 
 export type LoadedProcessDefinition = ProcessDefinitionRow & {
@@ -69,13 +69,16 @@ export function getCachedStageDefinitionId(
   return getCachedStageDefinition(caseType, stageCode)?.id ?? null;
 }
 
-/** Plazo global del caso (días hábiles). Decreto 2591/1991: art. 29 (1ª) y art. 32 (2ª). */
+/** Plazo global del caso (días hábiles). Decreto 2591/1991 solo para tutela. */
 export function getCachedCaseTermBusinessDays(caseType: CaseType | undefined): number {
   const def = getCachedProcessDefinitionByCaseType(caseType);
   if (def?.case_term_type === 'habiles' && def.case_term_days != null && def.case_term_days > 0) {
     return def.case_term_days;
   }
-  return caseTermBusinessDaysFromDecreto2591(caseType);
+  if (def?.case_term_type === 'none') {
+    return 0;
+  }
+  return caseTermBusinessDaysFromDecreto2591(caseType) ?? 0;
 }
 
 /** Plazo secundario de una etapa (contestación, impugnación, etc.) desde BD. */
@@ -181,7 +184,7 @@ export async function fetchEnabledProcessDefinitions(courtId: string): Promise<L
     stagesByDef.set(st.process_definition_id, list);
   }
 
-  return filterToMvpProductScope(
+  return filterToEnabledCourtProcesses(
     rows.map((raw) => {
       const def = rowToProcessDefinition(raw);
       const stList = stagesByDef.get(def.id) ?? [];

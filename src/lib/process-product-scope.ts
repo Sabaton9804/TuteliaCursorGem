@@ -25,6 +25,30 @@ export function filterToMvpProductScope<T extends { legacy_case_type: string | n
   return rows.filter((r) => isMvpRadicableCaseType(r.legacy_case_type));
 }
 
+/** Tipos civiles habilitados en módulo Procesos (listado + detalle; radicación civil en fase posterior). */
+export const CIVIL_CASE_TYPES = [
+  'civil_ordinario',
+  'civil_ejecutivo',
+  'civil_jurisdiccion_voluntaria',
+  'civil_insolvencia',
+  'civil_otros',
+] as const satisfies readonly CaseType[];
+
+export type CivilCaseType = (typeof CIVIL_CASE_TYPES)[number];
+
+export function isCivilCaseType(value: string | null | undefined): value is CivilCaseType {
+  return CIVIL_CASE_TYPES.includes(value as CivilCaseType);
+}
+
+/** Definiciones habilitadas en despacho: tutela MVP + dominio civil. */
+export function filterToEnabledCourtProcesses<
+  T extends { legacy_case_type: string | null; process_domain?: string },
+>(rows: T[]): T[] {
+  return rows.filter(
+    (r) => isMvpRadicableCaseType(r.legacy_case_type) || r.process_domain === 'civil',
+  );
+}
+
 /** Vista previa en UI: procesos planeados, aún no radicables. */
 export type ComingSoonProcessPreview = {
   id: string;

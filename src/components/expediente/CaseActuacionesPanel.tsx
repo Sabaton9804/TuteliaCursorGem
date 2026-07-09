@@ -1,11 +1,18 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { History, Loader2 } from 'lucide-react';
+import { History, Loader2, ListFilter } from 'lucide-react';
+import type { CaseType } from '../../types';
 import type { CaseTimelineEntry } from '../../lib/case-detail-context';
+import {
+  ACTUACIONES_RAPIDAS,
+  actuacionesCatalogCount,
+  searchActuacionesCatalog,
+} from '../../lib/actuaciones-catalog';
 
 export type CaseActuacionesPanelProps = {
   timeline: CaseTimelineEntry[];
+  caseType?: CaseType | null;
   newActionText: string;
   setNewActionText: (v: string) => void;
   manualActSaving: boolean;
@@ -14,11 +21,19 @@ export type CaseActuacionesPanelProps = {
 
 export function CaseActuacionesPanel({
   timeline,
+  caseType,
   newActionText,
   setNewActionText,
   manualActSaving,
   onRegisterManualAction,
 }: CaseActuacionesPanelProps) {
+  const [catalogQuery, setCatalogQuery] = useState('');
+  const suggestions = useMemo(
+    () => searchActuacionesCatalog(catalogQuery, caseType, 10),
+    [catalogQuery, caseType],
+  );
+  const listId = 'actuaciones-catalog-suggestions';
+
   return (
     <div id="panel-trazabilidad" className="card-modern flex w-full min-w-0 flex-col p-6 scroll-mt-24 sm:p-8">
       <div className="mb-8 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -26,8 +41,8 @@ export function CaseActuacionesPanel({
           <History className="h-4 w-4 text-accent" aria-hidden /> Trazabilidad operativa
         </h3>
         <p className="max-w-xl text-[11px] leading-snug text-slate-500">
-          Actuaciones relevantes del despacho (tabla «case_actions»): traslados, términos, asignaciones que se dejen
-          asentadas aquí, etc. El registro técnico completo de cada cambio en base de datos está en la pestaña «Historial».
+          Actuaciones relevantes del despacho (tabla «case_actions»). Catálogo SIJ adaptado ({actuacionesCatalogCount()}{' '}
+          entradas tutela/desacato). El registro técnico completo está en «Historial».
         </p>
       </div>
 
@@ -35,12 +50,62 @@ export function CaseActuacionesPanel({
         <label htmlFor="manual-actuacion" className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
           Registrar actuación
         </label>
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          {ACTUACIONES_RAPIDAS.map((label) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setNewActionText(label)}
+              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-medium text-slate-600 hover:border-accent/40 hover:text-accent"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="relative mt-3">
+          <ListFilter className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" aria-hidden />
+          <input
+            id="actuaciones-catalog-search"
+            type="search"
+            value={catalogQuery}
+            onChange={(e) => setCatalogQuery(e.target.value)}
+            placeholder="Buscar en catálogo (ej. admite tutela, desacato…)"
+            className="input-modern w-full pl-9 text-sm"
+            aria-controls={listId}
+            autoComplete="off"
+          />
+          {suggestions.length > 0 && catalogQuery.trim() ? (
+            <ul
+              id={listId}
+              className="absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
+              role="listbox"
+            >
+              {suggestions.map((label) => (
+                <li key={label} role="option">
+                  <button
+                    type="button"
+                    className="w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                    onClick={() => {
+                      setNewActionText(label);
+                      setCatalogQuery('');
+                    }}
+                  >
+                    {label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+
         <textarea
           id="manual-actuacion"
           value={newActionText}
           onChange={(e) => setNewActionText(e.target.value)}
           rows={3}
-          placeholder="Ej.: Traslado a la EPS para contestación; término de 2 días hábiles; constancia en SGDE…"
+          placeholder="Ej.: Auto admite tutela; traslado a la EPS; constancia en SGDE…"
           className="input-modern mt-2 w-full resize-y text-sm"
         />
         <div className="mt-3 flex flex-wrap items-center gap-3">

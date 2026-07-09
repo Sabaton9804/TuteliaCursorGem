@@ -2,6 +2,7 @@
  * Columnas PostgREST para listados (dashboard y expedientes).
  * Excluye blobs pesados (raw_text, raw_html, legal_hechos, etc.) que no usan las tablas/vistas de lista.
  */
+/** Listados generales (dashboard, tutelas): sin jsonb pesado. */
 export const CASE_LIST_COLUMNS = [
   'id',
   'court_id',
@@ -23,4 +24,11 @@ export const CASE_LIST_COLUMNS = [
   'decision_type',
   'decision_at',
   'case_type',
+  'process_definition_id',
+].join(',');
+
+/** Catálogo Procesos: incluye metadatos importados de plataforma. */
+export const CASE_PROCESOS_LIST_COLUMNS = [
+  ...CASE_LIST_COLUMNS.split(','),
+  'catalog_metadata',
 ].join(',');

@@ -47,6 +47,7 @@ export async function fetchPieceAiAnalysis(opts: {
   caseId: string;
   caseDocumentId: string;
   forceRefresh?: boolean;
+  pdfPageCount?: number | null;
 }): Promise<PieceAiAnalysisResponse> {
   const res = await fetch('/api/ai/analyze-piece', {
     method: 'POST',
@@ -55,6 +56,10 @@ export async function fetchPieceAiAnalysis(opts: {
       caseId: opts.caseId,
       caseDocumentId: opts.caseDocumentId,
       forceRefresh: Boolean(opts.forceRefresh),
+      pdfPageCount:
+        typeof opts.pdfPageCount === 'number' && opts.pdfPageCount > 0
+          ? Math.floor(opts.pdfPageCount)
+          : undefined,
     }),
   });
   const body = (await res.json().catch(() => ({}))) as PieceAiAnalysisResponse & { error?: string };

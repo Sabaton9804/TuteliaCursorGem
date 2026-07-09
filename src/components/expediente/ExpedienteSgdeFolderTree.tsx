@@ -6,6 +6,7 @@ import {
   buildExpedienteTreeFromDocs,
   collectExpandedFolderIds,
   filterExpedienteTree,
+  mergeExpandedFolderIds,
   splitSgdeFolderPath,
 } from '../../lib/expediente-folder-tree';
 
@@ -122,8 +123,8 @@ export function ExpedienteSgdeFolderTree({
   const [expanded, setExpanded] = useState<Set<string>>(() => collectExpandedFolderIds(tree));
 
   React.useEffect(() => {
-    setExpanded(collectExpandedFolderIds(tree));
-  }, [tree]);
+    setExpanded((prev) => mergeExpandedFolderIds(tree, prev, selectedDocId));
+  }, [tree, selectedDocId]);
 
   const toggle = (id: string) => {
     setExpanded((prev) => {

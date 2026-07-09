@@ -74,6 +74,7 @@ async function main() {
     const filing = startOfLocalDay(new Date(created));
     const caseType = (row.case_type as CaseType | null) ?? 'tutela_primera';
     const termDays = caseTermBusinessDaysFromDecreto2591(caseType);
+    if (termDays == null) continue;
     const deadline = businessDayTermEnd(filing, termDays).toISOString();
     const { error: upErr } = await supabase.from('cases').update({ deadline_at: deadline }).eq('id', row.id);
     if (upErr) {

@@ -1,5 +1,6 @@
 import type { Document } from '../types';
 import type { ExpedienteInstanciaCode } from './expediente-notebook';
+import { compareExpedientePiezas } from './expediente-document-order';
 
 export type ExpedienteTreeNode = {
   id: string;
@@ -61,6 +62,10 @@ function findOrCreateFolder(
 function sortTreeNodes(nodes: ExpedienteTreeNode[]): void {
   nodes.sort((a, b) => {
     if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1;
+    if (a.kind === 'file' && b.kind === 'file' && a.doc && b.doc) {
+      const cmp = compareExpedientePiezas(a.doc, b.doc);
+      if (cmp !== 0) return cmp;
+    }
     return a.name.localeCompare(b.name, 'es', { numeric: true, sensitivity: 'base' });
   });
   for (const n of nodes) {
@@ -166,4 +171,60 @@ export function collectExpandedFolderIds(nodes: ExpedienteTreeNode[], depth = 0)
   };
   walk(nodes, depth);
   return ids;
+}
+
+/** Todos los ids de carpeta presentes en el árbol (para validar estado expandido tras refetch). */
+export function collectFolderIdsInTree(nodes: ExpedienteTreeNode[]): Set<string> {
+  const ids = new Set<string>();
+  const walk = (list: ExpedienteTreeNode[]) => {
+    for (const n of list) {
+      if (n.kind === 'folder') {
+        ids.add(n.id);
+        if (n.children) walk(n.children);
+      }
+    }
+  };
+  walk(nodes);
+  return ids;
+}
+
+/** Carpetas ancestro de una pieza (para mantener visible la ruta al seleccionar/refrescar). */
+export function folderIdsOnPathToDoc(
+  nodes: ExpedienteTreeNode[],
+  docId: string | null | undefined
+): Set<string> {
+  const ids = new Set<string>();
+  if (!docId) return ids;
+  const walk = (list: ExpedienteTreeNode[], ancestors: string[]): boolean => {
+    for (const n of list) {
+      if (n.kind === 'file' && n.doc?.id === docId) {
+        for (const id of ancestors) ids.add(id);
+        return true;
+      }
+      if (n.kind === 'folder' && n.children) {
+        if (walk(n.children, [...ancestors, n.id])) return true;
+      }
+    }
+    return false;
+  };
+  walk(nodes, []);
+  return ids;
+}
+
+/** Fusiona expansión previa del usuario con la ruta de la pieza seleccionada. */
+export function mergeExpandedFolderIds(
+  tree: ExpedienteTreeNode[],
+  prev: Set<string>,
+  selectedDocId?: string | null
+): Set<string> {
+  const validIds = collectFolderIdsInTree(tree);
+  const next = new Set<string>();
+  for (const id of prev) {
+    if (validIds.has(id)) next.add(id);
+  }
+  for (const id of folderIdsOnPathToDoc(tree, selectedDocId)) {
+    next.add(id);
+  }
+  if (next.size === 0) return collectExpandedFolderIds(tree);
+  return next;
 }

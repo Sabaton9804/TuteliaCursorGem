@@ -2,6 +2,7 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { JSONContent } from '@tiptap/core';
 import type { Case, DocumentTemplateTipo, DocumentTemplateToggleDef } from '../types';
+import { oficioSecretariaDef, type OficioSecretariaTipoId, isOficioSecretariaTipo } from './oficio-secretaria-catalog';
 import { buildActiveToggleIds } from './tiptap-template-toggle-filter';
 import { formatRadicado } from './formatters';
 import { anioEnLetras2000, diaDelMesEnLetras } from './fecha-letras-es';
@@ -31,7 +32,8 @@ export type MapaVariablesPlantillaContext =
   | 'informe_ingreso'
   | 'auto_admisorio'
   | 'notificacion_admisorio'
-  | 'notificacion_fallo';
+  | 'notificacion_fallo'
+  | 'oficio_secretaria';
 
 export type PlantillaBorradorOpciones = {
   toggleDefs?: DocumentTemplateToggleDef[];
@@ -129,6 +131,7 @@ export function mapaVariablesDesdeCaso(
       : caseItem.claimant || '—',
     ACCIONADOS_LISTA: accionadosLista,
     ACCIONADOS_NOTIFICAR: accionadosLista,
+    DESTINATARIO_OFICIO: '—',
     RESUMEN_HECHOS_NOTIFICACION: caseItem.legalHechos ? caseItem.legalHechos.slice(0, 400) : '—',
     VINCULADOS_LISTA: '—',
     VINCULADOS_NOTIFICAR: '—',
@@ -146,7 +149,10 @@ export function mapaVariablesDesdeCaso(
     NOMBRE_JUEZ: nombreJuez || '—',
     NOMBRE_SECRETARIO: nombreSecretario || '—',
     FUNCIONARIO_FIRMA:
-      plantillaContext === 'informe_ingreso' || plantillaContext === 'notificacion_admisorio' || plantillaContext === 'notificacion_fallo'
+      plantillaContext === 'informe_ingreso' ||
+      plantillaContext === 'notificacion_admisorio' ||
+      plantillaContext === 'notificacion_fallo' ||
+      plantillaContext === 'oficio_secretaria'
         ? nombreSecretario
         : plantillaContext === 'auto_admisorio'
           ? nombreJuez
@@ -156,7 +162,8 @@ export function mapaVariablesDesdeCaso(
         ? userRoleLabelEs('judge')
         : plantillaContext === 'informe_ingreso' ||
             plantillaContext === 'notificacion_admisorio' ||
-            plantillaContext === 'notificacion_fallo'
+            plantillaContext === 'notificacion_fallo' ||
+            plantillaContext === 'oficio_secretaria'
           ? userRoleLabelEs('clerk')
           : '—',
     JUZGADO_NOMBRE: membrete.informe.juzgado,
@@ -212,6 +219,7 @@ export function cuerpoPredeterminadoPlantilla(tipo: DocumentTemplateTipo, m: Pla
   if (tipo === 'auto_admisorio') return plantillaAutoAdmisorioInterna(m);
   if (tipo === 'notificacion_admisorio') return plantillaNotificacionAdmisorioInterna(m);
   if (tipo === 'notificacion_fallo') return plantillaNotificacionFalloInterna(m);
+  if (isOficioSecretariaTipo(tipo)) return plantillaOficioSecretariaInterna(tipo, m);
   return '';
 }
 
@@ -298,6 +306,41 @@ export function textoNotificacionFalloBorrador(
   contenidoBase?: string | null,
 ): string {
   return textoNotificacionBorrador(caseItem, m, 'notificacion_fallo', contenidoBase);
+}
+
+function prefijoOficioSecretariaAntesDelCuerpo(m: PlantillasStateV2, refLine: string): string {
+  return [
+    m.membrete.informe.juzgado,
+    m.membrete.informe.direccion,
+    m.membrete.informe.correo,
+    '',
+    'Señores',
+    '{{DESTINATARIO_OFICIO}}',
+    '',
+    refLine,
+    'RAD.: {{RADICACION}}',
+    '',
+    'Cordial saludo,',
+    '',
+  ].join('\n');
+}
+
+export function plantillaOficioSecretariaInterna(tipo: OficioSecretariaTipoId, m: PlantillasStateV2): string {
+  const def = oficioSecretariaDef(tipo);
+  const ref = def ? `REF.: ${def.nombre_visible}` : 'REF.: Oficio';
+  const cuerpo = def?.cuerpo ?? '';
+  return `${prefijoOficioSecretariaAntesDelCuerpo(m, ref)}\n${cuerpo}\n\nAtentamente,\n\n{{FUNCIONARIO_FIRMA}}\n{{CARGO_FIRMA}}\n{{JUZGADO_NOMBRE}}\n{{FECHA_LETRAS}}`;
+}
+
+export function textoOficioSecretariaBorrador(
+  caseItem: Case,
+  m: PlantillasStateV2,
+  tipo: OficioSecretariaTipoId,
+  contenidoBase?: string | null,
+): string {
+  const v = mapaVariablesDesdeCaso(caseItem, m.membrete, 'oficio_secretaria');
+  const base = contenidoBase?.trim() || plantillaOficioSecretariaInterna(tipo, m);
+  return sustituirMarcadores(base, v);
 }
 
 export function plantillaAutoAdmisorioInterna(m: PlantillasStateV2): string {
@@ -398,6 +441,19 @@ export function cuerpoEditablePredeterminadoPlantilla(tipo: DocumentTemplateTipo
       '{{FUNCIONARIO_FIRMA}}',
       '{{CARGO_FIRMA}}',
     ].join('\n');
+  }
+  if (isOficioSecretariaTipo(tipo)) {
+    const def = oficioSecretariaDef(tipo);
+    return def?.cuerpo
+      ? [
+          def.cuerpo,
+          '',
+          'Atentamente,',
+          '',
+          '{{FUNCIONARIO_FIRMA}}',
+          '{{CARGO_FIRMA}}',
+        ].join('\n')
+      : '';
   }
   return '';
 }

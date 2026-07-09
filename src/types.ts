@@ -1,5 +1,6 @@
 import type { DecisionType, DerechoTuteladoCode } from './lib/sierju-case-codes';
 import type { CaseSierjuMetadata } from './lib/sierju-types';
+import type { CaseCatalogMetadata } from './lib/case-catalog-metadata';
 
 export type { DecisionType, DerechoTuteladoCode };
 
@@ -25,7 +26,14 @@ export interface UserProfile {
 export type CaseStatus = 'received' | 'admitted' | 'transfer' | 'judgment' | 'archived';
 
 /** Clasificación al radicar (columna `cases.case_type`). */
-export type CaseType = 'tutela_primera' | 'tutela_segunda' | 'consulta_desacato';
+export type CivilCaseType =
+  | 'civil_ordinario'
+  | 'civil_ejecutivo'
+  | 'civil_jurisdiccion_voluntaria'
+  | 'civil_insolvencia'
+  | 'civil_otros';
+
+export type CaseType = 'tutela_primera' | 'tutela_segunda' | 'consulta_desacato' | CivilCaseType;
 
 /** Quién impugna en segunda instancia (`cases.appellant`). */
 export type CaseAppellant = 'accionante' | 'accionado';
@@ -41,6 +49,10 @@ export type DocumentTemplateTipo =
   | 'auto_admisorio'
   | 'notificacion_admisorio'
   | 'notificacion_fallo'
+  | 'oficio_juzgado'
+  | 'oficio_comision'
+  | 'oficio_requerimiento'
+  | 'oficio_competencia'
   | 'libre';
 
 /**
@@ -149,6 +161,9 @@ export interface Case {
   originRuling?: CaseOriginRuling;
   /** Consulta de desacato: decisión o acto objeto de consulta. */
   conductDescription?: string;
+  /** Metadatos del catálogo operativo (importación plataforma / Planner). */
+  catalogMetadata?: CaseCatalogMetadata;
+  processDefinitionId?: string;
 }
 
 /** Documentos por revisar (Word) — tabla `case_word_reviews`. */

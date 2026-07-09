@@ -25,7 +25,12 @@
     "analyze:eml": "tsx scripts/analyze-eml.mts",
     "demo:segunda-eml": "tsx scripts/demo-segunda-instancia-eml.mts",
     "supabase:ensure-case-documents": "tsx scripts/ensure-case-documents-bucket.mts",
-    "backfill:case-deadlines": "tsx scripts/backfill-case-deadlines.mts"
+    "backfill:case-deadlines": "tsx scripts/backfill-case-deadlines.mts",
+    "import:plataforma-catalog": "tsx scripts/import-plataforma-catalog.mts",
+    "sync:plataforma-sgde-batch": "tsx scripts/sync-plataforma-sgde-batch.mts",
+    "report:procesos-estado": "tsx scripts/report-procesos-estado.mts",
+    "batch:sintesis-cognitiva": "tsx scripts/batch-sintesis-cognitiva.mts",
+    "sintesis:agent-all": "tsx scripts/run-sintesis-agent-all.mts"
   },
   "dependencies": {
     "@google/genai": "^1.50.1",

@@ -83,10 +83,10 @@ import {
   inferActCodeFromDocument,
   labelForActCode,
   nextActSequenceForDocs,
-  sortDocumentsByActTimeline,
   suggestedLogicalNameForAct,
   uploadableActsForCaseType,
 } from '../../lib/case-act-types';
+import { sortExpedienteCuadernoPiezas } from '../../lib/expediente-document-order';
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
@@ -112,6 +112,11 @@ function formatBytes(n: number | undefined): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Índice 1-based en el cuaderno: siempre 01, 02, 03… según posición en la lista ordenada. */
+function indiceCuadernoDesdeLista(listIndex: number): number {
+  return listIndex + 1;
 }
 
 /** Nombre índice del documento (radicación / parseo / carga); base del título sanitizado. */
@@ -537,6 +542,9 @@ export function ExpedienteDigitalPanel({
   const [expandedNb, setExpandedNb] = useState<Set<string>>(() => new Set());
   const pickNbRef = useRef(DEFAULT_NOTEBOOK_CODE);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const listaScrollRef = useRef<HTMLDivElement>(null);
+  const listaScrollTopRef = useRef(0);
+  const prevCaseIdRef = useRef(caseId);
 
   const [localExtraNotebooks, setLocalExtraNotebooks] = useState<ExpedienteCuadernoExtra[]>(() =>
     loadLocalExtraCuadernos(caseId)
@@ -576,9 +584,34 @@ export function ExpedienteDigitalPanel({
 
   useEffect(() => {
     const codes = sections.map((s) => s.code);
-    setExpandedNb(new Set(codes.length > 0 ? [codes[0]] : [defaultNb]));
-    setSelectedNb((prev) => (codes.includes(prev) ? prev : codes[0] ?? defaultNb));
+    const codeSet = new Set(codes);
+    const first = codes[0] ?? defaultNb;
+
+    if (prevCaseIdRef.current !== caseId) {
+      prevCaseIdRef.current = caseId;
+      setExpandedNb(new Set(codes.length > 0 ? [first] : [defaultNb]));
+      setSelectedNb(first);
+      return;
+    }
+
+    setSelectedNb((prev) => (codeSet.has(prev) ? prev : first));
+    setExpandedNb((prev) => {
+      const valid = [...prev].filter((c) => codeSet.has(c));
+      return valid.length > 0 ? new Set(valid) : prev;
+    });
   }, [caseId, defaultNb, sections]);
+
+  useEffect(() => {
+    const el = listaScrollRef.current;
+    if (!el) return;
+    const saved = listaScrollTopRef.current;
+    const id = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (listaScrollRef.current) listaScrollRef.current.scrollTop = saved;
+      });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [visorAbierto, selectedDoc?.id]);
 
   useEffect(() => {
     setExpandedNb((prev) => {
@@ -600,10 +633,7 @@ export function ExpedienteDigitalPanel({
   const piezasForNotebook = useCallback(
     (code: string) => {
       const list = filterByNotebook(docs, code).filter(isExpedientePiezaListable);
-      if (caseItem.caseType === 'tutela_primera') {
-        return sortDocumentsByActTimeline(list, caseItem.caseType);
-      }
-      return list;
+      return sortExpedienteCuadernoPiezas(list, caseItem.caseType);
     },
     [docs, caseItem.caseType],
   );
@@ -959,8 +989,11 @@ export function ExpedienteDigitalPanel({
     const canDownload = Boolean(doc.storagePath?.trim()) && !doc.ingestError;
     const pageHint = selectedDoc?.id === doc.id ? pdfPageCount : null;
     const aiGate = pieceAiEligibility(doc, pageHint);
-    const ordenReparto =
-      typeof doc.order === 'number' && !Number.isNaN(doc.order) ? String(doc.order) : '—';
+    const indiceLista = indiceCuadernoDesdeLista(listIndex);
+    const sgdeIndice =
+      typeof doc.actSequence === 'number' && !Number.isNaN(doc.actSequence)
+        ? doc.actSequence
+        : null;
 
     return (
       <div
@@ -979,8 +1012,15 @@ export function ExpedienteDigitalPanel({
         }`}
       >
         <div className="flex shrink-0 flex-col items-center gap-0.5 pt-0.5">
-          <span className="text-[10px] font-semibold tabular-nums text-slate-400">
-            {String(doc.actSequence ?? listIndex + 1).padStart(2, '0')}
+          <span
+            className="text-[10px] font-semibold tabular-nums text-slate-400"
+            title={
+              sgdeIndice != null
+                ? `Índice SGDE: ${String(sgdeIndice).padStart(2, '0')}`
+                : undefined
+            }
+          >
+            {String(indiceLista).padStart(2, '0')}
           </span>
           <span className={`rounded px-1 py-0.5 text-[8px] font-bold ${extChipClass(ext)}`}>{ext}</span>
         </div>
@@ -1008,7 +1048,6 @@ export function ExpedienteDigitalPanel({
           </div>
           <p className="mt-0.5 text-[9px] leading-snug text-slate-400">
             {created} · {formatBytes(doc.size)}
-            {doc.ingestError ? '' : ` · ord. ${ordenReparto}`}
           </p>
           {doc.ingestError ? (
             <p className="mt-0.5 text-[10px] leading-snug text-amber-700">{doc.ingestError}</p>
@@ -1042,6 +1081,7 @@ export function ExpedienteDigitalPanel({
     const meta = NOTEBOOK_META[code];
     const busquedaActiva = code === activeCode && piezaBusqueda.trim().length > 0;
     const treeDocs = busquedaActiva ? filtradas : list;
+    const indicePorDocId = new Map(treeDocs.map((d, i) => [d.id, i]));
     const sgdeTreeMode = list.some((d) => splitSgdeFolderPath(d.sgdeFolderPath).length > 0);
 
     return (
@@ -1070,13 +1110,23 @@ export function ExpedienteDigitalPanel({
             Mostrando {filtradas.length} de {list.length}
           </p>
         ) : null}
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
+        <div
+          ref={code === activeCode ? listaScrollRef : undefined}
+          className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain"
+          onScroll={
+            code === activeCode
+              ? (e) => {
+                  listaScrollTopRef.current = e.currentTarget.scrollTop;
+                }
+              : undefined
+          }
+        >
           <ExpedienteSgdeFolderTree
             docs={treeDocs}
             cuadernoLabel={nb.label}
             searchQuery={busquedaActiva ? piezaBusqueda : ''}
             selectedDocId={selectedDoc?.id}
-            renderFileRow={(d, i) => renderRow(d, i)}
+            renderFileRow={(d, _i) => renderRow(d, indicePorDocId.get(d.id) ?? _i)}
           />
         </div>
         <div className="mt-1.5 shrink-0 border-t border-slate-100 pt-1.5">{renderDropZone(nb)}</div>

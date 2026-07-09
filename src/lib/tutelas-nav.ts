@@ -44,9 +44,12 @@ export function tutelasListPageTitle(filter: TutelasListFilter): string {
   return 'Tutelas';
 }
 
-export function isTutelasRouteActive(pathname: string, _search = ''): boolean {
+export function isTutelasRouteActive(pathname: string, search = ''): boolean {
   if (pathname === '/cases') return true;
-  if (pathname.startsWith('/case/')) return true;
+  if (pathname.startsWith('/case/')) {
+    const p = new URLSearchParams(search);
+    return p.get('from') !== 'procesos';
+  }
   return false;
 }
 

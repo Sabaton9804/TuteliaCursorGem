@@ -1,0 +1,384 @@
+﻿{
+    "entries":  [
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "A secretaría"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Agreguese a autos"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Al despacho"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Al despacho para sentencia"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Al despacho por  Incidente de desacato"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Al despacho por reparto Tutela 1a. Instancia"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Al despacho por reparto Tutela 2a Instancia"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Archivo Definitivo Tutelas"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Auto admite consulta"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Auto admite tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Auto concede impugnaciÃ³n tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Auto de pruebas Tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Auto de Trámite"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Auto inadmite tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Auto ordena devolver tutela juez primera instancia"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Auto rechaza tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Auto resuelve medida provisional en tutelas"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Auto Tramita Incidente Desacato Tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Auto tramite Tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Concede parcialmente Tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Concede Tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Confirma Sentencia Tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Declara Improcedente Tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Decreta Nulidad Tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Desistimiento Tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Incidente Desacato Tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Inhibe de Decidir Tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Modifica Parcialmente Tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Modifica Sentencia Tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Niega Tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Notificación por correo"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Recepcion de Incidente Desacato"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Registro de proyecto Tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Remite por competencia Tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Remite Tutela Corte Constitucional"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Resuelve Incidente de Desacato"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Resuelve Incidente Desacato"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Revoca Sentencia Tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Revoca y Concede Tutela"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Sentencia tutela primera Instancia"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Sentencia tutela Segunda Instancia"
+                    },
+                    {
+                        "scope":  [
+                                      "tutela_primera",
+                                      "tutela_segunda",
+                                      "consulta_desacato",
+                                      "general"
+                                  ],
+                        "label":  "Tutelas"
+                    }
+                ],
+    "source":  "GestorSonia registro_actuaciones_listas.json (filtrado tutela/desacato)",
+    "version":  1
+}

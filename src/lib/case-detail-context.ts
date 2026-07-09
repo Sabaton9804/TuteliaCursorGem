@@ -39,9 +39,11 @@ export function buildSynthesisContextBlock(
   });
 
   const plazoLabel = plazoFallarLabelForCase(caseItem.caseType);
-  const deadlineLine = caseItem.deadlineAt?.trim()
-    ? `${plazoLabel} (deadline_at, ISO): ${caseItem.deadlineAt}`
-    : `${plazoLabel}: no registrado (deadline_at vacío).`;
+  const deadlineLine = plazoLabel
+    ? caseItem.deadlineAt?.trim()
+      ? `${plazoLabel} (deadline_at, ISO): ${caseItem.deadlineAt}`
+      : `${plazoLabel}: no registrado (deadline_at vacío).`
+    : null;
 
   const lines = [
     `Accionado: ${caseItem.defendant}`,
@@ -49,7 +51,7 @@ export function buildSynthesisContextBlock(
     caseItem.operationalStatus?.trim()
       ? `Estado operativo (tablero / gestión): ${caseItem.operationalStatus}`
       : 'Estado operativo: no indicado.',
-    deadlineLine,
+    ...(deadlineLine ? [deadlineLine] : []),
     assignLine,
     titles.length > 0
       ? `Piezas en expediente digital (${titles.length}): ${titles.join(' · ')}`
@@ -101,7 +103,7 @@ export function buildCaseTimeline(caseItem: Case, docs: Document[], actions: Act
     kind: 'system',
   });
 
-  if (caseItem.deadlineAt?.trim()) {
+  if (caseItem.deadlineAt?.trim() && plazoFallarLabelForCase(caseItem.caseType)) {
     const at = tsOrFallback(caseItem.deadlineAt, base);
     rows.push({
       key: 'sys-deadline',

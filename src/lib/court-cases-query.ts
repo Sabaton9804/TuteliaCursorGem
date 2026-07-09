@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 import { rowToCase } from './supabase-mappers';
-import { CASE_LIST_COLUMNS } from './case-list-query';
+import { CASE_LIST_COLUMNS, CASE_PROCESOS_LIST_COLUMNS } from './case-list-query';
 import type { Case } from '../types';
 
 /** Columna PostgREST para `.order()` en listados por despacho. */
@@ -30,6 +30,21 @@ export async function fetchCourtCasesForList(
   const { data, error } = await supabase
     .from('cases')
     .select(CASE_LIST_COLUMNS)
+    .eq('court_id', courtId)
+    .order(orderColumn, { ascending: false });
+  if (error) throw error;
+  return (data || []).map((r) => rowToCase(r as unknown as Record<string, unknown>));
+}
+
+/** Catálogo operativo (Procesos): trae catalog_metadata para situación/trámite. */
+export async function fetchCourtCasesForProcesosList(
+  courtId: string | null | undefined,
+  orderColumn: CourtCasesOrderColumn
+): Promise<Case[]> {
+  if (!courtId?.trim()) return [];
+  const { data, error } = await supabase
+    .from('cases')
+    .select(CASE_PROCESOS_LIST_COLUMNS)
     .eq('court_id', courtId)
     .order(orderColumn, { ascending: false });
   if (error) throw error;

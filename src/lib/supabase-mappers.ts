@@ -17,8 +17,14 @@ import { FUNDAMENTAL_RIGHT_CODES } from './sierju-types';
 import { parseUserRole } from './user-roles';
 import { DEFAULT_DEMO_COURT_ID } from './default-court';
 
+import { parseCatalogMetadata } from './case-catalog-metadata';
+import { CIVIL_CASE_TYPES } from './process-product-scope';
+
 function parseCaseType(v: unknown): CaseType | undefined {
   if (v === 'tutela_primera' || v === 'tutela_segunda' || v === 'consulta_desacato') return v;
+  if (typeof v === 'string' && (CIVIL_CASE_TYPES as readonly string[]).includes(v)) {
+    return v as CaseType;
+  }
   return undefined;
 }
 
@@ -107,6 +113,8 @@ export function rowToCase(row: Record<string, unknown>): Case {
     appellant: parseCaseAppellant(row.appellant),
     originRuling: parseCaseOriginRuling(row.origin_ruling),
     conductDescription: row.conduct_description ? String(row.conduct_description) : undefined,
+    catalogMetadata: parseCatalogMetadata(row.catalog_metadata),
+    processDefinitionId: row.process_definition_id ? String(row.process_definition_id) : undefined,
   };
 }
 

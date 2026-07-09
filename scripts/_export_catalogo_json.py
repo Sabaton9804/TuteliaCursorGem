@@ -1,0 +1,40 @@
+"""Exporta procesos y eventos de catalogo.db a JSON (stdout)."""
+from __future__ import annotations
+
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+
+def configure_stdout_utf8() -> None:
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
+
+
+def row_to_dict(row: sqlite3.Row) -> dict:
+    return {k: row[k] for k in row.keys()}
+
+
+def main() -> None:
+    configure_stdout_utf8()
+    db_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parents[2] / ".." / "PhytonJ51ccto" / "plataforma" / "data" / "catalogo.db"
+    db_path = db_path.resolve()
+    if not db_path.is_file():
+        print(json.dumps({"error": f"No existe {db_path}"}), file=sys.stderr)
+        sys.exit(1)
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM procesos ORDER BY fecha_ingreso DESC, radicado DESC")
+    procesos = [row_to_dict(r) for r in cur.fetchall()]
+    cur.execute("SELECT * FROM eventos ORDER BY radicado, fecha_auto, id")
+    eventos = [row_to_dict(r) for r in cur.fetchall()]
+    conn.close()
+
+    json.dump({"procesos": procesos, "eventos": eventos}, sys.stdout, ensure_ascii=False)
+
+
+if __name__ == "__main__":
+    main()

@@ -102,6 +102,52 @@ export type CaseDocumentViewUrlResult =
   | { ok: true; signedUrl: string; storagePath: string; repaired: boolean }
   | { ok: false; error: string };
 
+/** Resuelve el nodo SGDE de una pieza (por sgde_id o emparejamiento por nombre en el árbol). */
+export async function resolveSgdeNodeIdForDocument(opts: {
+  client: SgdeClient;
+  admin: SupabaseClient;
+  caseId: string;
+  doc: Pick<DocRow, 'sgde_id' | 'name'>;
+}): Promise<string | null> {
+  let sgdeId = String(opts.doc.sgde_id || '').trim();
+  if (sgdeId) return sgdeId;
+
+  const { data: caseRow } = await opts.admin
+    .from('cases')
+    .select('sgde_id, radicado')
+    .eq('id', opts.caseId)
+    .maybeSingle();
+  const sgdeRootId = String(caseRow?.sgde_id || '').trim();
+  const radicado23 = String(caseRow?.radicado || '').replace(/\D/g, '').slice(0, 23);
+  if (!sgdeRootId || radicado23.length !== 23) return null;
+
+  const leaves = await opts.client.collectPdfLeavesForExpediente(sgdeRootId, {
+    maxDepth: 12,
+    maxNodes: 800,
+    maxSearchDocs: 600,
+    originRadicado: radicado23,
+  });
+  for (const leaf of leaves) {
+    const m = matchLeafToDoc(leaf, [{ ...opts.doc, id: '', type: '', storage_path: null, content_type: null, notebook_code: null, sgde_folder_path: null }], new Set());
+    if (m) return leaf.id;
+  }
+  return null;
+}
+
+/** Lee el PDF en memoria desde SGDE (sin pasar por Storage). */
+export async function downloadCaseDocumentFromSgde(opts: {
+  client: SgdeClient;
+  admin: SupabaseClient;
+  caseId: string;
+  doc: Pick<DocRow, 'sgde_id' | 'name'>;
+}): Promise<Buffer | null> {
+  const sgdeId = await resolveSgdeNodeIdForDocument(opts);
+  if (!sgdeId) return null;
+  const downloaded = await opts.client.downloadNodeContent(sgdeId);
+  if (!downloaded?.buffer?.length) return null;
+  return downloaded.buffer;
+}
+
 /** Garantiza el PDF en Storage (re-descarga desde SGDE si falta) y devuelve URL firmada. */
 export async function ensureCaseDocumentViewUrl(opts: {
   admin: SupabaseClient;
@@ -151,31 +197,9 @@ export async function ensureCaseDocumentViewUrl(opts: {
     };
   }
 
-  let sgdeId = String(doc.sgde_id || '').trim();
-  if (!sgdeId) {
-    const { data: caseRow } = await admin
-      .from('cases')
-      .select('sgde_id, radicado')
-      .eq('id', caseId)
-      .maybeSingle();
-    const sgdeRootId = String(caseRow?.sgde_id || '').trim();
-    const radicado23 = String(caseRow?.radicado || '').replace(/\D/g, '').slice(0, 23);
-    if (sgdeRootId && radicado23.length === 23) {
-      const leaves = await client.collectPdfLeavesForExpediente(sgdeRootId, {
-        maxDepth: 12,
-        maxNodes: 800,
-        maxSearchDocs: 600,
-        originRadicado: radicado23,
-      });
-      for (const leaf of leaves) {
-        const m = matchLeafToDoc(leaf, [doc], new Set());
-        if (m) {
-          sgdeId = leaf.id;
-          break;
-        }
-      }
-    }
-  }
+  const sgdeId = client
+    ? await resolveSgdeNodeIdForDocument({ client, admin, caseId, doc })
+    : String(doc.sgde_id || '').trim() || null;
 
   if (!sgdeId) {
     return {

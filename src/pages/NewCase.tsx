@@ -901,7 +901,9 @@ export default function NewCase() {
           processDef?.case_term_type === 'habiles' && processDef.case_term_days != null && processDef.case_term_days > 0
             ? processDef.case_term_days
             : caseTermBusinessDaysFromDecreto2591(flow);
-        deadlineAtIso = businessDayTermEnd(filingForTerm, termDays).toISOString();
+        if (termDays != null) {
+          deadlineAtIso = businessDayTermEnd(filingForTerm, termDays).toISOString();
+        }
       }
       const caseRow: Record<string, unknown> = {
         id: caseId,

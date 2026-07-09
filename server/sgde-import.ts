@@ -193,7 +193,9 @@ export async function importExpedienteFromSgde(opts: ImportFromSgdeOpts): Promis
       raw_text: '',
       summary: '',
       case_type: caseType,
-      deadline_at: businessDayTermEnd(filingForTerm, termDays).toISOString(),
+      ...(termDays != null
+        ? { deadline_at: businessDayTermEnd(filingForTerm, termDays).toISOString() }
+        : {}),
       sgde_id: sgdeRootId,
       sgde_linked_at: now,
       sgde_sync_status: 'linked',

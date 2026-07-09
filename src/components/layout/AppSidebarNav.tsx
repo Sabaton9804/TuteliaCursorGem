@@ -27,6 +27,11 @@ import {
   isTutelasSubItemActive,
   tutelasListHref,
 } from '../../lib/tutelas-nav';
+import {
+  PROCESOS_SUBMENU,
+  isProcesosRouteActive,
+  isProcesosSubItemActive,
+} from '../../lib/procesos-nav';
 
 type NavLinkItem = {
   name: string;
@@ -67,6 +72,9 @@ export function AppSidebarNav({ sidebarCollapsed, urgentWorkflowCount, onNavigat
   const [tutelasOpen, setTutelasOpen] = useState(() =>
     isTutelasRouteActive(location.pathname, location.search)
   );
+  const [procesosOpen, setProcesosOpen] = useState(() =>
+    isProcesosRouteActive(location.pathname, location.search)
+  );
 
   useEffect(() => {
     if (isTutelasRouteActive(location.pathname, location.search)) {
@@ -74,8 +82,16 @@ export function AppSidebarNav({ sidebarCollapsed, urgentWorkflowCount, onNavigat
     }
   }, [location.pathname, location.search]);
 
+  useEffect(() => {
+    if (isProcesosRouteActive(location.pathname, location.search)) {
+      setProcesosOpen(true);
+    }
+  }, [location.pathname, location.search]);
+
   const tutelasGroupActive = isTutelasRouteActive(location.pathname, location.search);
+  const procesosGroupActive = isProcesosRouteActive(location.pathname, location.search);
   const showTutelasChildren = !sidebarCollapsed && tutelasOpen;
+  const showProcesosChildren = !sidebarCollapsed && procesosOpen;
 
   const linkClass = (active: boolean, collapsed: boolean) =>
     `relative flex items-center rounded-xl text-sm font-medium transition-all ${
@@ -103,25 +119,45 @@ export function AppSidebarNav({ sidebarCollapsed, urgentWorkflowCount, onNavigat
       </span>
     ) : null;
 
-  const renderProcesosPlaceholder = () => (
-    <div
-      key="procesos-placeholder"
-      title={sidebarCollapsed ? 'Procesos — Próximamente' : undefined}
-      aria-disabled="true"
-      className={`relative flex cursor-default select-none rounded-xl ${
-        sidebarCollapsed ? 'items-center justify-center px-2 py-3' : 'items-start gap-3 px-4 py-3'
-      }`}
-    >
-      <Scale
-        className={`w-4 h-4 shrink-0 text-slate-500 ${sidebarCollapsed ? '' : 'mt-0.5'}`}
-        aria-hidden
-      />
-      {!sidebarCollapsed && (
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-slate-400">Procesos</p>
-          <p className="text-[10px] font-medium tracking-wide text-slate-500/80">Próximamente</p>
-        </div>
+  const renderProcesosGroup = () => (
+    <div key="procesos-group" className="space-y-0.5">
+      {sidebarCollapsed ? (
+        <Link
+          to="/procesos/civiles"
+          title="Procesos"
+          onClick={onNavigate}
+          className={linkClass(procesosGroupActive, true)}
+        >
+          <Scale className="w-4 h-4 shrink-0" />
+        </Link>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setProcesosOpen((o) => !o)}
+          className={`${linkClass(procesosGroupActive, false)} w-full`}
+          aria-expanded={procesosOpen}
+          aria-controls="nav-procesos-children"
+        >
+          <Scale className="w-4 h-4 shrink-0" />
+          Procesos
+          <ChevronDown
+            className={`ml-auto w-4 h-4 shrink-0 transition-transform ${procesosOpen ? 'rotate-180' : ''}`}
+            aria-hidden
+          />
+        </button>
       )}
+      {showProcesosChildren ? (
+        <div id="nav-procesos-children" className="space-y-0.5 pb-1">
+          {PROCESOS_SUBMENU.map((sub) => {
+            const subActive = isProcesosSubItemActive(location.pathname, sub.path, location.search);
+            return (
+              <Link key={sub.label} to={sub.path} onClick={onNavigate} className={subLinkClass(subActive)}>
+                <span className="truncate">{sub.label}</span>
+              </Link>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 
@@ -174,7 +210,7 @@ export function AppSidebarNav({ sidebarCollapsed, urgentWorkflowCount, onNavigat
     const item = NAV_LINKS[i];
     if (i === 2) {
       items.push(renderTutelasGroup());
-      items.push(renderProcesosPlaceholder());
+      items.push(renderProcesosGroup());
     }
 
     const isActive = linkIsActive(location.pathname, item.path);

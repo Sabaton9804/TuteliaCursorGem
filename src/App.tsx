@@ -18,6 +18,9 @@ import CorreoContestaciones from './pages/CorreoContestaciones';
 import CorreoRoadmap from './pages/CorreoRoadmap';
 import SustanciadorTablero from './pages/SustanciadorTablero';
 import PlatformConsole from './pages/PlatformConsole';
+import ProcesosHub from './pages/ProcesosHub';
+import ProcesosCivilesList from './pages/ProcesosCivilesList';
+import ProcesosEstadoList from './pages/ProcesosEstadoList';
 
 const Plantillas = lazy(() => import('./pages/Plantillas'));
 
@@ -30,6 +33,9 @@ export default function App() {
           <Route path="/new" element={<NewCase />} />
           <Route path="/import-sgde" element={<ImportFromSgde />} />
           <Route path="/cases" element={<CasesList />} />
+          <Route path="/procesos" element={<ProcesosHub />} />
+          <Route path="/procesos/estado" element={<ProcesosEstadoList />} />
+          <Route path="/procesos/civiles" element={<ProcesosCivilesList />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/estadisticas" element={<Estadisticas />} />
           <Route path="/biblioteca-precedentes" element={<BibliotecaPrecedentes />} />

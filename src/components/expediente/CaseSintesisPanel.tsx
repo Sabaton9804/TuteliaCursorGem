@@ -6,7 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import { Link, useNavigate } from 'react-router-dom';
 import { useCaseDetail } from '../../contexts/CaseDetailContext';
 import { formatRadicado } from '../../lib/formatters';
-import { plazoFallarAjusteManualHint, plazoFallarLabelForCase } from '../../lib/decreto-2591-plazos';
+import { isTutelaFalloPlazoCaseType, plazoFallarAjusteManualHint, plazoFallarLabelForCase } from '../../lib/decreto-2591-plazos';
 import { CASE_STATUS_LABEL } from './case-detail-status-labels';
 import { PrecedentSourceBadge } from './PrecedentSourceBadge';
 
@@ -111,6 +111,9 @@ export function CaseSintesisPanel({
   }, [caseItem.id, caseItem.courtId, caseItem.legalDerechoTutelado, caseItem.legalHechos]);
 
   const queryTextForPrec = [caseItem.legalDerechoTutelado, caseItem.legalHechos].filter(Boolean).join('\n\n').trim();
+  const showTutelaFalloPlazo = isTutelaFalloPlazoCaseType(caseItem.caseType);
+  const plazoFallarLabel = plazoFallarLabelForCase(caseItem.caseType);
+  const plazoFallarAjusteHint = plazoFallarAjusteManualHint(caseItem.caseType);
 
   return (
     <div className="card-modern w-full min-w-0 overflow-hidden shadow-sm transition-all hover:shadow-lg">
@@ -366,17 +369,19 @@ export function CaseSintesisPanel({
               <span className="font-semibold text-slate-500">Estado operativo: </span>
               {caseItem.operationalStatus?.trim() || 'Sin dato en expediente'}
             </li>
-            <li>
-              <span className="font-semibold text-slate-500">{plazoFallarLabelForCase(caseItem.caseType)}: </span>
-              {caseItem.deadlineAt && isValid(parseISO(caseItem.deadlineAt))
-                ? format(parseISO(caseItem.deadlineAt), "EEEE d 'de' MMMM yyyy", { locale: es })
-                : 'No registrado — use el desplegable siguiente o el backfill de plazos'}
-              {caseItem.deadlineOverrideNote?.trim() ? (
-                <span className="mt-0.5 block font-normal text-slate-500">
-                  Nota al plazo: {caseItem.deadlineOverrideNote.trim()}
-                </span>
-              ) : null}
-            </li>
+            {showTutelaFalloPlazo && plazoFallarLabel ? (
+              <li>
+                <span className="font-semibold text-slate-500">{plazoFallarLabel}: </span>
+                {caseItem.deadlineAt && isValid(parseISO(caseItem.deadlineAt))
+                  ? format(parseISO(caseItem.deadlineAt), "EEEE d 'de' MMMM yyyy", { locale: es })
+                  : 'No registrado — use el desplegable siguiente o el backfill de plazos'}
+                {caseItem.deadlineOverrideNote?.trim() ? (
+                  <span className="mt-0.5 block font-normal text-slate-500">
+                    Nota al plazo: {caseItem.deadlineOverrideNote.trim()}
+                  </span>
+                ) : null}
+              </li>
+            ) : null}
             <li>
               <span className="font-semibold text-slate-500">Piezas en expediente digital: </span>
               {docs.length === 0 ? 'Ninguna aún' : `${docs.length} (se envían títulos a la IA al analizar)`}
@@ -384,9 +389,10 @@ export function CaseSintesisPanel({
           </ul>
         </details>
 
+        {showTutelaFalloPlazo && plazoFallarAjusteHint ? (
         <details className="group border-t border-slate-100 bg-slate-50/50 px-4 py-2 sm:px-6 sm:py-2.5">
           <summary className="cursor-pointer list-none py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-slate-400 hover:text-slate-600 [&::-webkit-details-marker]:hidden before:mr-1.5 before:inline-block before:text-slate-300 before:transition-transform before:content-['▸'] group-open:before:rotate-90">
-            {plazoFallarAjusteManualHint(caseItem.caseType)}
+            {plazoFallarAjusteHint}
           </summary>
           <div className="mt-2 space-y-2 border-t border-slate-100/90 pt-2 pb-1 text-[10px] text-slate-500">
             <p className="leading-snug">
@@ -424,6 +430,7 @@ export function CaseSintesisPanel({
             </label>
           </div>
         </details>
+        ) : null}
       </div>
 
       {detailPrec ? (

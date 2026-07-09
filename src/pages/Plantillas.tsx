@@ -37,6 +37,10 @@ const TIPO_LABEL: Record<PlantillaTipo, string> = {
   auto_admisorio: 'Auto admisorio',
   notificacion_admisorio: 'Notificación auto',
   notificacion_fallo: 'Notificación fallo',
+  oficio_juzgado: 'Oficio juzgado',
+  oficio_comision: 'Oficio comisión',
+  oficio_requerimiento: 'Oficio requerimiento',
+  oficio_competencia: 'Oficio competencia',
   libre: 'Libre / otro',
 };
 
@@ -44,6 +48,10 @@ const OPCIONES_NUEVA_PLANTILLA: { categoria: PlantillaCategoria; tipo: Plantilla
   { categoria: 'secretaria', tipo: 'informe_ingreso' },
   { categoria: 'secretaria', tipo: 'notificacion_admisorio' },
   { categoria: 'secretaria', tipo: 'notificacion_fallo' },
+  { categoria: 'secretaria', tipo: 'oficio_juzgado' },
+  { categoria: 'secretaria', tipo: 'oficio_comision' },
+  { categoria: 'secretaria', tipo: 'oficio_requerimiento' },
+  { categoria: 'secretaria', tipo: 'oficio_competencia' },
   { categoria: 'secretaria', tipo: 'libre' },
   { categoria: 'despacho', tipo: 'auto_admisorio' },
   { categoria: 'despacho', tipo: 'libre' },

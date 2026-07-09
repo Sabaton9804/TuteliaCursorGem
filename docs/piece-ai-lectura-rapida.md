@@ -1,17 +1,20 @@
 # Lectura rápida con IA (pieza del expediente)
 
-## Estado actual (v1.0)
+## Estado actual (v2.0)
 
 - **UI:** menú ⋯ «Lectura rápida con IA» + panel bajo el visor del expediente digital.
 - **API:** `POST /api/ai/analyze-piece` (sesión Bearer + acceso al despacho).
 - **Modelo:** `OPENAI_MODEL` (por defecto `gpt-4o-mini`).
-- **Prompt:** versión `PIECE_AI_PROMPT_VERSION = 'v1.0'` en `src/lib/piece-ai-analysis.ts`.
+- **Prompt:** versión `PIECE_AI_PROMPT_VERSION = 'v2.0'` en `src/lib/piece-ai-analysis.ts`.
+- **Ramas de prompt:**
+  - **CGP auto v2** (`cgp_auto_v2`): procesos `civil_*` o `catalog_metadata.tipo_registro = civil` y pieza que parece auto/providencia. Salida operativa para secretaría J51 (resolución, término art. 118, Planner/Due, actuaciones posteriores, borrador informe).
+  - **General v1** (`general_v1`): tutela y demás piezas (memoriales, informes, etc.).
 - **Caché:** tabla `case_document_ai_analyses`; invalidación por `content_hash`, `prompt_version` y `model`.
 - **Límites:** `AI_PIECE_MAX_PAGES` (default 40) para PDF; Word vía Mammoth con tope de caracteres en servidor.
 
-## Próxima iteración (pendiente)
+## Iteración v1.0 (histórico)
 
-Objetivo acordado: **modelo más capaz** y **prompt distinto** (lectura jurídica más fina, sin solapar con la síntesis cognitiva del caso).
+Primera versión: lectura descriptiva constitucional para cualquier pieza (`document_type`, `purpose`, `key_points`, etc.).
 
 ### Checklist al cambiar modelo o prompt
 

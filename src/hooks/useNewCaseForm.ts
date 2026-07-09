@@ -1,7 +1,8 @@
 import type { CaseAppellant, CaseOriginRuling, CaseType } from '../types';
+import type { MvpRadicableCaseType } from '../lib/process-product-scope';
 
 export const CASE_TYPE_CARD_COPY: Record<
-  CaseType,
+  MvpRadicableCaseType,
   { emoji: string; title: string; subtitle: string }
 > = {
   tutela_primera: {

@@ -20,12 +20,22 @@ function mapGeminiError(error: any): Error {
   return error instanceof Error ? error : new Error("Error inesperado al consultar Gemini.");
 }
 
-export async function summarizeCase(claim: string, rawText: string, contextBlock?: string) {
+export async function summarizeCase(
+  claim: string,
+  rawText: string,
+  contextBlock?: string,
+  extra?: Record<string, unknown>,
+) {
   try {
     const response = await fetch('/api/ai/summarize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ claim, rawText, contextBlock: contextBlock?.trim() || undefined }),
+      body: JSON.stringify({
+        claim,
+        rawText,
+        contextBlock: contextBlock?.trim() || undefined,
+        ...extra,
+      }),
     });
 
     if (!response.ok) {

@@ -35,8 +35,14 @@ if (!databaseUrl) {
 const sql = fs.readFileSync(path.resolve(projectRoot, sqlPath), 'utf8');
 
 const { Client } = await import('pg');
+function stripSslMode(raw: string): string {
+  const u = new URL(raw);
+  u.searchParams.delete('sslmode');
+  return u.toString();
+}
+
 const client = new Client({
-  connectionString: databaseUrl,
+  connectionString: stripSslMode(databaseUrl),
   ssl: { rejectUnauthorized: false },
 });
 

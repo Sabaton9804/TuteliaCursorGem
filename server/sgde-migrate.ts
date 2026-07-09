@@ -120,6 +120,24 @@ export function sgdeFilenameToProtocolName(raw: string, orden?: string): string 
   return titled.endsWith('.pdf') ? titled : `${titled}.pdf`;
 }
 
+/** Orden SGDE (rama:orden / idDocumento) para importación en secuencia del índice. */
+export function sgdeLeafSortKey(leaf: SgdePdfLeaf): number {
+  const orden = leaf.orden?.trim();
+  if (orden && /^\d+$/.test(orden)) return parseInt(orden, 10);
+  const fromName = leaf.name.replace(/\.pdf$/i, '').match(/(\d{1,4})$/);
+  if (fromName) return parseInt(fromName[1], 10);
+  return Number.MAX_SAFE_INTEGER;
+}
+
+export function sortSgdePdfLeavesByIndex(leaves: SgdePdfLeaf[]): SgdePdfLeaf[] {
+  return [...leaves].sort((a, b) => {
+    const ka = sgdeLeafSortKey(a);
+    const kb = sgdeLeafSortKey(b);
+    if (ka !== kb) return ka - kb;
+    return a.name.localeCompare(b.name, 'es', { numeric: true, sensitivity: 'base' });
+  });
+}
+
 export async function preflightSgdeOriginExpediente(
   client: SgdeClient,
   originRadicadoRaw: string,
@@ -298,12 +316,14 @@ export async function migrateSgdeOriginToCase(opts: {
     }
   }
 
-  const leaves = (
-    await client.collectPdfLeavesForExpediente(rootId, {
-      maxSearchDocs: maxFiles + 50,
-      originRadicado,
-    })
-  ).slice(0, maxFiles);
+  const leaves = sortSgdePdfLeavesByIndex(
+    (
+      await client.collectPdfLeavesForExpediente(rootId, {
+        maxSearchDocs: maxFiles + 50,
+        originRadicado,
+      })
+    ).slice(0, maxFiles),
+  );
 
   let sortOrder = await nextSortOrderForCase(admin, caseId, notebookCode);
   const errors: string[] = [];

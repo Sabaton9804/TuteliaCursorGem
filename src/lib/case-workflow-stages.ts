@@ -24,7 +24,8 @@ export type CaseStageCode =
   | 'EJECUTORIA'
   | 'REMISION_CORTE'
   | 'CUMPLIMIENTO'
-  | 'INCIDENTE_DESACATO';
+  | 'INCIDENTE_DESACATO'
+  | 'TRAMITE';
 
 export type CaseStageResponsibleRole = 'secretaria' | 'despacho';
 
@@ -59,6 +60,11 @@ export const STAGE_PIPELINE_BY_CASE_TYPE: Record<
     'NOTIFICACION_FALLO',
     'EJECUTORIA',
   ],
+  civil_ordinario: ['RADICACION', 'ADMISION', 'TRAMITE', 'FALLO', 'EJECUTORIA'],
+  civil_ejecutivo: ['RADICACION', 'ADMISION', 'TRAMITE', 'FALLO', 'EJECUTORIA'],
+  civil_jurisdiccion_voluntaria: ['RADICACION', 'ADMISION', 'TRAMITE', 'FALLO', 'EJECUTORIA'],
+  civil_insolvencia: ['RADICACION', 'ADMISION', 'TRAMITE', 'FALLO', 'EJECUTORIA'],
+  civil_otros: ['RADICACION', 'ADMISION', 'TRAMITE', 'FALLO', 'EJECUTORIA'],
 };
 
 const SECRETARIA_STAGES = new Set<CaseStageCode>([
@@ -75,6 +81,7 @@ const DESPACHO_STAGES = new Set<CaseStageCode>([
   'INGRESO_DESPACHO_FALLO',
   'FALLO',
   'EJECUTORIA',
+  'TRAMITE',
 ]);
 
 export function responsibleRoleForStage(stage: CaseStageCode): CaseStageResponsibleRole {
@@ -99,6 +106,7 @@ export const STAGE_LABEL_ES: Record<CaseStageCode, string> = {
   REMISION_CORTE: 'Remisión a Corte',
   CUMPLIMIENTO: 'Cumplimiento',
   INCIDENTE_DESACATO: 'Incidente de desacato',
+  TRAMITE: 'Trámite',
 };
 
 export function pipelineForCaseType(caseType: CaseType | undefined): readonly CaseStageCode[] {

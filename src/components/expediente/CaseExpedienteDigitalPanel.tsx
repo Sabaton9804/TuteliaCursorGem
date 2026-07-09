@@ -894,13 +894,6 @@ export function CaseExpedienteDigitalPanel({
                 </div>
               )}
                 </div>
-                <ExpedientePieceAiPanel
-                  caseId={caseId}
-                  doc={selectedDoc}
-                  pdfPageCount={isCaseDocumentPdf(selectedDoc) ? pdfPageCount : null}
-                  refreshToken={aiTrigger}
-                  onAnalyzed={onRefetchDocs}
-                />
                 </>
               ) : (
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 md:p-5">
@@ -949,6 +942,18 @@ export function CaseExpedienteDigitalPanel({
             </>
             ) : null}
       </div>
+
+      {visorPieza && selectedDoc ? (
+        <div className="card-modern w-full shrink-0 overflow-hidden">
+          <ExpedientePieceAiPanel
+            caseId={caseId}
+            doc={selectedDoc}
+            pdfPageCount={isCaseDocumentPdf(selectedDoc) ? pdfPageCount : null}
+            refreshToken={aiTrigger}
+            onAnalyzed={onRefetchDocs}
+          />
+        </div>
+      ) : null}
 
       {docsLoaded ? (
         <div className="w-full shrink-0">
