@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import { ensureSupabaseSessionForWrites } from './supabase-write-auth';
 import type {
+  CaseType,
   CaseWordReviewMarkupV1,
   Document,
   DocumentTemplate,
@@ -11,7 +12,7 @@ import type {
 } from '../types';
 import { mergePageLayout } from './document-template-page-layout';
 import { insertCaseDocumentRowReturningId, uploadCaseAttachment } from './case-document-storage';
-import { DEFAULT_NOTEBOOK_CODE } from './expediente-notebook';
+import { notebookCodeForCaseType } from './expediente-notebook';
 import { nextSortOrderInPrincipalNotebook } from './expediente-document-order';
 import { createCaseWordReview } from './case-word-reviews';
 import { insertWordReviewJudgeNotifications } from './word-review-notifications';
@@ -67,6 +68,8 @@ function rowToTemplate(row: Record<string, unknown>): DocumentTemplate {
     tipo:
       tipo === 'informe_ingreso' ||
       tipo === 'auto_admisorio' ||
+      tipo === 'auto_tramite' ||
+      tipo === 'sentencia' ||
       tipo === 'notificacion_admisorio' ||
       tipo === 'notificacion_fallo' ||
       tipo === 'oficio_juzgado' ||
@@ -212,11 +215,13 @@ export async function updateDocumentTemplate(
 /** Sube el PDF del informe al expediente (cuaderno principal, al final del orden) y marca el caso. */
 export async function registerCaseInformeIngresoWithExpedientePdf(opts: {
   caseId: string;
+  caseType?: CaseType;
   pdfBytes: Uint8Array;
   displayName: string;
   docs: Document[];
 }): Promise<void> {
   await ensureSupabaseSessionForWrites();
+  const notebookCode = notebookCodeForCaseType(opts.caseType);
   const sortOrder = nextSortOrderInPrincipalNotebook(opts.docs);
   const up = await uploadCaseAttachment(supabase, opts.caseId, opts.displayName, opts.pdfBytes, 'application/pdf');
   if ('error' in up) throw up.error;
@@ -231,7 +236,9 @@ export async function registerCaseInformeIngresoWithExpedientePdf(opts: {
     storage_path: up.path,
     is_from_link: false,
     sort_order: sortOrder,
-    notebook_code: DEFAULT_NOTEBOOK_CODE,
+    notebook_code: notebookCode,
+    act_code: 'informe_ingreso',
+    act_sequence: 5,
   };
 
   const { id: documentId } = await insertCaseDocumentRowReturningId(supabase, row);
@@ -250,6 +257,7 @@ export async function registerCaseInformeIngresoWithExpedientePdf(opts: {
 /** Registra un PDF tipado como acto procesal en el expediente digital. */
 export async function registerCaseActoPdfEnExpediente(opts: {
   caseId: string;
+  caseType?: CaseType;
   pdfBytes: Uint8Array;
   displayName: string;
   docs: Document[];
@@ -273,7 +281,7 @@ export async function registerCaseActoPdfEnExpediente(opts: {
     storage_path: up.path,
     is_from_link: false,
     sort_order: sortOrder,
-    notebook_code: DEFAULT_NOTEBOOK_CODE,
+    notebook_code: notebookCodeForCaseType(opts.caseType),
     act_code: opts.actCode,
     act_sequence: opts.actSequence ?? null,
     source_channel: opts.sourceChannel ?? 'generado',
@@ -294,6 +302,7 @@ export async function registerCaseActoPdfEnExpediente(opts: {
 export async function uploadGeneratedDocxToExpedienteWithWordReview(opts: {
   caseId: string;
   courtId: string;
+  caseType?: CaseType;
   radicado: string;
   docxBytes: Uint8Array;
   displayName: string;
@@ -331,7 +340,7 @@ export async function uploadGeneratedDocxToExpedienteWithWordReview(opts: {
     storage_path: up.path,
     is_from_link: false,
     sort_order: sortOrder,
-    notebook_code: DEFAULT_NOTEBOOK_CODE,
+    notebook_code: notebookCodeForCaseType(opts.caseType),
   };
 
   const { id: documentId } = await insertCaseDocumentRowReturningId(supabase, row);

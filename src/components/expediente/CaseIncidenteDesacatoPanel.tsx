@@ -16,8 +16,8 @@ import { ensureSupabaseSessionForWrites } from '../../lib/supabase-write-auth';
 import { resolveWorkflowAssigneeId } from '../../lib/case-workflow-stages';
 import { insertIncidenteDesacatoIniciadoNotifications } from '../../lib/workflow-stage-notifications';
 import { formatRadicado } from '../../lib/formatters';
-import type { Case } from '../../types';
-import type { UserProfile, UserRole } from '../../types';
+import type { Case, UserProfile } from '../../types';
+import { hasRoleCapability } from '../../lib/role-capabilities';
 
 const REQUESTED_BY_OPTIONS = [
   { value: 'accionante', label: 'Accionante' },
@@ -84,10 +84,6 @@ function statusLabel(v: string): string {
   return STATUS_OPTIONS.find((o) => o.value === v)?.label ?? v;
 }
 
-function canRoleIniciarIncidente(role: UserRole | undefined): boolean {
-  return role === 'clerk' || role === 'official' || role === 'admin';
-}
-
 function noonLocalIsoFromDateInput(yyyyMmDd: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(yyyyMmDd.trim());
   if (!m) return new Date().toISOString();
@@ -128,7 +124,7 @@ export function CaseIncidenteDesacatoPanel({ caseItem, profile }: Props) {
   const [editFine, setEditFine] = useState('');
   const [editConsultaResult, setEditConsultaResult] = useState<string>('');
 
-  const canIniciar = canRoleIniciarIncidente(profile?.role);
+  const canIniciar = hasRoleCapability(profile?.role, 'iniciar_incidente');
 
   const loadIncident = useCallback(async () => {
     setLoading(true);

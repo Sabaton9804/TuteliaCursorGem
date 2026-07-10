@@ -12,7 +12,7 @@
     "lint": "tsc --noEmit",
     "verify:supabase": "tsx scripts/verify-supabase.mts",
     "verify:migrations-202605": "tsx scripts/verify-migrations-202605.mts",
-    "verify:multi-tenant": "tsx scripts/apply-sql-file.mts scripts/verify-multi-tenant-health.sql",
+    "verify:despacho-invariants": "tsx scripts/verify-despacho-invariants.mts",
     "seed:dev-admin": "tsx scripts/seed-dev-admin.mts",
     "seed:court-users": "tsx scripts/seed-court-users.mts",
     "seed:role-bots": "tsx scripts/seed-role-bots.mts",

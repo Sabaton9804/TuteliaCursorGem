@@ -1,6 +1,7 @@
 import type { Document } from '../types';
 import type { CaseType } from '../types';
-import { caseHasAnyAct, labelForActCode } from './case-act-types';
+import { CIVIL_CASE_TYPES, isCivilCaseType } from './process-product-scope';
+import { caseHasAnyAct, caseHasRulingAct, labelForActCode } from './case-act-types';
 import type { StageActTriggerCode } from './case-act-types';
 
 export type StageActGateResult =
@@ -15,20 +16,70 @@ type GateRule = {
   actionLabel: string;
 };
 
+const CIVIL_CASE_TYPE_LIST = CIVIL_CASE_TYPES as unknown as CaseType[];
+
+const ADMISION_BRANCH_CASE_TYPES: CaseType[] = [
+  'tutela_primera',
+  'tutela_segunda',
+  ...CIVIL_CASE_TYPE_LIST,
+];
+
 const STAGE_ACT_GATES: GateRule[] = [
   {
     trigger: 'SECRETARIA_NOTIFICACION_AUTO_ENVIADA',
-    caseTypes: ['tutela_primera'],
-    mode: 'any',
-    requiredActs: ['notificacion_admisorio', 'constancia_notificacion'],
+    caseTypes: ['tutela_primera', ...CIVIL_CASE_TYPE_LIST],
+    mode: 'all',
+    requiredActs: ['auto_admite', 'notificacion_admisorio'],
     actionLabel: 'registrar la notificación del auto admisorio',
   },
   {
     trigger: 'SECRETARIA_NOTIFICACION_FALLO_ENVIADA',
-    caseTypes: ['tutela_primera'],
-    mode: 'any',
-    requiredActs: ['notificacion_fallo', 'constancia_notificacion_fallo'],
+    caseTypes: ['tutela_primera', 'tutela_segunda', ...CIVIL_CASE_TYPE_LIST],
+    mode: 'all',
+    requiredActs: ['fallo_tutela', 'notificacion_fallo'],
     actionLabel: 'registrar la notificación del fallo',
+  },
+  {
+    trigger: 'SECRETARIA_IMPUGNACION_RECIBIDA',
+    caseTypes: ['tutela_primera'],
+    mode: 'all',
+    requiredActs: ['impugnacion_escrito'],
+    actionLabel: 'registrar la impugnación del fallo',
+  },
+  {
+    trigger: 'SECRETARIA_REMISION_SUPERIOR',
+    caseTypes: ['tutela_primera'],
+    mode: 'all',
+    requiredActs: ['remision_superior'],
+    actionLabel: 'registrar la remisión al superior',
+  },
+  {
+    trigger: 'SECRETARIA_REMISION_CORTE',
+    caseTypes: ['tutela_segunda'],
+    mode: 'all',
+    requiredActs: ['remision_corte'],
+    actionLabel: 'registrar la remisión a la Corte Constitucional',
+  },
+  {
+    trigger: 'DESPACHO_INADMISION_REGISTRADA',
+    caseTypes: ADMISION_BRANCH_CASE_TYPES,
+    mode: 'all',
+    requiredActs: ['auto_inadmite'],
+    actionLabel: 'registrar la inadmisión',
+  },
+  {
+    trigger: 'DESPACHO_RECHAZO_REGISTRADO',
+    caseTypes: ADMISION_BRANCH_CASE_TYPES,
+    mode: 'all',
+    requiredActs: ['auto_rechazo'],
+    actionLabel: 'registrar el rechazo de la demanda',
+  },
+  {
+    trigger: 'SECRETARIA_APELACION_RECIBIDA',
+    caseTypes: CIVIL_CASE_TYPE_LIST,
+    mode: 'all',
+    requiredActs: ['apelacion_escrito'],
+    actionLabel: 'registrar la apelación de la sentencia',
   },
 ];
 
@@ -78,7 +129,66 @@ export function canRegistrarNotificacionFalloEnviada(
   caseType: CaseType,
   docs: Document[],
 ): StageActGateResult {
-  return checkStageActGate('SECRETARIA_NOTIFICACION_FALLO_ENVIADA', caseType, docs);
+  if (!isCivilCaseType(caseType)) {
+    return checkStageActGate('SECRETARIA_NOTIFICACION_FALLO_ENVIADA', caseType, docs);
+  }
+  if (!caseHasRulingAct(docs, caseType)) {
+    return {
+      ok: false,
+      missingActs: ['sentencia'],
+      message: 'Faltan piezas en el expediente: Sentencia (PDF firmado).',
+    };
+  }
+  if (!caseHasAnyAct(docs, ['notificacion_fallo'])) {
+    return {
+      ok: false,
+      missingActs: ['notificacion_fallo'],
+      message: 'Faltan piezas en el expediente: Notificación de la sentencia.',
+    };
+  }
+  return { ok: true };
+}
+
+export function canRegistrarImpugnacionRecibida(
+  caseType: CaseType,
+  docs: Document[],
+): StageActGateResult {
+  return checkStageActGate('SECRETARIA_IMPUGNACION_RECIBIDA', caseType, docs);
+}
+
+export function canRegistrarRemisionSuperior(
+  caseType: CaseType,
+  docs: Document[],
+): StageActGateResult {
+  return checkStageActGate('SECRETARIA_REMISION_SUPERIOR', caseType, docs);
+}
+
+export function canRegistrarRemisionCorte(
+  caseType: CaseType,
+  docs: Document[],
+): StageActGateResult {
+  return checkStageActGate('SECRETARIA_REMISION_CORTE', caseType, docs);
+}
+
+export function canRegistrarApelacionRecibida(
+  caseType: CaseType,
+  docs: Document[],
+): StageActGateResult {
+  return checkStageActGate('SECRETARIA_APELACION_RECIBIDA', caseType, docs);
+}
+
+export function canRegistrarRechazoDemanda(
+  caseType: CaseType,
+  docs: Document[],
+): StageActGateResult {
+  return checkStageActGate('DESPACHO_RECHAZO_REGISTRADO', caseType, docs);
+}
+
+export function canRegistrarInadmision(
+  caseType: CaseType,
+  docs: Document[],
+): StageActGateResult {
+  return checkStageActGate('DESPACHO_INADMISION_REGISTRADA', caseType, docs);
 }
 
 export function stageActGateMessage(result: StageActGateResult): string | null {

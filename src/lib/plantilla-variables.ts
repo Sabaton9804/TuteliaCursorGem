@@ -26,14 +26,38 @@ import { getCachedNameByRole } from './court-staff-cache';
 import { DEMO_DESPACHO_STAFF } from './court-staff-demo-seed';
 import { userRoleLabelEs } from './user-roles';
 import type { UserRole } from '../types';
+import { CIVIL_PROCESS_CARD_COPY, isCivilCaseType } from './process-product-scope';
 
-/** Firma: informe → secretario del equipo; auto → juez del equipo (`DESPACHO_STAFF`). */
+/** Firma: informe → secretario del equipo; auto/sentencia → juez del equipo (`DESPACHO_STAFF`). */
 export type MapaVariablesPlantillaContext =
   | 'informe_ingreso'
   | 'auto_admisorio'
+  | 'auto_tramite'
+  | 'sentencia'
   | 'notificacion_admisorio'
   | 'notificacion_fallo'
   | 'oficio_secretaria';
+
+export type ProvidenciaDespachoContext = 'auto_tramite' | 'sentencia';
+
+function tipoProcesoDesdeCase(caseItem: Case): string {
+  const ct = caseItem.caseType;
+  if (ct === 'tutela_primera') return 'tutela de primera instancia';
+  if (ct === 'tutela_segunda') return 'tutela de segunda instancia';
+  if (isCivilCaseType(ct)) {
+    const meta = CIVIL_PROCESS_CARD_COPY[ct];
+    return meta?.title?.toLowerCase() ?? 'proceso civil';
+  }
+  return 'proceso judicial';
+}
+
+function contextoFirmaJuez(context: MapaVariablesPlantillaContext | null | undefined): boolean {
+  return (
+    context === 'auto_admisorio' ||
+    context === 'auto_tramite' ||
+    context === 'sentencia'
+  );
+}
 
 export type PlantillaBorradorOpciones = {
   toggleDefs?: DocumentTemplateToggleDef[];
@@ -142,7 +166,7 @@ export function mapaVariablesDesdeCaso(
     CIUDAD: 'Bogotá, D. C.',
     /** Día en letras + (n) + mes y año en letras (bajo título del informe). */
     FECHA_LETRAS_COMPLETA: fechaCompletaLetras,
-    TIPO_PROCESO: 'tutela de primera instancia',
+    TIPO_PROCESO: tipoProcesoDesdeCase(caseItem),
     FINALIDAD_INGRESO: 'para admitir',
     MEDIO_RECEPCION: caseItem.sourceChannel === 'email' ? 'correo electrónico de hoy' : 'medios registrados en expediente',
     /** Nombres del organigrama seed (`court-staff-assignees`); útiles en plantillas con {{NOMBRE_JUEZ}} / {{NOMBRE_SECRETARIO}}. */
@@ -154,11 +178,11 @@ export function mapaVariablesDesdeCaso(
       plantillaContext === 'notificacion_fallo' ||
       plantillaContext === 'oficio_secretaria'
         ? nombreSecretario
-        : plantillaContext === 'auto_admisorio'
+        : contextoFirmaJuez(plantillaContext)
           ? nombreJuez
           : '',
     CARGO_FIRMA:
-      plantillaContext === 'auto_admisorio'
+      contextoFirmaJuez(plantillaContext)
         ? userRoleLabelEs('judge')
         : plantillaContext === 'informe_ingreso' ||
             plantillaContext === 'notificacion_admisorio' ||
@@ -217,6 +241,8 @@ export function plantillaInformeIngresoInterna(m: PlantillasStateV2): string {
 export function cuerpoPredeterminadoPlantilla(tipo: DocumentTemplateTipo, m: PlantillasStateV2): string {
   if (tipo === 'informe_ingreso') return plantillaInformeIngresoInterna(m);
   if (tipo === 'auto_admisorio') return plantillaAutoAdmisorioInterna(m);
+  if (tipo === 'auto_tramite') return plantillaAutoTramiteInterna(m);
+  if (tipo === 'sentencia') return plantillaSentenciaInterna(m);
   if (tipo === 'notificacion_admisorio') return plantillaNotificacionAdmisorioInterna(m);
   if (tipo === 'notificacion_fallo') return plantillaNotificacionFalloInterna(m);
   if (isOficioSecretariaTipo(tipo)) return plantillaOficioSecretariaInterna(tipo, m);
@@ -350,6 +376,20 @@ export function plantillaAutoAdmisorioInterna(m: PlantillasStateV2): string {
   return `${prefijoAutoAntesDelCuerpo(m)}\n${cuerpoEditablePredeterminadoPlantilla('auto_admisorio', m)}`;
 }
 
+export function plantillaAutoTramiteInterna(m: PlantillasStateV2): string {
+  if (hasMembreteRichContent(m.membrete)) {
+    return cuerpoEditablePredeterminadoPlantilla('auto_tramite', m);
+  }
+  return `${prefijoAutoAntesDelCuerpo(m)}\n${cuerpoEditablePredeterminadoPlantilla('auto_tramite', m)}`;
+}
+
+export function plantillaSentenciaInterna(m: PlantillasStateV2): string {
+  if (hasMembreteRichContent(m.membrete)) {
+    return cuerpoEditablePredeterminadoPlantilla('sentencia', m);
+  }
+  return `${prefijoAutoAntesDelCuerpo(m)}\n${cuerpoEditablePredeterminadoPlantilla('sentencia', m)}`;
+}
+
 /** Encabezado y variables de proceso tal como se concatenan al generar el borrador (sin el cuerpo editable). */
 /** Texto plano con {{}} del bloque bajo el membrete (fecha, radicación, partes…). */
 export function bloqueVariablesAutoAdmisorioPlain(m: PlantillasStateV2): string {
@@ -422,6 +462,34 @@ export function cuerpoEditablePredeterminadoPlantilla(tipo: DocumentTemplateTipo
       'COMUNÍQUESE Y CÚMPLASE.',
     ].join('\n');
   }
+  if (tipo === 'auto_tramite') {
+    return [
+      'Asunto: {{TIPO_PROCESO}} rad. {{RADICACION}}.',
+      '',
+      'Vistos los antecedentes del expediente y conforme a lo dispuesto en el Código General del Proceso,',
+      '',
+      'DISPONE:',
+      '',
+      '[Redacte aquí la providencia de trámite]',
+      '',
+      'NOTIFÍQUESE Y CÚMPLASE.',
+    ].join('\n');
+  }
+  if (tipo === 'sentencia') {
+    return [
+      'Proceso {{TIPO_PROCESO}} rad. {{RADICACION}}, promovido por {{ACCIONANTE}} contra {{ACCIONADOS_LISTA}}.',
+      '',
+      'Vistos los antecedentes y conforme a lo dispuesto en el Código General del Proceso y demás normas aplicables,',
+      '',
+      'RESUELVE:',
+      '',
+      'PRIMERO: [Redacte aquí la decisión de fondo]',
+      '',
+      'SEGUNDO: NOTIFÍQUESE conforme a la ley.',
+      '',
+      'NOTIFÍQUESE Y CÚMPLASE.',
+    ].join('\n');
+  }
   if (tipo === 'notificacion_admisorio') {
     return [
       'Por medio del presente oficio se notifica el auto admisorio de la acción de tutela instaurada por {{ACCIONANTE}} en contra de {{ACCIONADOS_LISTA}}, radicada bajo el número {{RADICACION}}.',
@@ -461,6 +529,8 @@ export function cuerpoEditablePredeterminadoPlantilla(tipo: DocumentTemplateTipo
 /** Texto fijo del párrafo inicial del cuerpo (plantilla informe y Word generado). */
 export const MARCA_CUERPO_INFORME = 'En la fecha ingresa al Despacho del señor juez';
 const MARCA_CUERPO_AUTO = 'La acción de tutela para la protección de';
+const MARCA_CUERPO_AUTO_TRAMITE = 'Asunto:';
+const MARCA_CUERPO_SENTENCIA = 'Proceso';
 
 /** Título + línea de ciudad/fecha (marcadores) cuando el editor solo guarda el cuerpo desde «En la fecha…». */
 function prefijoTituloYFechaInformeVariablesPlain(): string {
@@ -504,6 +574,19 @@ export function contenidoParaEditorPlantillas(
     }
     if (line1 && plain.trimStart().startsWith(line1)) {
       const idx = plain.indexOf(MARCA_CUERPO_AUTO);
+      if (idx >= 0) return plain.slice(idx).trim();
+    }
+    return plain;
+  }
+  if (tipo === 'auto_tramite' || tipo === 'sentencia') {
+    const marca = tipo === 'auto_tramite' ? MARCA_CUERPO_AUTO_TRAMITE : MARCA_CUERPO_SENTENCIA;
+    if (hasMembreteRichContent(m.membrete)) {
+      const idx = plain.indexOf(marca);
+      if (idx >= 0) return plain.slice(idx).trim();
+      return plain;
+    }
+    if (line1 && plain.trimStart().startsWith(line1)) {
+      const idx = plain.indexOf(marca);
       if (idx >= 0) return plain.slice(idx).trim();
     }
     return plain;
@@ -708,6 +791,158 @@ export function textoAutoAdmisorioBorrador(
   }
   plantilla = aplicarMarcadoresToggleEnTexto(plantilla, defs, st);
   return fin(sustituirMarcadores(plantilla, v));
+}
+
+function plantillaProvidenciaInterna(context: ProvidenciaDespachoContext, m: PlantillasStateV2): string {
+  return context === 'auto_tramite' ? plantillaAutoTramiteInterna(m) : plantillaSentenciaInterna(m);
+}
+
+function mapaContextoProvidencia(context: ProvidenciaDespachoContext): MapaVariablesPlantillaContext {
+  return context;
+}
+
+function finTextoProvidencia(context: ProvidenciaDespachoContext, s: string): string {
+  if (context === 'sentencia') return s;
+  return renumberJudicialDisponeNumerals(
+    stripAutoOptionalNumeralsFromPlainIfNoToggleMarkers(s, undefined, undefined),
+  );
+}
+
+/**
+ * Borrador de auto de trámite o sentencia (texto plano sustituido).
+ */
+export function textoProvidenciaDespachoBorrador(
+  caseItem: Case,
+  m: PlantillasStateV2,
+  context: ProvidenciaDespachoContext,
+  contenidoBaseOverride?: string | null,
+  opciones?: PlantillaBorradorOpciones,
+): string {
+  const plantillaContext = mapaContextoProvidencia(context);
+  const v = mapaVariablesDesdeCaso(caseItem, m.membrete, plantillaContext);
+  let base = contenidoBaseOverride;
+  if (opciones?.toggleDefs?.length) {
+    base = applyToggleFilterToContenidoBase(base, opciones.toggleDefs, opciones.toggleState) ?? base;
+  }
+  const desdeBd = contenidoBaseToPlainForSubstitution(base ?? undefined);
+  const defs = opciones?.toggleDefs;
+  const st = opciones?.toggleState;
+  const fin = (s: string) => finTextoProvidencia(context, s);
+
+  if (!desdeBd?.trim()) {
+    let out = plantillaProvidenciaInterna(context, m);
+    if (hasMembreteRichContent(m.membrete)) {
+      const bloque = bloqueVariablesAutoAdmisorioPlain(m).trim();
+      if (bloque) out = `${bloque}\n\n${out}`;
+    }
+    out = aplicarMarcadoresToggleEnTexto(out, defs, st);
+    return fin(sustituirMarcadores(out, v));
+  }
+  const trimmed = desdeBd.trim();
+  const line1 = m.membrete.auto.line1.trim();
+  let plantilla: string;
+  if (hasMembreteRichContent(m.membrete)) {
+    const bloque = bloqueVariablesAutoAdmisorioPlain(m).trim();
+    plantilla = bloque ? `${bloque}\n\n${trimmed}` : trimmed;
+  } else if (line1 && trimmed.startsWith(line1)) {
+    plantilla = trimmed;
+  } else {
+    plantilla = `${prefijoAutoAntesDelCuerpo(m)}\n${trimmed}`;
+  }
+  plantilla = aplicarMarcadoresToggleEnTexto(plantilla, defs, st);
+  return fin(sustituirMarcadores(plantilla, v));
+}
+
+export function textoAutoTramiteBorrador(
+  caseItem: Case,
+  m: PlantillasStateV2,
+  contenidoBaseOverride?: string | null,
+  opciones?: PlantillaBorradorOpciones,
+): string {
+  return textoProvidenciaDespachoBorrador(caseItem, m, 'auto_tramite', contenidoBaseOverride, opciones);
+}
+
+export function textoSentenciaBorrador(
+  caseItem: Case,
+  m: PlantillasStateV2,
+  contenidoBaseOverride?: string | null,
+  opciones?: PlantillaBorradorOpciones,
+): string {
+  return textoProvidenciaDespachoBorrador(caseItem, m, 'sentencia', contenidoBaseOverride, opciones);
+}
+
+export function textoProvidenciaDespachoBorradorTipTapDoc(
+  caseItem: Case,
+  m: PlantillasStateV2,
+  context: ProvidenciaDespachoContext,
+  contenidoBaseOverride?: string | null,
+  opciones?: PlantillaBorradorOpciones,
+): JSONContent | null {
+  let base = contenidoBaseOverride;
+  if (opciones?.toggleDefs?.length) {
+    base = applyToggleFilterToContenidoBase(base, opciones.toggleDefs, opciones.toggleState) ?? base;
+  }
+  const docFromBd = tryParseTipTapDocFromContenidoBase(base ?? undefined);
+  if (!docFromBd) return null;
+
+  const plainCheck = jsonDocToSubstitutionPlain(docFromBd).replace(/\n+$/, '').trim();
+  if (!plainCheck) return null;
+
+  const plantillaContext = mapaContextoProvidencia(context);
+  const v = mapaVariablesDesdeCaso(caseItem, m.membrete, plantillaContext);
+  const defs = opciones?.toggleDefs;
+  const st = opciones?.toggleState;
+
+  let merged: JSONContent = docFromBd;
+  if (hasMembreteRichContent(m.membrete)) {
+    const bloque = bloqueVariablesAutoAdmisorioPlain(m).trim();
+    if (bloque) {
+      const pref = plainTextToTiptapDoc(`${bloque}\n\n`);
+      merged = { type: 'doc', content: [...(pref.content ?? []), ...(docFromBd.content ?? [])] };
+    }
+  } else {
+    const line1 = m.membrete.auto.line1.trim();
+    if (line1 && plainCheck.startsWith(line1)) {
+      merged = docFromBd;
+    } else {
+      const pref = plainTextToTiptapDoc(prefijoAutoAntesDelCuerpo(m));
+      merged = { type: 'doc', content: [...(pref.content ?? []), ...(docFromBd.content ?? [])] };
+    }
+  }
+
+  let out = aplicarMarcadoresToggleEnTiptapDoc(merged, defs, st);
+  out = sustituirMarcadoresEnTiptapDoc(out, v);
+  return removeEmptyTextNodesFromTipTapDoc(out);
+}
+
+export function textoAutoTramiteBorradorTipTapDoc(
+  caseItem: Case,
+  m: PlantillasStateV2,
+  contenidoBaseOverride?: string | null,
+  opciones?: PlantillaBorradorOpciones,
+): JSONContent | null {
+  return textoProvidenciaDespachoBorradorTipTapDoc(
+    caseItem,
+    m,
+    'auto_tramite',
+    contenidoBaseOverride,
+    opciones,
+  );
+}
+
+export function textoSentenciaBorradorTipTapDoc(
+  caseItem: Case,
+  m: PlantillasStateV2,
+  contenidoBaseOverride?: string | null,
+  opciones?: PlantillaBorradorOpciones,
+): JSONContent | null {
+  return textoProvidenciaDespachoBorradorTipTapDoc(
+    caseItem,
+    m,
+    'sentencia',
+    contenidoBaseOverride,
+    opciones,
+  );
 }
 
 export function descargarTxt(nombreArchivo: string, contenido: string) {

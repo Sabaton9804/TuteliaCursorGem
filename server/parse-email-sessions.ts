@@ -13,6 +13,7 @@ export type ParseSessionRow = {
 
 export type ParseSession = {
   createdAt: number;
+  ownerUserId?: string;
   attachments: ParseSessionRow[];
 };
 
@@ -38,11 +39,12 @@ export function touchParseSession(sessionId: string): void {
   parseSessions.set(sessionId, { ...session, createdAt: Date.now() });
 }
 
-export function createParseSession(attachments: ParseSessionRow[]): string {
+export function createParseSession(attachments: ParseSessionRow[], ownerUserId?: string): string {
   sweepParseSessions();
   const parseSessionId = randomUUID();
   parseSessions.set(parseSessionId, {
     createdAt: Date.now(),
+    ownerUserId: ownerUserId?.trim() || undefined,
     attachments,
   });
   return parseSessionId;

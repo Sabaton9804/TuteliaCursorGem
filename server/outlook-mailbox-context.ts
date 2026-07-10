@@ -42,29 +42,10 @@ type OutlookConnectionExtended = OutlookConnectionRow & {
   active_mailbox_id?: string | null;
 };
 
-export async function userHasCourtAccess(
-  admin: SupabaseClient,
-  userId: string,
-  courtId: string
-): Promise<boolean> {
-  const { data: prof, error } = await admin
-    .from('profiles')
-    .select('court_id, is_superuser')
-    .eq('id', userId)
-    .maybeSingle();
-  if (error) throw error;
-  if (prof?.is_superuser) return true;
-
-  const { data: memb } = await admin
-    .from('profile_court_memberships')
-    .select('id')
-    .eq('profile_id', userId)
-    .eq('court_id', courtId)
-    .maybeSingle();
-  if (memb) return true;
-
-  return String(prof?.court_id || '') === courtId;
-}
+import {
+  userHasCourtAccess,
+  resolveDefaultCourtId,
+} from './court-access';
 
 async function loadCourtMailbox(
   admin: SupabaseClient,
@@ -104,27 +85,6 @@ async function courtHasConfiguredMailboxes(admin: SupabaseClient, courtId: strin
     .eq('is_active', true);
   if (error) throw error;
   return (count ?? 0) > 0;
-}
-
-async function resolveDefaultCourtId(admin: SupabaseClient, userId: string): Promise<string | null> {
-  const { data: defMem } = await admin
-    .from('profile_court_memberships')
-    .select('court_id')
-    .eq('profile_id', userId)
-    .eq('is_default', true)
-    .maybeSingle();
-  if (defMem?.court_id) return String(defMem.court_id);
-
-  const { data: anyMem } = await admin
-    .from('profile_court_memberships')
-    .select('court_id')
-    .eq('profile_id', userId)
-    .limit(1)
-    .maybeSingle();
-  if (anyMem?.court_id) return String(anyMem.court_id);
-
-  const { data: prof } = await admin.from('profiles').select('court_id').eq('id', userId).maybeSingle();
-  return prof?.court_id ? String(prof.court_id) : null;
 }
 
 function parseMailboxIdFromRequest(req: Request): string | undefined {

@@ -6,7 +6,7 @@ import {
   STAGE_LABEL_ES,
   type CaseStageCode,
 } from './case-workflow-stages';
-import { filterToEnabledCourtProcesses, isMvpRadicableCaseType } from './process-product-scope';
+import { filterToEnabledCourtProcesses, isRadicableCaseType } from './process-product-scope';
 import { caseTermBusinessDaysFromDecreto2591 } from './decreto-2591-plazos';
 
 export type LoadedProcessDefinition = ProcessDefinitionRow & {
@@ -199,7 +199,7 @@ export async function fetchEnabledProcessDefinitions(courtId: string): Promise<L
 }
 
 export async function resolveProcessDefinitionId(caseType: CaseType, courtId: string): Promise<string | null> {
-  if (!isMvpRadicableCaseType(caseType)) return null;
+  if (!isRadicableCaseType(caseType)) return null;
   const cached = getCachedProcessDefinitionByCaseType(caseType);
   if (cached?.id && cachedCourtId === courtId) return cached.id;
 

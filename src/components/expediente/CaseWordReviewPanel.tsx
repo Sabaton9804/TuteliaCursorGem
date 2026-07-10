@@ -16,7 +16,7 @@ import {
   insertWordReviewSustanciadorNotifications,
   type WordReviewSustanciadorNotifyCaseContext,
 } from '../../lib/word-review-notifications';
-import { applyStageTransitionJudgeApprovedBorrador } from '../../lib/case-stages-service';
+import { applyStageTransitionFalloPdfFirmado, applyStageTransitionJudgeApprovedBorrador } from '../../lib/case-stages-service';
 import { docToStorage, parseStorageToDoc } from '../../lib/tiptap-template-storage';
 import { ensureTipTapDocJSON, isTipTapDocSubstantivelyEmpty } from '../../lib/docx-to-tiptap-review-seed';
 import type { JSONContent } from '@tiptap/core';
@@ -760,6 +760,26 @@ export function CaseWordReviewPanel({
                               signedPdfDocumentId: pdfPick,
                               status: 'cerrado_con_pdf_firmado',
                             });
+                            if (courtId && caseItem?.id) {
+                              const wordDoc = docs.find((d) => d.id === r.wordDocumentId);
+                              const isFalloOSentencia =
+                                wordDoc?.type === 'borrador_sentencia_revision' ||
+                                (wordDoc?.type?.includes('fallo') && wordDoc?.type?.includes('revision'));
+                              if (isFalloOSentencia) {
+                                try {
+                                  await applyStageTransitionFalloPdfFirmado(supabase, {
+                                    caseId,
+                                    courtId,
+                                    radicado: caseItem.radicado,
+                                    caseType: caseItem.caseType ?? 'tutela_primera',
+                                    caseAssignedTo: caseItem.assignedTo,
+                                  });
+                                } catch (se) {
+                                  console.error('Cambio de etapa fallo PDF firmado:', se);
+                                }
+                                await onRefetchCase?.();
+                              }
+                            }
                             setDraftPdf((s) => ({ ...s, [r.id]: '' }));
                             await refreshAll();
                           } catch (e) {

@@ -10,11 +10,11 @@ import { buildExpedienteViewRow } from '../lib/expedientes-view-model';
 import { assignedToMatchesProfile } from '../lib/court-staff-assignees';
 import { intentFreshNewCaseFromMenu } from '../lib/new-case-nav';
 import { useCourtOperational } from '../contexts/CourtOperationalContext';
-import {
-  parseTutelasListFilter,
+import { parseTutelasListFilter,
   tutelasListPageTitle,
   type TutelasListFilter,
 } from '../lib/tutelas-nav';
+import { isTutelaListRow } from '../lib/case-process-scope';
 import {
   courtCasesQueryKey,
   fetchCourtCasesForList,
@@ -182,6 +182,7 @@ export default function CasesList() {
     const q = searchTerm.trim().toLowerCase();
     const qDigits = normalizeRadicadoQuery(searchTerm);
     return cases.filter((c) => {
+      if (!isTutelaListRow(c)) return false;
       if (tutelasFilter.kind === 'tipo') {
         const ct = c.caseType ?? 'tutela_primera';
         if (ct !== tutelasFilter.tipo) return false;

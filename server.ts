@@ -31,6 +31,7 @@ import { registerSgdeRoutes } from './server/sgde-routes';
 import { registerPlatformRoutes } from './server/platform-routes';
 import { createLoggedInSgdeClientForUser, sgdePlatformState } from './server/sgde-integration';
 import { isSgdeTlsInsecure } from './server/sgde-tls';
+import { requireCaseAccess, requireCourtAccess, userHasCourtAccess } from './server/court-access';
 import { requireAuthenticatedCaller } from './server/outlook-auth';
 import {
   aggregateChunkMatches,
@@ -260,6 +261,7 @@ type SgdeCaseRow = {
   sgde_id: string | null;
 };
 
+/** @deprecated Usar requireCaseAccess desde court-access.ts */
 async function requireCaseAccessForCaller(
   req: express.Request,
   caseId: string
@@ -267,55 +269,23 @@ async function requireCaseAccessForCaller(
   | { ok: true; admin: SupabaseClient; caseRow: SgdeCaseRow }
   | { ok: false; status: number; message: string }
 > {
-  const authHdr = String(req.headers.authorization || '');
-  const m = /^Bearer\s+(.+)$/i.exec(authHdr);
-  const token = m?.[1]?.trim();
-  if (!token) {
-    return { ok: false, status: 401, message: 'Se requiere sesión (Authorization: Bearer).' };
-  }
-  let admin: SupabaseClient;
-  try {
-    admin = getSupabaseAdmin();
-  } catch (e) {
-    return { ok: false, status: 503, message: String((e as Error)?.message || 'Supabase no configurado en servidor.') };
-  }
-  const { data: authData, error: authErr } = await admin.auth.getUser(token);
-  if (authErr || !authData?.user?.id) {
-    return { ok: false, status: 401, message: 'Sesión inválida o expirada.' };
-  }
-  const uid = authData.user.id;
-  const { data: prof, error: profErr } = await admin
-    .from('profiles')
-    .select('court_id')
-    .eq('id', uid)
-    .maybeSingle();
-  if (profErr || !prof?.court_id) {
-    return { ok: false, status: 403, message: 'Perfil sin despacho asignado.' };
-  }
-  const profileCourt = String(prof.court_id);
-  const { data: row, error: caseErr } = await admin
-    .from('cases')
-    .select('id, court_id, radicado, sgde_id')
-    .eq('id', caseId)
-    .maybeSingle();
-  if (caseErr || !row?.id) {
-    return { ok: false, status: 404, message: 'Expediente no encontrado.' };
-  }
-  if (String(row.court_id) !== profileCourt) {
-    return { ok: false, status: 403, message: 'No autorizado para este expediente.' };
-  }
-  return {
-    ok: true,
-    admin,
-    caseRow: {
-      id: String(row.id),
-      court_id: String(row.court_id),
-      radicado: row.radicado != null ? String(row.radicado) : null,
-      sgde_id: row.sgde_id != null ? String(row.sgde_id) : null,
-    },
-  };
+  const acc = await requireCaseAccess(req, getSupabaseAdmin, caseId);
+  if (acc.ok === false) return acc;
+  return { ok: true, admin: acc.admin, caseRow: acc.caseRow };
 }
 
+/** @deprecated Usar requireCourtAccess desde court-access.ts */
+async function requireCallerCourtAccess(
+  req: express.Request,
+  courtIdParam: string
+): Promise<
+  | { ok: true; admin: SupabaseClient; courtId: string }
+  | { ok: false; status: number; message: string }
+> {
+  const acc = await requireCourtAccess(req, getSupabaseAdmin, courtIdParam);
+  if (acc.ok === false) return acc;
+  return { ok: true, admin: acc.admin, courtId: acc.courtId };
+}
 
 const CASE_DOCUMENTS_BUCKET = 'case-documents';
 const PRECEDENT_PDF_SIGNED_URL_TTL_SEC = 3600;
@@ -426,45 +396,6 @@ function resolveIssuerCategoryForPrecedent(
   return 'otro';
 }
 
-async function requireCallerCourtAccess(
-  req: express.Request,
-  courtIdParam: string
-): Promise<
-  | { ok: true; admin: SupabaseClient; courtId: string }
-  | { ok: false; status: number; message: string }
-> {
-  const authHdr = String(req.headers.authorization || '');
-  const m = /^Bearer\s+(.+)$/i.exec(authHdr);
-  const token = m?.[1]?.trim();
-  if (!token) {
-    return { ok: false, status: 401, message: 'Se requiere sesión (Authorization: Bearer).' };
-  }
-  let admin: SupabaseClient;
-  try {
-    admin = getSupabaseAdmin();
-  } catch (e) {
-    return { ok: false, status: 503, message: String((e as Error)?.message || 'Supabase no configurado en servidor.') };
-  }
-  const { data: authData, error: authErr } = await admin.auth.getUser(token);
-  if (authErr || !authData?.user?.id) {
-    return { ok: false, status: 401, message: 'Sesión inválida o expirada.' };
-  }
-  const uid = authData.user.id;
-  const { data: prof, error: profErr } = await admin
-    .from('profiles')
-    .select('court_id')
-    .eq('id', uid)
-    .maybeSingle();
-  if (profErr || !prof?.court_id) {
-    return { ok: false, status: 403, message: 'Perfil sin despacho asignado.' };
-  }
-  const profileCourt = String(prof.court_id);
-  if (courtIdParam !== profileCourt) {
-    return { ok: false, status: 403, message: 'No autorizado para este despacho.' };
-  }
-  return { ok: true, admin, courtId: profileCourt };
-}
-
 async function requirePrecedentCourtAccessForCaller(
   req: express.Request,
   precedentId: string
@@ -472,33 +403,11 @@ async function requirePrecedentCourtAccessForCaller(
   | { ok: true; admin: SupabaseClient; courtId: string; precedent: Record<string, unknown> }
   | { ok: false; status: number; message: string }
 > {
-  const authHdr = String(req.headers.authorization || '');
-  const m = /^Bearer\s+(.+)$/i.exec(authHdr);
-  const token = m?.[1]?.trim();
-  if (!token) {
-    return { ok: false, status: 401, message: 'Se requiere sesión (Authorization: Bearer).' };
+  const auth = await requireAuthenticatedCaller(req, getSupabaseAdmin);
+  if (auth.ok === false) {
+    return { ok: false, status: auth.status, message: auth.message };
   }
-  let admin: SupabaseClient;
-  try {
-    admin = getSupabaseAdmin();
-  } catch (e) {
-    return { ok: false, status: 503, message: String((e as Error)?.message || 'Supabase no configurado en servidor.') };
-  }
-  const { data: authData, error: authErr } = await admin.auth.getUser(token);
-  if (authErr || !authData?.user?.id) {
-    return { ok: false, status: 401, message: 'Sesión inválida o expirada.' };
-  }
-  const uid = authData.user.id;
-  const { data: prof, error: profErr } = await admin
-    .from('profiles')
-    .select('court_id')
-    .eq('id', uid)
-    .maybeSingle();
-  if (profErr || !prof?.court_id) {
-    return { ok: false, status: 403, message: 'Perfil sin despacho asignado.' };
-  }
-  const profileCourt = String(prof.court_id);
-  const { data: prec, error: precErr } = await admin
+  const { data: prec, error: precErr } = await auth.admin
     .from('precedents')
     .select(PRECEDENT_ROW_SELECT)
     .eq('id', precedentId)
@@ -506,10 +415,12 @@ async function requirePrecedentCourtAccessForCaller(
   if (precErr || !prec?.id) {
     return { ok: false, status: 404, message: 'Precedente no encontrado.' };
   }
-  if (String(prec.court_id) !== profileCourt) {
+  const courtId = String(prec.court_id);
+  const allowed = await userHasCourtAccess(auth.admin, auth.userId, courtId);
+  if (!allowed) {
     return { ok: false, status: 403, message: 'No autorizado para este precedente.' };
   }
-  return { ok: true, admin, courtId: profileCourt, precedent: prec as Record<string, unknown> };
+  return { ok: true, admin: auth.admin, courtId, precedent: prec as Record<string, unknown> };
 }
 
 async function requirePrecedentAccessForCaller(
@@ -1003,6 +914,11 @@ const handlePrecedentsIndexFromFile: express.RequestHandler = async (req, res) =
       return res.status(400).json({ error: 'courtId es requerido' });
     }
 
+    const acc = await requireCallerCourtAccess(req, courtId);
+    if (acc.ok === false) {
+      return res.status(acc.status).json({ error: acc.message });
+    }
+
     const multerReq = req as Express.Request & {
       file?: { buffer: Buffer; originalname?: string; mimetype?: string };
     };
@@ -1316,8 +1232,12 @@ async function startServer() {
     }
   });
 
-  app.get('/api/parse-session/:sessionId/attachment/:index', (req, res) => {
+  app.get('/api/parse-session/:sessionId/attachment/:index', async (req, res) => {
     sweepParseSessions();
+    const authHdr = await requireAuthenticatedCaller(req, getSupabaseAdmin);
+    if (authHdr.ok === false) {
+      return res.status(authHdr.status).json({ error: authHdr.message });
+    }
     const sessionId = String(req.params.sessionId || '');
     const i = parseInt(String(req.params.index), 10);
     if (!sessionId || Number.isNaN(i) || i < 0) {
@@ -1329,6 +1249,9 @@ async function startServer() {
         error:
           'Sesión de parseo expirada o inexistente (p. ej. reinicio del servidor). Vuelva a cargar el archivo .eml.',
       });
+    }
+    if (session.ownerUserId && session.ownerUserId !== authHdr.userId) {
+      return res.status(403).json({ error: 'No autorizado para esta sesión de parseo.' });
     }
     touchParseSession(sessionId);
     const row =
@@ -1345,6 +1268,10 @@ async function startServer() {
   // Handle EML/MSG upload and parsing
   app.post('/api/parse-email', upload.single('email'), async (req, res) => {
     console.log('Received request for /api/parse-email');
+    const authHdr = await requireAuthenticatedCaller(req, getSupabaseAdmin);
+    if (authHdr.ok === false) {
+      return res.status(authHdr.status).json({ error: authHdr.message });
+    }
     const multerReq = req as any;
     console.log('File details:', multerReq.file ? {
       originalname: multerReq.file.originalname,
@@ -1357,7 +1284,7 @@ async function startServer() {
         return res.status(400).json({ error: 'No file uploaded' });
       }
 
-      const result = await parseJudicialEmailFromBuffer(multerReq.file.buffer);
+      const result = await parseJudicialEmailFromBuffer(multerReq.file.buffer, authHdr.userId);
       const text = typeof result.text === 'string' ? result.text : '';
       const html = typeof result.html === 'string' ? result.html : '';
       let pdfDigest = '';
@@ -1399,6 +1326,10 @@ async function startServer() {
 
   app.post('/api/ai/summarize', async (req, res) => {
     try {
+      const authHdr = await requireAuthenticatedCaller(req, getSupabaseAdmin);
+      if (authHdr.ok === false) {
+        return res.status(authHdr.status).json({ error: authHdr.message });
+      }
       const body = req.body || {};
       const claim = String(body.claim || '');
       const rawText = typeof body.rawText === 'string' ? body.rawText : '';
@@ -1528,6 +1459,10 @@ async function startServer() {
 
   app.post('/api/ai/review-text', async (req, res) => {
     try {
+      const authHdr = await requireAuthenticatedCaller(req, getSupabaseAdmin);
+      if (authHdr.ok === false) {
+        return res.status(authHdr.status).json({ error: authHdr.message });
+      }
       const body = (req.body ?? {}) as { text?: string; documentLabel?: string };
       const text = String(body.text || '').trim();
       if (!text) {
@@ -1560,6 +1495,10 @@ async function startServer() {
 
   app.post('/api/ai/legal-analysis', async (req, res) => {
     try {
+      const authHdr = await requireAuthenticatedCaller(req, getSupabaseAdmin);
+      if (authHdr.ok === false) {
+        return res.status(authHdr.status).json({ error: authHdr.message });
+      }
       const { prompt, pdfBase64 } = req.body || {};
       if (!prompt || !pdfBase64) {
         return res.status(400).json({ error: 'prompt y pdfBase64 son requeridos' });
@@ -1661,6 +1600,10 @@ Instrucciones obligatorias para los campos de texto:
       if (!courtId || !radicado) {
         return res.status(400).json({ error: 'courtId y radicado son requeridos' });
       }
+      const acc = await requireCallerCourtAccess(req, courtId);
+      if (acc.ok === false) {
+        return res.status(acc.status).json({ error: acc.message });
+      }
       if (sourceType === 'jurisprudencia' && !sourceCorporation) {
         return res.status(400).json({ error: 'sourceCorporation es requerido para jurisprudencia de referencia' });
       }
@@ -1757,6 +1700,11 @@ Instrucciones obligatorias para los campos de texto:
       }
       if (!queryText.trim()) {
         return res.json({ results: [] });
+      }
+
+      const acc = await requireCallerCourtAccess(req, courtId);
+      if (acc.ok === false) {
+        return res.status(acc.status).json({ error: acc.message });
       }
 
       const openai = getOpenAiClient();
@@ -1942,6 +1890,13 @@ Instrucciones obligatorias para los campos de texto:
   /** Rutas plantilla-docx en Router montado (evita conflictos con el 404 genérico `/api` en Express 4). */
   type UploadedDocx = { buffer: Buffer; originalname?: string };
   const plantillaDocxRouter = express.Router();
+  plantillaDocxRouter.use(async (req, res, next) => {
+    const authHdr = await requireAuthenticatedCaller(req, getSupabaseAdmin);
+    if (authHdr.ok === false) {
+      return res.status(authHdr.status).json({ error: authHdr.message });
+    }
+    next();
+  });
   plantillaDocxRouter.post('/analizar', upload.single('archivo'), async (req, res) => {
     try {
       const multerReq = req as Express.Request & { file?: UploadedDocx };
@@ -1950,6 +1905,8 @@ Instrucciones obligatorias para los campos de texto:
       const tipo: DocumentTemplateTipo =
         tipoRaw === 'informe_ingreso' ||
         tipoRaw === 'auto_admisorio' ||
+        tipoRaw === 'auto_tramite' ||
+        tipoRaw === 'sentencia' ||
         tipoRaw === 'notificacion_admisorio' ||
         tipoRaw === 'notificacion_fallo' ||
         tipoRaw === 'oficio_juzgado' ||
@@ -2021,9 +1978,10 @@ Instrucciones obligatorias para los campos de texto:
       });
     }
     console.error('API Error:', err);
+    const isProd = process.env.NODE_ENV === 'production';
     res.status(err.status || 500).json({
       error: err.message || 'Internal Server Error',
-      details: err.stack
+      ...(isProd ? {} : { details: err.stack }),
     });
   });
 

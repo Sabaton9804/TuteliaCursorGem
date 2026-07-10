@@ -7,6 +7,8 @@ import {
   uploadOrderPriority,
 } from './sgde-tutela-metadata';
 import { CASE_DOCUMENTS_BUCKET, sanitizeCaseDocumentLogicalName } from './case-document-storage';
+import { isSgdeAutoCreateCaseType } from '../src/lib/sgde-case-scope.ts';
+import type { CaseType } from '../src/types.ts';
 
 export type CreateExpedienteInSgdeResult = {
   ok: boolean;
@@ -69,8 +71,8 @@ export async function createExpedienteInSgde(opts: {
   }
   const c = caseRow as CaseRow;
   const caseType = String(c.case_type || 'tutela_primera');
-  if (caseType !== 'tutela_primera') {
-    throw new Error('La creación automática en SGDE solo aplica a tutela de primera instancia.');
+  if (!isSgdeAutoCreateCaseType(caseType as CaseType)) {
+    throw new Error('La creación automática en SGDE no aplica a este tipo de expediente.');
   }
 
   const radicado23 = String(c.radicado || '').replace(/\D/g, '').slice(0, 23);

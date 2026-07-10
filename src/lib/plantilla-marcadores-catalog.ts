@@ -272,7 +272,11 @@ export function marcadoresParaPlantilla(tipo: DocumentTemplateTipo): MarcadorCat
   if (tipo === 'libre') {
     return ordenarMarcadores(MARCADORES_CATALOGO);
   }
-  return ordenarMarcadores(MARCADORES_CATALOGO.filter((m) => !m.soloTipo || m.soloTipo === tipo));
+  const tipoMarcadores =
+    tipo === 'auto_tramite' || tipo === 'sentencia' ? 'auto_admisorio' : tipo;
+  return ordenarMarcadores(
+    MARCADORES_CATALOGO.filter((m) => !m.soloTipo || m.soloTipo === tipoMarcadores),
+  );
 }
 
 /** Para las listas colapsables en la página Plantillas (compatibilidad). */

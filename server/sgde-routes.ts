@@ -1,6 +1,7 @@
 import type { Express, Request } from 'express';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { requireAuthenticatedCaller } from './outlook-auth';
+import { assertCaseCourtAccess, resolveDefaultCourtId, userHasCourtAccess } from './court-access';
 import { sgdePlatformState } from './sgde-integration';
 import { getLoggedInSgdeClientForUser, invalidateSgdeSession } from './sgde-session-cache';
 import {
@@ -231,13 +232,9 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
       return res.status(404).json({ error: 'Expediente no encontrado.' });
     }
 
-    const { data: prof } = await sess.auth.admin
-      .from('profiles')
-      .select('court_id')
-      .eq('id', sess.auth.userId)
-      .maybeSingle();
-    if (!prof?.court_id || String(prof.court_id) !== String(caseRow.court_id)) {
-      return res.status(403).json({ error: 'No autorizado para este expediente.' });
+    const denied = await assertCaseCourtAccess(sess.auth.admin, sess.auth.userId, String(caseRow.court_id));
+    if (denied) {
+      return res.status(403).json({ error: denied });
     }
 
     try {
@@ -284,11 +281,18 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
 
     const { data: prof, error: profErr } = await sess.auth.admin
       .from('profiles')
-      .select('court_id, name')
+      .select('name')
       .eq('id', sess.auth.userId)
       .maybeSingle();
-    if (profErr || !prof?.court_id) {
-      return res.status(403).json({ error: 'Perfil sin despacho asignado.' });
+    if (profErr) {
+      return res.status(403).json({ error: 'Perfil no encontrado.' });
+    }
+
+    const bodyCourtId = String((body as { courtId?: string }).courtId || '').trim();
+    const courtId =
+      bodyCourtId || (await resolveDefaultCourtId(sess.auth.admin, sess.auth.userId));
+    if (!courtId || !(await userHasCourtAccess(sess.auth.admin, sess.auth.userId, courtId))) {
+      return res.status(403).json({ error: 'No autorizado para este despacho.' });
     }
 
     const appellantRaw = String(body.appellant || '').trim();
@@ -299,8 +303,8 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
         client: sess.client,
         admin: sess.auth.admin,
         userId: sess.auth.userId,
-        userName: String(prof.name || '').trim() || undefined,
-        courtId: String(prof.court_id),
+        userName: String(prof?.name || '').trim() || undefined,
+        courtId: String(courtId),
         caseType,
         radicadoRaw: radicado,
         sgdeNodeIdHint: String(body.sgdeNodeIdHint || '').trim() || null,
@@ -351,13 +355,9 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
       return res.status(404).json({ error: 'Expediente no encontrado.' });
     }
 
-    const { data: prof } = await sess.auth.admin
-      .from('profiles')
-      .select('court_id')
-      .eq('id', sess.auth.userId)
-      .maybeSingle();
-    if (!prof?.court_id || String(prof.court_id) !== String(caseRow.court_id)) {
-      return res.status(403).json({ error: 'No autorizado para este expediente.' });
+    const denied = await assertCaseCourtAccess(sess.auth.admin, sess.auth.userId, String(caseRow.court_id));
+    if (denied) {
+      return res.status(403).json({ error: denied });
     }
 
     try {
@@ -414,13 +414,9 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
       return res.status(404).json({ error: 'Expediente no encontrado.' });
     }
 
-    const { data: prof } = await sess.auth.admin
-      .from('profiles')
-      .select('court_id')
-      .eq('id', sess.auth.userId)
-      .maybeSingle();
-    if (!prof?.court_id || String(prof.court_id) !== String(caseRow.court_id)) {
-      return res.status(403).json({ error: 'No autorizado para este expediente.' });
+    const denied = await assertCaseCourtAccess(sess.auth.admin, sess.auth.userId, String(caseRow.court_id));
+    if (denied) {
+      return res.status(403).json({ error: denied });
     }
 
     const syncNow = new Date().toISOString();
@@ -474,13 +470,9 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
       return res.status(404).json({ error: 'Expediente no encontrado.' });
     }
 
-    const { data: prof } = await sess.auth.admin
-      .from('profiles')
-      .select('court_id')
-      .eq('id', sess.auth.userId)
-      .maybeSingle();
-    if (!prof?.court_id || String(prof.court_id) !== String(caseRow.court_id)) {
-      return res.status(403).json({ error: 'No autorizado para este expediente.' });
+    const denied = await assertCaseCourtAccess(sess.auth.admin, sess.auth.userId, String(caseRow.court_id));
+    if (denied) {
+      return res.status(403).json({ error: denied });
     }
 
     const syncNow = new Date().toISOString();
@@ -526,13 +518,9 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
       return res.status(404).json({ error: 'Expediente no encontrado.' });
     }
 
-    const { data: prof } = await sess.auth.admin
-      .from('profiles')
-      .select('court_id')
-      .eq('id', sess.auth.userId)
-      .maybeSingle();
-    if (!prof?.court_id || String(prof.court_id) !== String(caseRow.court_id)) {
-      return res.status(403).json({ error: 'No autorizado para este expediente.' });
+    const denied = await assertCaseCourtAccess(sess.auth.admin, sess.auth.userId, String(caseRow.court_id));
+    if (denied) {
+      return res.status(403).json({ error: denied });
     }
 
     const radicado23 = String(caseRow.radicado || '').replace(/\D/g, '').slice(0, 23);
@@ -598,13 +586,9 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
       return res.status(404).json({ error: 'Expediente no encontrado.' });
     }
 
-    const { data: prof } = await auth.admin
-      .from('profiles')
-      .select('court_id')
-      .eq('id', auth.userId)
-      .maybeSingle();
-    if (!prof?.court_id || String(prof.court_id) !== String(caseRow.court_id)) {
-      return res.status(403).json({ error: 'No autorizado para este expediente.' });
+    const denied = await assertCaseCourtAccess(auth.admin, auth.userId, String(caseRow.court_id));
+    if (denied) {
+      return res.status(403).json({ error: denied });
     }
 
     let sgdeClient: import('./sgde-client').SgdeClient | null = null;
@@ -664,13 +648,9 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
       return res.status(404).json({ error: 'Expediente no encontrado.' });
     }
 
-    const { data: prof } = await sess.auth.admin
-      .from('profiles')
-      .select('court_id')
-      .eq('id', sess.auth.userId)
-      .maybeSingle();
-    if (!prof?.court_id || String(prof.court_id) !== String(caseRow.court_id)) {
-      return res.status(403).json({ error: 'No autorizado para este expediente.' });
+    const denied = await assertCaseCourtAccess(sess.auth.admin, sess.auth.userId, String(caseRow.court_id));
+    if (denied) {
+      return res.status(403).json({ error: denied });
     }
 
     try {

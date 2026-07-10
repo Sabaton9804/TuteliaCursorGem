@@ -103,7 +103,7 @@ export default function Shell({ children }: ShellProps) {
             id: raw.id,
             email: raw.email || '',
             name: mapped.displayName,
-            role: 'admin',
+            role: 'clerk',
             courtId: DEFAULT_DEMO_COURT_ID,
           };
           await supabase.from('profiles').upsert(
@@ -297,7 +297,7 @@ export default function Shell({ children }: ShellProps) {
             id: su.id,
             email: su.email || email,
             name: mockUser.displayName,
-            role: 'admin',
+            role: 'clerk',
             courtId: DEFAULT_DEMO_COURT_ID,
           };
           const { error: profileErr } = await supabase.from('profiles').upsert(

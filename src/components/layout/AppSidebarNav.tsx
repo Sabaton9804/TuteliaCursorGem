@@ -1,26 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import type { LucideIcon } from 'lucide-react';
-import {
-  Gavel,
-  LayoutDashboard,
-  PlusCircle,
-  Scale,
-  Settings,
-  Search,
-  FileStack,
-  Users,
-  BarChart3,
-  ListTodo,
-  BookOpen,
-  Mail,
-  ClipboardList,
-  Reply,
-  ChevronDown,
-  Building2,
-} from 'lucide-react';
+import { Gavel, ChevronDown, Building2, Scale } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
+import { useSessionCourt } from '../../contexts/SessionCourtContext';
 import { intentFreshNewCaseFromMenu } from '../../lib/new-case-nav';
+import { navLinksForRole, hasRoleCapability } from '../../lib/role-capabilities';
 import {
   TUTELAS_SUBMENU,
   isTutelasRouteActive,
@@ -32,28 +16,6 @@ import {
   isProcesosRouteActive,
   isProcesosSubItemActive,
 } from '../../lib/procesos-nav';
-
-type NavLinkItem = {
-  name: string;
-  path: string;
-  icon: LucideIcon;
-};
-
-const NAV_LINKS: NavLinkItem[] = [
-  { name: 'Dashboard', path: '/', icon: LayoutDashboard },
-  { name: 'Radicación', path: '/new', icon: PlusCircle },
-  { name: 'Centro de trabajo', path: '/tasks', icon: ListTodo },
-  { name: 'Tablero sustanciador', path: '/sustanciador', icon: Scale },
-  { name: 'Estadísticas', path: '/estadisticas', icon: BarChart3 },
-  { name: 'Biblioteca de precedentes', path: '/biblioteca-precedentes', icon: BookOpen },
-  { name: 'Plantillas', path: '/plantillas', icon: FileStack },
-  { name: 'Equipo de trabajo', path: '/equipo', icon: Users },
-  { name: 'Correo', path: '/correo', icon: Mail },
-  { name: 'Contestaciones', path: '/correo/contestaciones', icon: Reply },
-  { name: 'Pendientes correo', path: '/correo/pendientes', icon: ClipboardList },
-  { name: 'Sincronización SGDE', path: '/sgde', icon: Search },
-  { name: 'Configuración', path: '/settings', icon: Settings },
-];
 
 type Props = {
   sidebarCollapsed: boolean;
@@ -69,6 +31,12 @@ function linkIsActive(pathname: string, path: string): boolean {
 export function AppSidebarNav({ sidebarCollapsed, urgentWorkflowCount, onNavigate }: Props) {
   const location = useLocation();
   const { canAccessPlatformConsole } = useTenant();
+  const { profile } = useSessionCourt();
+  const role = profile?.role ?? null;
+  const navLinks = useMemo(() => navLinksForRole(role), [role]);
+  const showTutelasNav = hasRoleCapability(role, 'ver_expediente');
+  const showProcesosNav = hasRoleCapability(role, 'ver_expediente');
+
   const [tutelasOpen, setTutelasOpen] = useState(() =>
     isTutelasRouteActive(location.pathname, location.search)
   );
@@ -119,95 +87,101 @@ export function AppSidebarNav({ sidebarCollapsed, urgentWorkflowCount, onNavigat
       </span>
     ) : null;
 
-  const renderProcesosGroup = () => (
-    <div key="procesos-group" className="space-y-0.5">
-      {sidebarCollapsed ? (
-        <Link
-          to="/procesos/civiles"
-          title="Procesos"
-          onClick={onNavigate}
-          className={linkClass(procesosGroupActive, true)}
-        >
-          <Scale className="w-4 h-4 shrink-0" />
-        </Link>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setProcesosOpen((o) => !o)}
-          className={`${linkClass(procesosGroupActive, false)} w-full`}
-          aria-expanded={procesosOpen}
-          aria-controls="nav-procesos-children"
-        >
-          <Scale className="w-4 h-4 shrink-0" />
-          Procesos
-          <ChevronDown
-            className={`ml-auto w-4 h-4 shrink-0 transition-transform ${procesosOpen ? 'rotate-180' : ''}`}
-            aria-hidden
-          />
-        </button>
-      )}
-      {showProcesosChildren ? (
-        <div id="nav-procesos-children" className="space-y-0.5 pb-1">
-          {PROCESOS_SUBMENU.map((sub) => {
-            const subActive = isProcesosSubItemActive(location.pathname, sub.path, location.search);
-            return (
-              <Link key={sub.label} to={sub.path} onClick={onNavigate} className={subLinkClass(subActive)}>
-                <span className="truncate">{sub.label}</span>
-              </Link>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
+  const renderProcesosGroup = () => {
+    if (!showProcesosNav) return null;
+    return (
+      <div key="procesos-group" className="space-y-0.5">
+        {sidebarCollapsed ? (
+          <Link
+            to="/procesos/civiles"
+            title="Procesos"
+            onClick={onNavigate}
+            className={linkClass(procesosGroupActive, true)}
+          >
+            <Scale className="w-4 h-4 shrink-0" />
+          </Link>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setProcesosOpen((o) => !o)}
+            className={`${linkClass(procesosGroupActive, false)} w-full`}
+            aria-expanded={procesosOpen}
+            aria-controls="nav-procesos-children"
+          >
+            <Scale className="w-4 h-4 shrink-0" />
+            Procesos
+            <ChevronDown
+              className={`ml-auto w-4 h-4 shrink-0 transition-transform ${procesosOpen ? 'rotate-180' : ''}`}
+              aria-hidden
+            />
+          </button>
+        )}
+        {showProcesosChildren ? (
+          <div id="nav-procesos-children" className="space-y-0.5 pb-1">
+            {PROCESOS_SUBMENU.map((sub) => {
+              const subActive = isProcesosSubItemActive(location.pathname, sub.path, location.search);
+              return (
+                <Link key={sub.label} to={sub.path} onClick={onNavigate} className={subLinkClass(subActive)}>
+                  <span className="truncate">{sub.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
 
-  const renderTutelasGroup = () => (
-    <div key="tutelas-group" className="space-y-0.5">
-      {sidebarCollapsed ? (
-        <Link
-          to={tutelasListHref({ kind: 'tipo', tipo: 'tutela_primera' })}
-          title="Tutelas"
-          onClick={onNavigate}
-          className={linkClass(tutelasGroupActive, true)}
-        >
-          <Gavel className="w-4 h-4 shrink-0" />
-        </Link>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setTutelasOpen((o) => !o)}
-          className={`${linkClass(tutelasGroupActive, false)} w-full`}
-          aria-expanded={tutelasOpen}
-          aria-controls="nav-tutelas-children"
-        >
-          <Gavel className="w-4 h-4 shrink-0" />
-          Tutelas
-          <ChevronDown
-            className={`ml-auto w-4 h-4 shrink-0 transition-transform ${tutelasOpen ? 'rotate-180' : ''}`}
-            aria-hidden
-          />
-        </button>
-      )}
-      {showTutelasChildren ? (
-        <div id="nav-tutelas-children" className="space-y-0.5 pb-1">
-          {TUTELAS_SUBMENU.map((sub) => {
-            const href = tutelasListHref(sub.filter);
-            const subActive = isTutelasSubItemActive(location.pathname, location.search, sub.filter);
-            return (
-              <Link key={sub.label} to={href} onClick={onNavigate} className={subLinkClass(subActive)}>
-                <span className="truncate">{sub.label}</span>
-              </Link>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
+  const renderTutelasGroup = () => {
+    if (!showTutelasNav) return null;
+    return (
+      <div key="tutelas-group" className="space-y-0.5">
+        {sidebarCollapsed ? (
+          <Link
+            to={tutelasListHref({ kind: 'tipo', tipo: 'tutela_primera' })}
+            title="Tutelas"
+            onClick={onNavigate}
+            className={linkClass(tutelasGroupActive, true)}
+          >
+            <Gavel className="w-4 h-4 shrink-0" />
+          </Link>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setTutelasOpen((o) => !o)}
+            className={`${linkClass(tutelasGroupActive, false)} w-full`}
+            aria-expanded={tutelasOpen}
+            aria-controls="nav-tutelas-children"
+          >
+            <Gavel className="w-4 h-4 shrink-0" />
+            Tutelas
+            <ChevronDown
+              className={`ml-auto w-4 h-4 shrink-0 transition-transform ${tutelasOpen ? 'rotate-180' : ''}`}
+              aria-hidden
+            />
+          </button>
+        )}
+        {showTutelasChildren ? (
+          <div id="nav-tutelas-children" className="space-y-0.5 pb-1">
+            {TUTELAS_SUBMENU.map((sub) => {
+              const href = tutelasListHref(sub.filter);
+              const subActive = isTutelasSubItemActive(location.pathname, location.search, sub.filter);
+              return (
+                <Link key={sub.label} to={href} onClick={onNavigate} className={subLinkClass(subActive)}>
+                  <span className="truncate">{sub.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
 
   const items: React.ReactNode[] = [];
 
-  for (let i = 0; i < NAV_LINKS.length; i++) {
-    const item = NAV_LINKS[i];
+  for (let i = 0; i < navLinks.length; i++) {
+    const item = navLinks[i];
     if (i === 2) {
       items.push(renderTutelasGroup());
       items.push(renderProcesosGroup());
@@ -219,7 +193,7 @@ export function AppSidebarNav({ sidebarCollapsed, urgentWorkflowCount, onNavigat
 
     items.push(
       <Link
-        key={item.name}
+        key={item.id}
         to={item.path}
         title={sidebarCollapsed ? item.name : undefined}
         onClick={() => {

@@ -849,7 +849,19 @@ export default function CaseDetail() {
 
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3 sm:gap-5">
         {esCivil ? (
-          <CaseCatalogMetadataPanel caseItem={caseItem} />
+          <div className="flex w-full min-w-0 flex-wrap items-end gap-4">
+            <CaseCatalogMetadataPanel caseItem={caseItem} />
+            <CaseSierjuClassification
+              courtId={caseItem.courtId}
+              caseType={caseItem.caseType}
+              processDefinitionId={processForCaseType(caseItem.caseType ?? 'civil_ordinario')?.id}
+              valueClassId={caseItem.sierjuProcessClassId}
+              saving={derechoCodeSaving}
+              label="Clasificación SIERJU (civil)"
+              hint="Alimenta estadísticas e informes del despacho."
+              onChange={handleSierjuClassificationChange}
+            />
+          </div>
         ) : (
           <>
         <CaseSierjuClassification

@@ -31,10 +31,13 @@ import {
 } from '../lib/plantillas-store';
 import { defaultToggleDefsForPlantilla } from '../lib/plantilla-template-default-toggles';
 import { userFacingSupabaseError } from '../lib/supabase-user-error';
+import { hasRoleCapability } from '../lib/role-capabilities';
 
 const TIPO_LABEL: Record<PlantillaTipo, string> = {
   informe_ingreso: 'Informe ingreso',
   auto_admisorio: 'Auto admisorio',
+  auto_tramite: 'Auto de trámite',
+  sentencia: 'Sentencia',
   notificacion_admisorio: 'Notificación auto',
   notificacion_fallo: 'Notificación fallo',
   oficio_juzgado: 'Oficio juzgado',
@@ -54,11 +57,17 @@ const OPCIONES_NUEVA_PLANTILLA: { categoria: PlantillaCategoria; tipo: Plantilla
   { categoria: 'secretaria', tipo: 'oficio_competencia' },
   { categoria: 'secretaria', tipo: 'libre' },
   { categoria: 'despacho', tipo: 'auto_admisorio' },
+  { categoria: 'despacho', tipo: 'auto_tramite' },
+  { categoria: 'despacho', tipo: 'sentencia' },
   { categoria: 'despacho', tipo: 'libre' },
 ];
 
 function opcionesNuevaPorCategoria(cat: PlantillaCategoria) {
   return OPCIONES_NUEVA_PLANTILLA.filter((o) => o.categoria === cat);
+}
+
+function isPlantillaAutoDespacho(t: PlantillaTipo): boolean {
+  return t === 'auto_admisorio' || t === 'auto_tramite' || t === 'sentencia';
 }
 
 type CatalogTemplateListItemProps = {
@@ -280,7 +289,10 @@ export default function Plantillas() {
     };
   }, [courtId]);
 
-  const isAdmin = role === 'admin';
+  const canEditSecretaria = hasRoleCapability(role, 'editar_plantillas_secretaria');
+  const canEditDespacho = hasRoleCapability(role, 'editar_plantillas_despacho');
+  const canEditMembreteRole = hasRoleCapability(role, 'editar_membrete');
+  const canEditAnyCatalog = canEditSecretaria || canEditDespacho || role === 'admin';
 
   useEffect(() => {
     if (!catalogPlusOpen) return;
@@ -397,7 +409,11 @@ export default function Plantillas() {
           ? 'Nueva plantilla · informe de ingreso'
           : opt.tipo === 'auto_admisorio'
             ? 'Nueva plantilla · auto admisorio'
-            : `Nueva plantilla · ${opt.categoria === 'secretaria' ? 'secretaría' : 'despacho'}`;
+            : opt.tipo === 'auto_tramite'
+              ? 'Nueva plantilla · auto de trámite'
+              : opt.tipo === 'sentencia'
+                ? 'Nueva plantilla · sentencia'
+                : `Nueva plantilla · ${opt.categoria === 'secretaria' ? 'secretaría' : 'despacho'}`;
       const nuevo = await insertDocumentTemplate({
         courtId,
         categoria: opt.categoria,
@@ -500,7 +516,7 @@ export default function Plantillas() {
       </header>
 
       {/* Catálogo por área */}
-      {roleReady && isAdmin ? (
+      {roleReady && canEditAnyCatalog ? (
         <section className="card-modern">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/90 bg-gradient-to-br from-slate-50/95 via-white to-slate-50/40 px-6 py-4">
             <div className="flex items-center gap-2">
@@ -540,7 +556,7 @@ export default function Plantillas() {
                       onAbrirEditor={abrirEditorPlantilla}
                       onQuitar={(id) => void quitarPlantilla(id)}
                     >
-                      {expandedTemplateId === p.id && isAdmin ? (
+                      {expandedTemplateId === p.id && canEditAnyCatalog ? (
                         <div className="border-t border-slate-100 bg-slate-50/50 p-2">
                           <div className="rounded-lg border border-slate-200/90 bg-white shadow-sm">
                             <PlantillaInlineEditor
@@ -561,7 +577,7 @@ export default function Plantillas() {
                                 Boolean(p.tipo && !p.contenidoBase?.trim() && cuerpoPredeterminadoPlantilla(p.tipo, data))
                               }
                               onAutoDatosExpedienteEditorJsonChange={
-                                p.tipo === 'auto_admisorio'
+                                isPlantillaAutoDespacho(p.tipo)
                                   ? (json) =>
                                       persistMembrete({
                                         version: 3,
@@ -643,7 +659,7 @@ export default function Plantillas() {
                       onAbrirEditor={abrirEditorPlantilla}
                       onQuitar={(id) => void quitarPlantilla(id)}
                     >
-                      {expandedTemplateId === p.id && isAdmin ? (
+                      {expandedTemplateId === p.id && canEditAnyCatalog ? (
                         <div className="border-t border-slate-100 bg-slate-50/50 p-2">
                           <div className="rounded-lg border border-slate-200/90 bg-white shadow-sm">
                             <PlantillaInlineEditor
@@ -664,7 +680,7 @@ export default function Plantillas() {
                                 Boolean(p.tipo && !p.contenidoBase?.trim() && cuerpoPredeterminadoPlantilla(p.tipo, data))
                               }
                               onAutoDatosExpedienteEditorJsonChange={
-                                p.tipo === 'auto_admisorio'
+                                isPlantillaAutoDespacho(p.tipo)
                                   ? (json) =>
                                       persistMembrete({
                                         version: 3,
@@ -734,7 +750,7 @@ export default function Plantillas() {
         </section>
       ) : null}
 
-      {roleReady && isAdmin ? (
+      {roleReady && canEditAnyCatalog ? (
         <MembreteBrandingPanel
           data={data}
           persistMembrete={persistMembrete}
@@ -743,7 +759,7 @@ export default function Plantillas() {
         />
       ) : null}
 
-      {roleReady && !isAdmin && (
+      {roleReady && !canEditAnyCatalog && (
         <p className="text-center text-xs text-slate-400">
           Para editar membrete e imagen necesita perfil de administrador.
         </p>

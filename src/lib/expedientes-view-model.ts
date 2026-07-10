@@ -1,4 +1,6 @@
 import type { Case, CaseStatus, SustanciadorAssignmentMode } from '../types';
+import { isCivilCaseType } from './process-product-scope';
+import { catalogSituacionLabel } from './case-catalog-metadata';
 import {
   businessDayTermEnd,
   businessDaysRemainingInTermWindow,
@@ -99,6 +101,46 @@ export function statusBadgeForStage(s: BoardStage): string {
     default:
       return 'bg-slate-50 text-slate-600 border-slate-200';
   }
+}
+
+export function civilOperationalSemaforo(c: Case): {
+  color: string;
+  icon: 'ok' | 'warn' | 'closed';
+  text: 'EN TÉRMINO' | 'URGENTE' | 'VENCIDO' | 'CERRADO';
+} {
+  const sit = (c.catalogMetadata?.situacion_plataforma || c.operationalStatus || '').toLowerCase();
+  if (c.status === 'archived' || sit.includes('archiv')) {
+    return { color: 'bg-gray-200', icon: 'closed', text: 'CERRADO' };
+  }
+  if (sit.includes('venc') || sit.includes('término') && sit.includes('crit')) {
+    return { color: 'bg-red-500 text-white', icon: 'warn', text: 'VENCIDO' };
+  }
+  if (sit.includes('pend') || sit.includes('traslado') || sit.includes('contest')) {
+    return { color: 'bg-orange-500 text-white', icon: 'warn', text: 'URGENTE' };
+  }
+  return { color: 'bg-green-500 text-white', icon: 'ok', text: 'EN TÉRMINO' };
+}
+
+export function listProductLabel(c: Case): string {
+  if (isCivilCaseType(c.caseType) || c.catalogMetadata?.tipo_registro === 'civil') {
+    return 'Proceso civil';
+  }
+  return 'Tutela';
+}
+
+export function civilSituacionDisplay(c: Case): string {
+  return catalogSituacionLabel(c.catalogMetadata) || c.operationalStatus || statusLabelForCase(c.status);
+}
+
+function statusLabelForCase(status: CaseStatus): string {
+  const m: Record<CaseStatus, string> = {
+    received: 'Recibido',
+    admitted: 'Admitido',
+    transfer: 'Traslado',
+    judgment: 'Fallo',
+    archived: 'Archivado',
+  };
+  return m[status] ?? status;
 }
 
 export function urgencyFromRemainingBusinessDays(

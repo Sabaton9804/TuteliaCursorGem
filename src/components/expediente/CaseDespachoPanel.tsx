@@ -1,13 +1,15 @@
 import React from 'react';
 import { CaseDespachoDocumentosPanel } from './CaseDespachoDocumentosPanel';
+import { CaseDespachoProvidenciasPanel } from './CaseDespachoProvidenciasPanel';
 import { CaseNotificacionesPanel } from './CaseNotificacionesPanel';
 import { useCaseDetail } from '../../contexts/CaseDetailContext';
+import { supportsContestacionWorkflow } from '../../lib/sgde-case-scope';
 
 export type CaseDespachoPanelProps = {
   onAfterEnviarRevision: () => void;
 };
 
-/** Pestaña «Generar documentos»: informe, auto, oficios de notificación. */
+/** Pestaña «Generar documentos»: informe, auto admisorio, autos de trámite, sentencia, oficios. */
 export function CaseDespachoPanel({ onAfterEnviarRevision }: CaseDespachoPanelProps) {
   const { caseItem, docs, refetch, profile } = useCaseDetail();
 
@@ -26,7 +28,14 @@ export function CaseDespachoPanel({ onAfterEnviarRevision }: CaseDespachoPanelPr
         onAfterEnviarRevision={onAfterEnviarRevision}
         revisionActorDisplayName={profile?.name?.trim() || profile?.email?.trim() || undefined}
       />
-      {caseItem.caseType === 'tutela_primera' ? (
+      <CaseDespachoProvidenciasPanel
+        caseItem={caseItem}
+        caseId={caseItem.id}
+        docs={docs}
+        onAfterEnviarRevision={onAfterEnviarRevision}
+        revisionActorDisplayName={profile?.name?.trim() || profile?.email?.trim() || undefined}
+      />
+      {supportsContestacionWorkflow(caseItem.caseType) ? (
         <CaseNotificacionesPanel caseItem={caseItem} caseId={caseItem.id} docs={docs} onUpdated={onUpdated} />
       ) : null}
     </div>

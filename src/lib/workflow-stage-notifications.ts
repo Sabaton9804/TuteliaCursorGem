@@ -4,7 +4,7 @@ import { isPostgrestTableMissingError } from './supabase-user-error';
 import { fetchProfilesByCourtAndRoles } from './profile-notification-recipients';
 import type { CaseStageCode } from './case-workflow-stages';
 
-const SECRETARIA_NOTIFICATION_ROLES: UserRole[] = ['clerk', 'escribiente', 'official'];
+const SECRETARIA_NOTIFICATION_ROLES: UserRole[] = ['clerk', 'escribiente', 'official', 'asistente_judicial'];
 const ENCARGADO_REMISION_ROLES: UserRole[] = ['official', 'asistente_judicial'];
 
 async function insertNotificationRows(

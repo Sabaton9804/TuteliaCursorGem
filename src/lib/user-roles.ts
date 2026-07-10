@@ -25,7 +25,7 @@ export function parseUserRole(raw: unknown): UserRole {
     asistente: 'asistente_judicial',
   };
   const mapped = alias[s] ?? s;
-  return (ALL_ROLES as readonly string[]).includes(mapped) ? (mapped as UserRole) : 'admin';
+  return (ALL_ROLES as readonly string[]).includes(mapped) ? (mapped as UserRole) : 'clerk';
 }
 
 /** Etiqueta corta en español para UI (configuración, listados). */

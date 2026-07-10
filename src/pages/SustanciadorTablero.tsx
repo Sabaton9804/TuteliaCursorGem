@@ -14,6 +14,8 @@ import {
   businessDaysRemainingUntilSubDeadline,
   resolveSubStageDeadline,
 } from '../lib/case-stage-deadlines';
+import { hasRoleCapability } from '../lib/role-capabilities';
+import { CIVIL_CASE_TYPES } from '../lib/process-product-scope';
 import { startOfLocalDay } from '../lib/business-days';
 import { parseISO } from 'date-fns';
 
@@ -24,7 +26,13 @@ type OpenStageRow = {
   metadata: Record<string, unknown> | null;
 };
 
-const TABLERO_STAGES = new Set<CaseStageCode>(['TERMINO_RESPUESTA', 'INGRESO_DESPACHO_FALLO']);
+const TABLERO_STAGES = new Set<CaseStageCode>([
+  'TERMINO_RESPUESTA',
+  'TERMINO_EXCEPCIONES',
+  'TRAMITE',
+  'INGRESO_DESPACHO_FALLO',
+  'TERMINO_APELACION',
+]);
 
 type TableroRow = {
   caseItem: Case;
@@ -46,11 +54,12 @@ export default function SustanciadorTablero() {
     setLoading(true);
     setErr(null);
     try {
+      const tableroTypes = ['tutela_primera', ...CIVIL_CASE_TYPES] as const;
       const { data: caseRows, error: caseErr } = await supabase
         .from('cases')
         .select('*')
         .eq('court_id', courtId)
-        .eq('case_type', 'tutela_primera')
+        .in('case_type', [...tableroTypes])
         .neq('status', 'archived')
         .order('updated_at', { ascending: false })
         .limit(200);
@@ -163,11 +172,7 @@ export default function SustanciadorTablero() {
   const listos = rows.filter((r) => r.checklist.listoParaFallo);
   const pendientes = rows.filter((r) => !r.checklist.listoParaFallo);
 
-  const isSustanciador =
-    profile?.role === 'sustanciador' ||
-    profile?.role === 'judge' ||
-    profile?.role === 'admin' ||
-    profile?.role === 'asistente_judicial';
+  const canViewTablero = hasRoleCapability(profile?.role, 'ver_sustanciador_tablero');
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mx-auto max-w-5xl space-y-6">
@@ -179,7 +184,7 @@ export default function SustanciadorTablero() {
         <h1 className="text-2xl font-bold text-slate-900">Tablero sustanciador</h1>
         <p className="mt-1 text-sm text-slate-500">
           Tutelas en término de respuesta o listas para fallo.{' '}
-          {isSustanciador ? 'Priorice las filas «listas para fallo».' : 'Vista operativa del despacho.'}
+          {canViewTablero ? 'Priorice las filas «listas para fallo».' : 'Vista operativa del despacho.'}
         </p>
       </header>
 

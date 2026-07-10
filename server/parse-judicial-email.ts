@@ -31,7 +31,10 @@ export type ParsedJudicialEmailResponse = {
   linkUrl: string | null;
 };
 
-export async function parseJudicialEmailFromBuffer(buffer: Buffer): Promise<ParsedJudicialEmailResponse> {
+export async function parseJudicialEmailFromBuffer(
+  buffer: Buffer,
+  ownerUserId?: string,
+): Promise<ParsedJudicialEmailResponse> {
   const parsed = await simpleParser(buffer);
 
   type ProcAtt = {
@@ -300,7 +303,7 @@ export async function parseJudicialEmailFromBuffer(buffer: Buffer): Promise<Pars
     };
   });
 
-  const parseSessionId = createParseSession(sessionAttachments);
+  const parseSessionId = createParseSession(sessionAttachments, ownerUserId);
   /** Límite por adjunto en JSON (el cliente usa esto para el visor sin depender solo de la sesión en RAM). */
   const MAX_INLINE_ATTACHMENT_BYTES = 14 * 1024 * 1024;
   const publicAttachments = sessionAttachments.map(({ buffer, ...meta }) => ({

@@ -14,13 +14,21 @@ import { useCaseDetail } from '../../contexts/CaseDetailContext';
 import { useCaseStages } from '../../hooks/useCaseStages';
 import {
   STAGE_LABEL_ES,
+  stageLabelForCaseType,
   type CaseStageCode,
   pipelineForCaseType,
 } from '../../lib/case-workflow-stages';
 import {
+  applyStageTransitionApelacionRecibida,
+  applyStageTransitionImpugnacionRecibida,
+  applyStageTransitionInadmisionRegistrada,
+  applyStageTransitionContestacionCerrada,
+  applyStageTransitionIngresoDespachoParaSentencia,
   applyStageTransitionNotificacionAutoEnviada,
   applyStageTransitionNotificacionFalloEnviada,
+  applyStageTransitionRechazoRegistrado,
   applyStageTransitionRemisionCorteRegistrada,
+  applyStageTransitionRemisionSuperiorRegistrada,
   canEditStageEnteredAt,
   canManualManageCaseStages,
   manualStageEditEnteredAt,
@@ -29,12 +37,20 @@ import {
   runAutomaticStageChecksOnCaseLoad,
 } from '../../lib/case-stages-service';
 import {
+  canRegistrarImpugnacionRecibida,
+  canRegistrarApelacionRecibida,
+  canRegistrarInadmision,
   canRegistrarNotificacionAutoEnviada,
   canRegistrarNotificacionFalloEnviada,
+  canRegistrarRechazoDemanda,
+  canRegistrarRemisionCorte,
+  canRegistrarRemisionSuperior,
   stageActGateMessage,
 } from '../../lib/case-stage-act-gates';
 import { CaseContestacionChecklistPanel } from './CaseContestacionChecklistPanel';
-import type { UserRole } from '../../types';
+import { canRegistrarHitosSecretaria, canRegistrarRamaAdmision } from '../../lib/role-capabilities';
+import { isCivilCaseType } from '../../lib/process-product-scope';
+import { isCivilEjecutivoCaseType, supportsContestacionWorkflow } from '../../lib/sgde-case-scope';
 import {
   businessDayTermEnd,
   businessDaysRemainingInTermWindow,
@@ -58,17 +74,6 @@ function formatStageDate(iso: string): string {
   }
 }
 
-function roleCanRegistrarHitosSecretaria(role: UserRole | null | undefined): boolean {
-  if (!role) return false;
-  return (
-    role === 'admin' ||
-    role === 'clerk' ||
-    role === 'escribiente' ||
-    role === 'official' ||
-    role === 'asistente_judicial'
-  );
-}
-
 export function CaseStagesExperience() {
   const { caseItem, courtId, profile, refetch, docs } = useCaseDetail();
   const caseId = caseItem.id;
@@ -89,6 +94,10 @@ export function CaseStagesExperience() {
     caseAssignedTo: assignedTo,
   });
 
+  const isCivil = isCivilCaseType(caseType ?? '');
+  const isEjecutivo = caseType != null && isCivilEjecutivoCaseType(caseType);
+  const stageLabel = (code: CaseStageCode) => stageLabelForCaseType(code, caseType ?? undefined);
+
   const pipeline = useMemo(() => pipelineForCaseType(caseType), [caseType]);
 
   const gateNotifAuto = useMemo(
@@ -97,6 +106,30 @@ export function CaseStagesExperience() {
   );
   const gateNotifFallo = useMemo(
     () => canRegistrarNotificacionFalloEnviada(caseType ?? 'tutela_primera', docs),
+    [caseType, docs],
+  );
+  const gateImpugnacion = useMemo(
+    () => canRegistrarImpugnacionRecibida(caseType ?? 'tutela_primera', docs),
+    [caseType, docs],
+  );
+  const gateRemisionSuperior = useMemo(
+    () => canRegistrarRemisionSuperior(caseType ?? 'tutela_primera', docs),
+    [caseType, docs],
+  );
+  const gateRemisionCorte = useMemo(
+    () => canRegistrarRemisionCorte(caseType ?? 'tutela_primera', docs),
+    [caseType, docs],
+  );
+  const gateApelacion = useMemo(
+    () => canRegistrarApelacionRecibida(caseType ?? 'civil_ordinario', docs),
+    [caseType, docs],
+  );
+  const gateInadmision = useMemo(
+    () => canRegistrarInadmision(caseType ?? 'tutela_primera', docs),
+    [caseType, docs],
+  );
+  const gateRechazo = useMemo(
+    () => canRegistrarRechazoDemanda(caseType ?? 'tutela_primera', docs),
     [caseType, docs],
   );
 
@@ -303,7 +336,159 @@ export function CaseStagesExperience() {
         caseId,
         courtId,
         radicado,
+        caseType: caseType ?? 'tutela_segunda',
+        caseAssignedTo: assignedTo,
+      });
+      await stages.refetch();
+      await refetch.refetchCase();
+      await refetch.refetchActions();
+    } catch (e) {
+      setLocalErr(e instanceof Error ? e.message : 'No se pudo registrar.');
+    } finally {
+      setBusy(false);
+    }
+  }, [caseId, courtId, radicado, caseType, assignedTo, stages.refetch, refetch]);
+
+  const registrarImpugnacion = useCallback(async () => {
+    setBusy(true);
+    setLocalErr(null);
+    try {
+      await applyStageTransitionImpugnacionRecibida(supabase, {
+        caseId,
+        courtId,
+        radicado,
         caseType: caseType ?? 'tutela_primera',
+        caseAssignedTo: assignedTo,
+        expedienteDocs: docs,
+      });
+      await stages.refetch();
+      await refetch.refetchCase();
+      await refetch.refetchActions();
+    } catch (e) {
+      setLocalErr(e instanceof Error ? e.message : 'No se pudo registrar.');
+    } finally {
+      setBusy(false);
+    }
+  }, [caseId, courtId, radicado, caseType, assignedTo, docs, stages.refetch, refetch]);
+
+  const registrarRemisionSuperior = useCallback(async () => {
+    setBusy(true);
+    setLocalErr(null);
+    try {
+      await applyStageTransitionRemisionSuperiorRegistrada(supabase, {
+        caseId,
+        courtId,
+        radicado,
+        caseType: caseType ?? 'tutela_primera',
+        caseAssignedTo: assignedTo,
+        expedienteDocs: docs,
+      });
+      await stages.refetch();
+      await refetch.refetchCase();
+      await refetch.refetchActions();
+    } catch (e) {
+      setLocalErr(e instanceof Error ? e.message : 'No se pudo registrar.');
+    } finally {
+      setBusy(false);
+    }
+  }, [caseId, courtId, radicado, caseType, assignedTo, docs, stages.refetch, refetch]);
+
+  const registrarInadmision = useCallback(async () => {
+    setBusy(true);
+    setLocalErr(null);
+    try {
+      await applyStageTransitionInadmisionRegistrada(supabase, {
+        caseId,
+        courtId,
+        radicado,
+        caseType: caseType ?? 'tutela_primera',
+        caseAssignedTo: assignedTo,
+        expedienteDocs: docs,
+      });
+      await stages.refetch();
+      await refetch.refetchCase();
+      await refetch.refetchActions();
+    } catch (e) {
+      setLocalErr(e instanceof Error ? e.message : 'No se pudo registrar.');
+    } finally {
+      setBusy(false);
+    }
+  }, [caseId, courtId, radicado, caseType, assignedTo, docs, stages.refetch, refetch]);
+
+  const registrarRechazo = useCallback(async () => {
+    setBusy(true);
+    setLocalErr(null);
+    try {
+      await applyStageTransitionRechazoRegistrado(supabase, {
+        caseId,
+        courtId,
+        radicado,
+        caseType: caseType ?? 'tutela_primera',
+        caseAssignedTo: assignedTo,
+        expedienteDocs: docs,
+      });
+      await stages.refetch();
+      await refetch.refetchCase();
+      await refetch.refetchActions();
+    } catch (e) {
+      setLocalErr(e instanceof Error ? e.message : 'No se pudo registrar.');
+    } finally {
+      setBusy(false);
+    }
+  }, [caseId, courtId, radicado, caseType, assignedTo, docs, stages.refetch, refetch]);
+
+  const registrarApelacion = useCallback(async () => {
+    setBusy(true);
+    setLocalErr(null);
+    try {
+      await applyStageTransitionApelacionRecibida(supabase, {
+        caseId,
+        courtId,
+        radicado,
+        caseType: caseType ?? 'civil_ordinario',
+        caseAssignedTo: assignedTo,
+        expedienteDocs: docs,
+      });
+      await stages.refetch();
+      await refetch.refetchCase();
+      await refetch.refetchActions();
+    } catch (e) {
+      setLocalErr(e instanceof Error ? e.message : 'No se pudo registrar.');
+    } finally {
+      setBusy(false);
+    }
+  }, [caseId, courtId, radicado, caseType, assignedTo, docs, stages.refetch, refetch]);
+
+  const registrarContestacionCerrada = useCallback(async () => {
+    setBusy(true);
+    setLocalErr(null);
+    try {
+      await applyStageTransitionContestacionCerrada(supabase, {
+        caseId,
+        courtId,
+        radicado,
+        caseType: caseType ?? 'civil_ordinario',
+        caseAssignedTo: assignedTo,
+      });
+      await stages.refetch();
+      await refetch.refetchCase();
+      await refetch.refetchActions();
+    } catch (e) {
+      setLocalErr(e instanceof Error ? e.message : 'No se pudo registrar.');
+    } finally {
+      setBusy(false);
+    }
+  }, [caseId, courtId, radicado, caseType, assignedTo, stages.refetch, refetch]);
+
+  const registrarIngresoSentencia = useCallback(async () => {
+    setBusy(true);
+    setLocalErr(null);
+    try {
+      await applyStageTransitionIngresoDespachoParaSentencia(supabase, {
+        caseId,
+        courtId,
+        radicado,
+        caseType: caseType ?? 'civil_ordinario',
         caseAssignedTo: assignedTo,
       });
       await stages.refetch();
@@ -318,7 +503,7 @@ export function CaseStagesExperience() {
 
   const hist = useMemo(() => [...stages.rows].sort((a, b) => a.enteredAt.localeCompare(b.enteredAt)), [stages.rows]);
 
-  const stripLabel = openRow ? STAGE_LABEL_ES[openRow.stageCode] : 'Sin etapa';
+  const stripLabel = openRow ? stageLabel(openRow.stageCode) : 'Sin etapa';
 
   return (
     <>
@@ -430,9 +615,10 @@ export function CaseStagesExperience() {
                     </section>
                   ) : null}
 
-                  {caseType === 'tutela_primera' &&
+                  {supportsContestacionWorkflow(caseType ?? 'tutela_primera') &&
                   openRow &&
                   (openRow.stageCode === 'TERMINO_RESPUESTA' ||
+                    openRow.stageCode === 'TERMINO_EXCEPCIONES' ||
                     openRow.stageCode === 'INGRESO_DESPACHO_FALLO') ? (
                     <CaseContestacionChecklistPanel
                       caseItem={caseItem}
@@ -443,13 +629,15 @@ export function CaseStagesExperience() {
                     />
                   ) : null}
 
-                  {roleCanRegistrarHitosSecretaria(role) && caseType === 'tutela_primera' ? (
+                  {canRegistrarHitosSecretaria(role) &&
+                  (supportsContestacionWorkflow(caseType ?? 'tutela_primera') || caseType === 'tutela_segunda') ? (
                     <section className="rounded-xl border border-indigo-100 bg-indigo-50/50 px-3 py-3 text-xs">
                       <p className="text-[10px] font-black uppercase tracking-widest text-indigo-700">
                         Registrar hitos (secretaría)
                       </p>
                       <div className="mt-2 flex flex-col gap-2">
-                        {openRow?.stageCode === 'ADMISION' ? (
+                        {(caseType === 'tutela_primera' || supportsContestacionWorkflow(caseType ?? 'tutela_primera')) &&
+                        openRow?.stageCode === 'ADMISION' ? (
                           <>
                             <button
                               type="button"
@@ -457,7 +645,7 @@ export function CaseStagesExperience() {
                               onClick={() => void registrarNotifAuto()}
                               className="rounded-lg bg-indigo-600 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-indigo-700 disabled:opacity-40"
                             >
-                              Notificación enviada (auto admisorio)
+                              {isCivil ? 'Notificación del auto admisorio enviada' : 'Notificación enviada (auto admisorio)'}
                             </button>
                             {stageActGateMessage(gateNotifAuto) ? (
                               <p className="text-[11px] leading-snug text-indigo-950/90">
@@ -474,7 +662,7 @@ export function CaseStagesExperience() {
                               onClick={() => void registrarNotifFallo()}
                               className="rounded-lg bg-indigo-600 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-indigo-700 disabled:opacity-40"
                             >
-                              Notificación del fallo enviada
+                              {isCivil ? 'Notificación de la sentencia enviada' : 'Notificación del fallo enviada'}
                             </button>
                             {stageActGateMessage(gateNotifFallo) ? (
                               <p className="text-[11px] leading-snug text-indigo-950/90">
@@ -483,24 +671,215 @@ export function CaseStagesExperience() {
                             ) : null}
                           </>
                         ) : null}
-                        {openRow?.stageCode === 'EJECUTORIA' ? (
+                        {caseType === 'tutela_primera' && openRow?.stageCode === 'TERMINO_IMPUGNACION' ? (
+                          <>
+                            <button
+                              type="button"
+                              disabled={busy || !gateImpugnacion.ok}
+                              onClick={() => void registrarImpugnacion()}
+                              className="rounded-lg bg-indigo-600 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-indigo-700 disabled:opacity-40"
+                            >
+                              Impugnación recibida
+                            </button>
+                            {stageActGateMessage(gateImpugnacion) ? (
+                              <p className="text-[11px] leading-snug text-indigo-950/90">
+                                {stageActGateMessage(gateImpugnacion)}
+                              </p>
+                            ) : null}
+                          </>
+                        ) : null}
+                        {caseType === 'tutela_primera' && openRow?.stageCode === 'REMISION_SUPERIOR' ? (
+                          <>
+                            <button
+                              type="button"
+                              disabled={busy || !gateRemisionSuperior.ok}
+                              onClick={() => void registrarRemisionSuperior()}
+                              className="rounded-lg bg-indigo-600 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-indigo-700 disabled:opacity-40"
+                            >
+                              Remisión al superior registrada
+                            </button>
+                            {stageActGateMessage(gateRemisionSuperior) ? (
+                              <p className="text-[11px] leading-snug text-indigo-950/90">
+                                {stageActGateMessage(gateRemisionSuperior)}
+                              </p>
+                            ) : null}
+                          </>
+                        ) : null}
+                        {caseType === 'tutela_segunda' && openRow?.stageCode === 'EJECUTORIA' ? (
+                          <>
+                            <button
+                              type="button"
+                              disabled={busy || !gateRemisionCorte.ok}
+                              onClick={() => void registrarRemisionCorte()}
+                              className="rounded-lg bg-indigo-600 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-indigo-700 disabled:opacity-40"
+                            >
+                              Envío a la Corte registrado
+                            </button>
+                            {stageActGateMessage(gateRemisionCorte) ? (
+                              <p className="text-[11px] leading-snug text-indigo-950/90">
+                                {stageActGateMessage(gateRemisionCorte)}
+                              </p>
+                            ) : null}
+                          </>
+                        ) : null}
+                        {(isCivil && (openRow?.stageCode === 'TERMINO_RESPUESTA' || openRow?.stageCode === 'TERMINO_EXCEPCIONES')) ? (
                           <button
                             type="button"
                             disabled={busy}
-                            onClick={() => void registrarRemisionCorte()}
+                            onClick={() => void registrarContestacionCerrada()}
                             className="rounded-lg bg-indigo-600 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-indigo-700 disabled:opacity-40"
                           >
-                            Envío a la Corte registrado
+                            {isEjecutivo
+                              ? 'Excepciones cerradas → trámite (CGP art. 443)'
+                              : 'Contestación cerrada → trámite (CGP art. 76)'}
                           </button>
                         ) : null}
+                        {isCivil && openRow?.stageCode === 'TRAMITE' && canRegistrarRamaAdmision(role) ? (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void registrarIngresoSentencia()}
+                            className="rounded-lg bg-emerald-700 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-emerald-800 disabled:opacity-40"
+                          >
+                            Ingreso al despacho para sentencia
+                          </button>
+                        ) : null}
+                        {isCivil && openRow?.stageCode === 'TERMINO_APELACION' ? (
+                          <>
+                            <button
+                              type="button"
+                              disabled={busy || !gateApelacion.ok}
+                              onClick={() => void registrarApelacion()}
+                              className="rounded-lg bg-indigo-600 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-indigo-700 disabled:opacity-40"
+                            >
+                              Apelación recibida (remisión superior)
+                            </button>
+                            {stageActGateMessage(gateApelacion) ? (
+                              <p className="text-[11px] leading-snug text-indigo-950/90">
+                                {stageActGateMessage(gateApelacion)}
+                              </p>
+                            ) : null}
+                          </>
+                        ) : null}
                         {openRow &&
-                        !['ADMISION', 'FALLO', 'EJECUTORIA'].includes(openRow.stageCode) ? (
+                        ![
+                          'ADMISION',
+                          'FALLO',
+                          'TERMINO_IMPUGNACION',
+                          'TERMINO_APELACION',
+                          'REMISION_SUPERIOR',
+                          'EJECUTORIA',
+                          'TERMINO_RESPUESTA',
+                          'TERMINO_EXCEPCIONES',
+                          'TRAMITE',
+                        ].includes(openRow.stageCode) ? (
                           <p className="text-[11px] text-indigo-900/80">
                             No hay registro rápido para la etapa actual. Use el historial o el flujo automático.
                           </p>
                         ) : null}
                       </div>
                     </section>
+                  ) : null}
+
+                  {canRegistrarRamaAdmision(role) && !isCivil ? (
+                    <section className="rounded-xl border border-amber-100 bg-amber-50/50 px-3 py-3 text-xs">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-amber-800">
+                        Ramas de admisión (despacho)
+                      </p>
+                      <div className="mt-2 flex flex-col gap-2">
+                        {openRow?.stageCode === 'ADMISION' ? (
+                          <>
+                            <button
+                              type="button"
+                              disabled={busy || !gateInadmision.ok}
+                              onClick={() => void registrarInadmision()}
+                              className="rounded-lg bg-amber-700 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-amber-800 disabled:opacity-40"
+                            >
+                              Inadmisión registrada (archivo)
+                            </button>
+                            {stageActGateMessage(gateInadmision) ? (
+                              <p className="text-[11px] leading-snug text-amber-950/90">
+                                {stageActGateMessage(gateInadmision)}
+                              </p>
+                            ) : null}
+                          </>
+                        ) : null}
+                        {openRow?.stageCode === 'RADICACION' ? (
+                          <>
+                            <button
+                              type="button"
+                              disabled={busy || !gateRechazo.ok}
+                              onClick={() => void registrarRechazo()}
+                              className="rounded-lg bg-amber-700 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-amber-800 disabled:opacity-40"
+                            >
+                              Rechazo de demanda registrado (archivo)
+                            </button>
+                            {stageActGateMessage(gateRechazo) ? (
+                              <p className="text-[11px] leading-snug text-amber-950/90">
+                                {stageActGateMessage(gateRechazo)}
+                              </p>
+                            ) : null}
+                          </>
+                        ) : null}
+                        {openRow?.stageCode === 'INADMISION' ? (
+                          <>
+                            <button
+                              type="button"
+                              disabled={busy || !gateInadmision.ok}
+                              onClick={() => void registrarInadmision()}
+                              className="rounded-lg bg-amber-700 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-amber-800 disabled:opacity-40"
+                            >
+                              Cerrar inadmisión (archivo)
+                            </button>
+                            {stageActGateMessage(gateInadmision) ? (
+                              <p className="text-[11px] leading-snug text-amber-950/90">
+                                {stageActGateMessage(gateInadmision)}
+                              </p>
+                            ) : null}
+                          </>
+                        ) : null}
+                        {openRow &&
+                        !['ADMISION', 'RADICACION', 'INADMISION'].includes(openRow.stageCode) ? (
+                          <p className="text-[11px] text-amber-900/80">
+                            No hay registro de rama para la etapa actual.
+                          </p>
+                        ) : null}
+                      </div>
+                    </section>
+                  ) : null}
+
+                  {canRegistrarRamaAdmision(role) && isCivil ? (
+                    <details className="rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 text-xs">
+                      <summary className="cursor-pointer text-[10px] font-black uppercase tracking-widest text-slate-500">
+                        Ramas excepcionales (inadmisión / rechazo)
+                      </summary>
+                      <p className="mt-2 text-[11px] leading-snug text-slate-600">
+                        En procesos civiles el carril ordinario es admisión → traslado → contestación → trámite →
+                        sentencia. Use estas ramas solo cuando corresponda un auto inadmisorio o de rechazo.
+                      </p>
+                      <div className="mt-2 flex flex-col gap-2">
+                        {openRow?.stageCode === 'ADMISION' || openRow?.stageCode === 'INADMISION' ? (
+                          <button
+                            type="button"
+                            disabled={busy || !gateInadmision.ok}
+                            onClick={() => void registrarInadmision()}
+                            className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-900 hover:bg-amber-50 disabled:opacity-40"
+                          >
+                            Cerrar por inadmisión (archivo)
+                          </button>
+                        ) : null}
+                        {openRow?.stageCode === 'RADICACION' ? (
+                          <button
+                            type="button"
+                            disabled={busy || !gateRechazo.ok}
+                            onClick={() => void registrarRechazo()}
+                            className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-900 hover:bg-amber-50 disabled:opacity-40"
+                          >
+                            Rechazo de demanda (archivo)
+                          </button>
+                        ) : null}
+                      </div>
+                    </details>
                   ) : null}
 
                   {canManualManageCaseStages(role) ? (

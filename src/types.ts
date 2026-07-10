@@ -47,6 +47,8 @@ export type DocumentTemplateCategoria = 'despacho' | 'secretaria';
 export type DocumentTemplateTipo =
   | 'informe_ingreso'
   | 'auto_admisorio'
+  | 'auto_tramite'
+  | 'sentencia'
   | 'notificacion_admisorio'
   | 'notificacion_fallo'
   | 'oficio_juzgado'

@@ -5,7 +5,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { formatRadicado } from '../lib/formatters';
-import { buildExpedienteViewRow, type ExpedienteViewRow } from '../lib/expedientes-view-model';
+import {
+  buildExpedienteViewRow,
+  civilOperationalSemaforo,
+  civilSituacionDisplay,
+  listProductLabel,
+  type ExpedienteViewRow,
+} from '../lib/expedientes-view-model';
+import { isTutelaListRow, isProcesosCivilListRow } from '../lib/case-process-scope';
 import { courtCasesQueryKey, fetchCourtCasesForList, type CourtCasesOrderColumn } from '../lib/court-cases-query';
 import { useInvalidateCourtCasesOnRealtime } from '../hooks/useCourtCasesRealtime';
 import { useSessionCourt } from '../contexts/SessionCourtContext';
@@ -16,6 +23,8 @@ import { supabase } from '../lib/supabase';
 import { parseSustanciadorAssignmentMode } from '../lib/sustanciador-reparto';
 
 const DASHBOARD_ORDER: CourtCasesOrderColumn = 'updated_at';
+
+type HubTab = 'tutelas' | 'civiles' | 'todo';
 
 function statusLabelEs(status: string): string {
   const m: Record<string, string> = {
@@ -30,6 +39,12 @@ function statusLabelEs(status: string): string {
 
 function semaforoFromRow(row: ExpedienteViewRow) {
   const c = row.case;
+  if (isProcesosCivilListRow(c)) {
+    const civil = civilOperationalSemaforo(c);
+    const icon =
+      civil.text === 'CERRADO' ? CheckCircle2 : civil.text === 'VENCIDO' ? AlertTriangle : Clock;
+    return { color: civil.color, icon, text: civil.text };
+  }
   if (row.stage === 'archivado' || c.status === 'archived') {
     return { color: 'bg-gray-200', icon: CheckCircle2, text: 'CERRADO' as const };
   }
@@ -48,6 +63,7 @@ export default function Dashboard() {
   const fetchCourtId = operationalCourtIdForFetch(tenant);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [hubTab, setHubTab] = useState<HubTab>('todo');
   const navigate = useNavigate();
 
   const casesQueryEnabled = Boolean(fetchCourtId) && !tenant.loading;
@@ -80,23 +96,55 @@ export default function Dashboard() {
     if (error) console.error('Supabase Error in Dashboard:', error);
   }, [error]);
 
+  const tutelaCases = useMemo(() => cases.filter(isTutelaListRow), [cases]);
+  const civilCases = useMemo(() => cases.filter(isProcesosCivilListRow), [cases]);
+  const hubCases = useMemo(() => {
+    if (hubTab === 'tutelas') return tutelaCases;
+    if (hubTab === 'civiles') return civilCases;
+    return cases;
+  }, [cases, civilCases, hubTab, tutelaCases]);
+
+  const tutelaRows = useMemo(
+    () => tutelaCases.map((c) => buildExpedienteViewRow(c, courtAssignmentMode ?? null)),
+    [tutelaCases, courtAssignmentMode],
+  );
+
+  const civilRows = useMemo(
+    () => civilCases.map((c) => buildExpedienteViewRow(c, courtAssignmentMode ?? null)),
+    [civilCases, courtAssignmentMode],
+  );
+
   const expedienteRows = useMemo(
-    () => cases.map((c) => buildExpedienteViewRow(c, courtAssignmentMode ?? null)),
-    [cases, courtAssignmentMode],
+    () => hubCases.map((c) => buildExpedienteViewRow(c, courtAssignmentMode ?? null)),
+    [hubCases, courtAssignmentMode],
   );
 
   const metrics = useMemo(() => {
-    const active = cases.filter((c) => c.status !== 'archived').length;
-    const critical = expedienteRows.filter(
+    const activeTutelas = tutelaCases.filter((c) => c.status !== 'archived').length;
+    const activeCiviles = civilCases.filter((c) => c.status !== 'archived').length;
+    const criticalTutelas = tutelaRows.filter(
       (r) =>
         r.urgency === 'urgent' &&
         r.stage !== 'archivado' &&
         r.stage !== 'fallo_notificado'
     ).length;
-    const pendingSignature = expedienteRows.filter((r) => r.stage === 'fallo_redactado').length;
+    const criticalCiviles = civilCases.filter((c) => {
+      const sem = civilOperationalSemaforo(c);
+      return sem.text === 'VENCIDO' || sem.text === 'URGENTE';
+    }).length;
+    const pendingSignature = tutelaRows.filter((r) => r.stage === 'fallo_redactado').length;
     const sgdeLinked = cases.filter((c) => Boolean(c.sgdeId?.trim())).length;
-    return { active, critical, pendingSignature, sgdeLinked };
-  }, [cases, expedienteRows]);
+    return {
+      active: activeTutelas + activeCiviles,
+      activeTutelas,
+      activeCiviles,
+      critical: criticalTutelas + criticalCiviles,
+      criticalTutelas,
+      criticalCiviles,
+      pendingSignature,
+      sgdeLinked,
+    };
+  }, [tutelaCases, civilCases, tutelaRows, cases]);
 
   const filteredRows = useMemo(() => {
     const term = searchTerm.toLowerCase();
@@ -115,6 +163,29 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-10">
+      <div className="flex flex-wrap gap-2">
+        {(
+          [
+            { id: 'todo' as const, label: `Todo (${cases.length})` },
+            { id: 'tutelas' as const, label: `Tutelas (${tutelaCases.length})` },
+            { id: 'civiles' as const, label: `Civiles (${civilCases.length})` },
+          ] as const
+        ).map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setHubTab(tab.id)}
+            className={`rounded-full px-4 py-2 text-[11px] font-bold uppercase tracking-wider transition-colors ${
+              hubTab === tab.id
+                ? 'bg-accent text-white shadow-md'
+                : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <Link
           to="/cases"
@@ -122,7 +193,9 @@ export default function Dashboard() {
         >
           <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Expedientes activos</div>
           <div className="text-3xl font-bold text-slate-900 tracking-tight tabular-nums">{metrics.active}</div>
-          <div className="text-[10px] font-bold text-accent mt-2 uppercase tracking-wider">Abrir módulo expedientes →</div>
+          <div className="text-[10px] font-bold text-slate-400 mt-2 uppercase tracking-wider">
+            {metrics.activeTutelas} tutelas · {metrics.activeCiviles} civiles
+          </div>
         </Link>
         <Link
           to="/cases"
@@ -130,7 +203,9 @@ export default function Dashboard() {
         >
           <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Términos críticos</div>
           <div className="text-3xl font-bold text-red-600 tracking-tight tabular-nums">{metrics.critical}</div>
-          <div className="text-[10px] font-bold text-slate-400 mt-2 uppercase tracking-wider">≤2d háb. o vencido (no archivado)</div>
+          <div className="text-[10px] font-bold text-slate-400 mt-2 uppercase tracking-wider">
+            {metrics.criticalTutelas} tutela · {metrics.criticalCiviles} civil
+          </div>
         </Link>
         <div className="card-modern p-6 border-b-4 border-b-amber-400">
           <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Pendiente firma</div>
@@ -186,7 +261,7 @@ export default function Dashboard() {
                   Estado procesal
                 </th>
                 <th className="px-6 py-4 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">
-                  Término (10d háb.)
+                  {hubTab === 'civiles' ? 'Situación / plazo CGP' : 'Término procesal'}
                 </th>
                 <th className="px-6 py-4 text-left text-[11px] font-bold text-slate-400 uppercase tracking-widest">Responsable</th>
               </tr>
@@ -219,7 +294,7 @@ export default function Dashboard() {
                         <div className="text-sm font-bold text-accent tracking-tight group-hover:underline">
                           {formatRadicado(c.radicado)}
                         </div>
-                        <div className="text-[10px] text-slate-400 font-medium mt-0.5">Orden de tutela</div>
+                        <div className="text-[10px] text-slate-400 font-medium mt-0.5">{listProductLabel(c)}</div>
                       </td>
                       <td className="px-6 py-5">
                         <div className="flex flex-col">
@@ -266,9 +341,11 @@ export default function Dashboard() {
                           <span className="text-[10px] font-semibold text-slate-500 normal-case pl-4">
                             {row.stage === 'archivado' || c.status === 'archived'
                               ? '—'
-                              : row.businessDaysRemaining <= 0
-                                ? 'Vencido (10d háb.)'
-                                : `${row.businessDaysRemaining} días hábiles restantes`}
+                              : isProcesosCivilListRow(c)
+                                ? civilSituacionDisplay(c)
+                                : row.businessDaysRemaining <= 0
+                                  ? 'Vencido (10d háb.)'
+                                  : `${row.businessDaysRemaining} días hábiles restantes`}
                           </span>
                         </div>
                       </td>
@@ -293,7 +370,7 @@ export default function Dashboard() {
 
       <footer className="flex justify-between items-center text-[11px] text-slate-400 font-bold uppercase tracking-widest px-2">
         <div>
-          Filtro: {filteredRows.length} de {cases.length} expedientes
+          Filtro: {filteredRows.length} de {hubCases.length} expedientes ({hubTab})
         </div>
         <div>Última actualización: {format(new Date(), 'hh:mm a', { locale: es })}</div>
       </footer>

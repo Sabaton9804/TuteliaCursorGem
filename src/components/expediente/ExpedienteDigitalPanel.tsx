@@ -741,7 +741,7 @@ export function ExpedienteDigitalPanel({
           return;
         }
       }
-      if (caseItem.caseType === 'tutela_primera' && uploadableActsForCaseType(caseItem.caseType).length > 0) {
+      if (uploadableActsForCaseType(caseItem.caseType).length > 0) {
         setUploadActDialog({ files, notebookCode });
         if (fileInputRef.current) fileInputRef.current.value = '';
         return;
@@ -931,11 +931,24 @@ export function ExpedienteDigitalPanel({
     try {
       await ensureSupabaseSessionForWrites();
       const path = doc.storagePath?.trim();
-      if (path) await removeCaseDocumentObjects(supabase, [path]);
       const { error } = await supabase.from('case_documents').delete().eq('id', doc.id).eq('case_id', caseId);
       if (error) {
         await handleDataPermissionError(error, 'delete', 'case_documents');
         throw error;
+      }
+      if (caseItem?.informeIngresoDocumentId === doc.id) {
+        await supabase
+          .from('cases')
+          .update({
+            informe_ingreso_registrado_at: null,
+            informe_ingreso_document_id: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', caseId);
+      }
+      if (path) {
+        const removed = await removeCaseDocumentObjects(supabase, [path]);
+        if (!removed) throw new Error('No se pudo eliminar el archivo en almacenamiento.');
       }
       if (selectedDoc?.id === doc.id) onSelectDoc(null);
       await onRefetchDocs();
@@ -1204,7 +1217,7 @@ export function ExpedienteDigitalPanel({
         onCancel={() => setUploadActDialog(null)}
         onConfirm={confirmUploadWithAct}
       />
-      {caseItem.caseType === 'tutela_primera' ? (
+      {uploadableActsForCaseType(caseItem.caseType).length > 0 ? (
         <ExpedienteActTimeline docs={docs} caseType={caseItem.caseType} />
       ) : null}
       <ExpedienteSignSgdeDialog

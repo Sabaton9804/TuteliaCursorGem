@@ -6,6 +6,7 @@ import {
   normalizeStaffKey,
 } from './court-staff-assignees';
 import { getCachedPipelineForCaseType, getCachedStageLabel } from './process-definitions-service';
+import { isCivilCaseType } from './process-product-scope';
 
 /** Códigos de etapa alineados con `public.case_stages.stage_code` (CHECK en migración). */
 export type CaseStageCode =
@@ -19,6 +20,9 @@ export type CaseStageCode =
   | 'FALLO'
   | 'NOTIFICACION_FALLO'
   | 'TERMINO_IMPUGNACION'
+  | 'TERMINO_APELACION'
+  | 'TERMINO_EXCEPCIONES'
+  | 'APELACION'
   | 'IMPUGNACION'
   | 'REMISION_SUPERIOR'
   | 'EJECUTORIA'
@@ -42,8 +46,9 @@ export const STAGE_PIPELINE_BY_CASE_TYPE: Record<
     'FALLO',
     'NOTIFICACION_FALLO',
     'TERMINO_IMPUGNACION',
+    'IMPUGNACION',
+    'REMISION_SUPERIOR',
     'EJECUTORIA',
-    'REMISION_CORTE',
   ],
   tutela_segunda: [
     'RADICACION',
@@ -60,19 +65,89 @@ export const STAGE_PIPELINE_BY_CASE_TYPE: Record<
     'NOTIFICACION_FALLO',
     'EJECUTORIA',
   ],
-  civil_ordinario: ['RADICACION', 'ADMISION', 'TRAMITE', 'FALLO', 'EJECUTORIA'],
-  civil_ejecutivo: ['RADICACION', 'ADMISION', 'TRAMITE', 'FALLO', 'EJECUTORIA'],
-  civil_jurisdiccion_voluntaria: ['RADICACION', 'ADMISION', 'TRAMITE', 'FALLO', 'EJECUTORIA'],
-  civil_insolvencia: ['RADICACION', 'ADMISION', 'TRAMITE', 'FALLO', 'EJECUTORIA'],
-  civil_otros: ['RADICACION', 'ADMISION', 'TRAMITE', 'FALLO', 'EJECUTORIA'],
+  civil_ordinario: [
+    'RADICACION',
+    'ADMISION',
+    'NOTIFICACION_AUTO_ADMISORIO',
+    'TERMINO_RESPUESTA',
+    'TRAMITE',
+    'INGRESO_DESPACHO_FALLO',
+    'FALLO',
+    'NOTIFICACION_FALLO',
+    'TERMINO_APELACION',
+    'APELACION',
+    'REMISION_SUPERIOR',
+    'EJECUTORIA',
+  ],
+  civil_ejecutivo: [
+    'RADICACION',
+    'ADMISION',
+    'NOTIFICACION_AUTO_ADMISORIO',
+    'TERMINO_EXCEPCIONES',
+    'TRAMITE',
+    'INGRESO_DESPACHO_FALLO',
+    'FALLO',
+    'NOTIFICACION_FALLO',
+    'TERMINO_APELACION',
+    'APELACION',
+    'REMISION_SUPERIOR',
+    'EJECUTORIA',
+  ],
+  civil_jurisdiccion_voluntaria: [
+    'RADICACION',
+    'ADMISION',
+    'NOTIFICACION_AUTO_ADMISORIO',
+    'TERMINO_RESPUESTA',
+    'TRAMITE',
+    'INGRESO_DESPACHO_FALLO',
+    'FALLO',
+    'NOTIFICACION_FALLO',
+    'TERMINO_APELACION',
+    'APELACION',
+    'REMISION_SUPERIOR',
+    'EJECUTORIA',
+  ],
+  civil_insolvencia: [
+    'RADICACION',
+    'ADMISION',
+    'NOTIFICACION_AUTO_ADMISORIO',
+    'TERMINO_RESPUESTA',
+    'TRAMITE',
+    'INGRESO_DESPACHO_FALLO',
+    'FALLO',
+    'NOTIFICACION_FALLO',
+    'TERMINO_APELACION',
+    'APELACION',
+    'REMISION_SUPERIOR',
+    'EJECUTORIA',
+  ],
+  civil_otros: [
+    'RADICACION',
+    'ADMISION',
+    'NOTIFICACION_AUTO_ADMISORIO',
+    'TERMINO_RESPUESTA',
+    'TRAMITE',
+    'INGRESO_DESPACHO_FALLO',
+    'FALLO',
+    'NOTIFICACION_FALLO',
+    'TERMINO_APELACION',
+    'APELACION',
+    'REMISION_SUPERIOR',
+    'EJECUTORIA',
+  ],
 };
 
 const SECRETARIA_STAGES = new Set<CaseStageCode>([
   'RADICACION',
   'NOTIFICACION_AUTO_ADMISORIO',
   'TERMINO_RESPUESTA',
+  'TERMINO_EXCEPCIONES',
   'NOTIFICACION_FALLO',
   'TERMINO_IMPUGNACION',
+  'TERMINO_APELACION',
+  'IMPUGNACION',
+  'APELACION',
+  'REMISION_SUPERIOR',
   'REMISION_CORTE',
 ]);
 
@@ -82,6 +157,8 @@ const DESPACHO_STAGES = new Set<CaseStageCode>([
   'FALLO',
   'EJECUTORIA',
   'TRAMITE',
+  'INADMISION',
+  'RECHAZO',
 ]);
 
 export function responsibleRoleForStage(stage: CaseStageCode): CaseStageResponsibleRole {
@@ -100,6 +177,9 @@ export const STAGE_LABEL_ES: Record<CaseStageCode, string> = {
   FALLO: 'Fallo',
   NOTIFICACION_FALLO: 'Notificación del fallo',
   TERMINO_IMPUGNACION: 'Término de impugnación',
+  TERMINO_APELACION: 'Término de apelación',
+  TERMINO_EXCEPCIONES: 'Término de excepciones',
+  APELACION: 'Apelación',
   IMPUGNACION: 'Impugnación',
   REMISION_SUPERIOR: 'Remisión superior',
   EJECUTORIA: 'Ejecutoria',
@@ -113,9 +193,21 @@ export function pipelineForCaseType(caseType: CaseType | undefined): readonly Ca
   return getCachedPipelineForCaseType(caseType);
 }
 
-/** Etiqueta de etapa: BD (process_stages_definition) o fallback TS. */
+/** Etiqueta de etapa: BD (process_stages_definition) o fallback TS; ajustes civiles CGP. */
 export function stageLabelForCaseType(stage: CaseStageCode, caseType?: CaseType): string {
-  return getCachedStageLabel(stage, caseType);
+  const base = getCachedStageLabel(stage, caseType);
+  if (!caseType || !isCivilCaseType(caseType)) return base;
+  if (stage === 'FALLO') return 'Sentencia';
+  if (stage === 'INGRESO_DESPACHO_FALLO') return 'Ingreso despacho / sentencia';
+  if (stage === 'NOTIFICACION_FALLO') return 'Notificación de la sentencia';
+  if (stage === 'TRAMITE') return 'Trámite (prueba, audiencia)';
+  if (stage === 'TERMINO_APELACION') return 'Apelación (10 días hábiles — CGP art. 318)';
+  if (stage === 'TERMINO_EXCEPCIONES') return 'Excepciones de mérito (5 días hábiles — CGP art. 443)';
+  if (stage === 'NOTIFICACION_AUTO_ADMISORIO' && caseType === 'civil_ejecutivo') {
+    return 'Notificación mandamiento de pago';
+  }
+  if (stage === 'ADMISION' && caseType === 'civil_ejecutivo') return 'Mandamiento de pago';
+  return base;
 }
 
 export function nextStageInPipeline(
@@ -135,7 +227,7 @@ const SECRETARIA_ROLE_PRIORITY: UserRole[] = [
   'admin',
 ];
 
-const DESPACHO_ROLE_PRIORITY: UserRole[] = ['judge', 'sustanciador', 'admin'];
+const DESPACHO_ROLE_PRIORITY: UserRole[] = ['sustanciador', 'judge', 'admin'];
 
 function roleRank(role: UserRole, order: readonly UserRole[]): number {
   const i = order.indexOf(role);

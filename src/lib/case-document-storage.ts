@@ -70,10 +70,14 @@ export async function uploadCaseAttachment(
 export async function removeCaseDocumentObjects(
   supabase: SupabaseClient,
   paths: string[]
-): Promise<void> {
-  if (paths.length === 0) return;
+): Promise<boolean> {
+  if (paths.length === 0) return true;
   const { error } = await supabase.storage.from(CASE_DOCUMENTS_BUCKET).remove(paths);
-  if (error) console.error('Storage remove:', error.message);
+  if (error) {
+    console.error('Storage remove:', error.message);
+    return false;
+  }
+  return true;
 }
 
 /** PostgREST cuando el proyecto no tiene la columna (migración no aplicada). */

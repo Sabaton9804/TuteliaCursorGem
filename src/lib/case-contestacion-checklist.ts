@@ -1,6 +1,8 @@
 import type { Case, Document } from '../types';
 import { inferActCodeFromDocument } from './case-act-types';
 import type { CaseStageCode } from './case-workflow-stages';
+import { isCivilCaseType } from './process-product-scope';
+import { isCivilEjecutivoCaseType } from './sgde-case-scope';
 
 export type ContestacionPartyRow = {
   entityName: string;
@@ -48,6 +50,94 @@ export function buildCaseContestacionChecklist(opts: {
   plazoVencido?: boolean;
 }): CaseContestacionChecklist {
   const { caseItem, docs, openStageCode, plazoVencido = false } = opts;
+  const isCivil = isCivilCaseType(caseItem.caseType);
+  const isEjecutivo = isCivilEjecutivoCaseType(caseItem.caseType);
+
+  if (isEjecutivo) {
+    const excepciones = docs.filter((d) => inferActCodeFromDocument(d) === 'excepciones_ejecutivo');
+    const demandados = splitAccionados(caseItem.defendant);
+    const parties: ContestacionPartyRow[] =
+      demandados.length > 0
+        ? demandados.map((name) => ({
+            entityName: name,
+            respuestaCargada: excepciones.length > 0,
+            correoIngresado: false,
+            piezasCount: excepciones.length,
+          }))
+        : [
+            {
+              entityName: caseItem.defendant?.trim() || 'Ejecutado',
+              respuestaCargada: excepciones.length > 0,
+              correoIngresado: false,
+              piezasCount: excepciones.length,
+            },
+          ];
+    const totalRequired = parties.length;
+    const totalResponded = excepciones.length > 0 ? totalRequired : 0;
+    const allResponded = excepciones.length > 0;
+    const enTermino = openStageCode === 'TERMINO_EXCEPCIONES' || openStageCode === 'TRAMITE';
+    const listoParaFallo = enTermino && (allResponded || plazoVencido);
+    let mensajeResumen: string;
+    if (allResponded) {
+      mensajeResumen = 'Excepciones de mérito cargadas — puede cerrar el término e ingresar a trámite.';
+    } else if (plazoVencido) {
+      mensajeResumen = 'Plazo de excepciones vencido (CGP art. 443) — puede continuar ejecución / trámite.';
+    } else {
+      mensajeResumen = 'Pendiente excepciones de mérito o vencimiento del término (5 días hábiles).';
+    }
+    return {
+      parties,
+      totalRequired,
+      totalResponded,
+      allResponded,
+      plazoVencido,
+      listoParaFallo,
+      mensajeResumen,
+    };
+  }
+
+  if (isCivil) {
+    const contestaciones = docs.filter((d) => inferActCodeFromDocument(d) === 'contestacion_demanda');
+    const demandados = splitAccionados(caseItem.defendant);
+    const parties: ContestacionPartyRow[] =
+      demandados.length > 0
+        ? demandados.map((name) => ({
+            entityName: name,
+            respuestaCargada: contestaciones.length > 0,
+            correoIngresado: false,
+            piezasCount: contestaciones.length,
+          }))
+        : [
+            {
+              entityName: caseItem.defendant?.trim() || 'Demandado',
+              respuestaCargada: contestaciones.length > 0,
+              correoIngresado: false,
+              piezasCount: contestaciones.length,
+            },
+          ];
+    const totalRequired = parties.length;
+    const totalResponded = contestaciones.length > 0 ? totalRequired : 0;
+    const allResponded = contestaciones.length > 0;
+    const enTermino = openStageCode === 'TERMINO_RESPUESTA' || openStageCode === 'TRAMITE';
+    const listoParaFallo = enTermino && (allResponded || plazoVencido);
+    let mensajeResumen: string;
+    if (allResponded) {
+      mensajeResumen = 'Contestación de la demanda cargada — puede cerrar el término e ingresar a trámite.';
+    } else if (plazoVencido) {
+      mensajeResumen = 'Plazo de contestación vencido (CGP art. 76) — puede cerrar el término e ingresar a trámite.';
+    } else {
+      mensajeResumen = 'Pendiente contestación de la demanda o vencimiento del término (20 días hábiles).';
+    }
+    return {
+      parties,
+      totalRequired,
+      totalResponded,
+      allResponded,
+      plazoVencido,
+      listoParaFallo,
+      mensajeResumen,
+    };
+  }
 
   const requiredNames = splitAccionados(caseItem.defendant);
   const partyKeys = requiredNames.map((n) => ({ name: n, key: normalizeEntityKey(n) }));

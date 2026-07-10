@@ -1,12 +1,7 @@
 import type { CaseType } from '../types';
 
 /**
- * Alcance de producto actual: solo tutelas constitucionales.
- * La arquitectura (`process_definitions`, `court_enabled_processes`) admite más tipos;
- * hasta ampliar el alcance, el runtime filtra a estas tres variantes.
- *
- * Para habilitar civil ordinario / laboral / penal: ampliar este arreglo y el selector
- * de radicación (Fase 3); no basta con insertar filas en BD.
+ * Tutelas constitucionales con flujo operativo completo (MVP).
  */
 export const MVP_RADICABLE_CASE_TYPES = [
   'tutela_primera',
@@ -20,12 +15,7 @@ export function isMvpRadicableCaseType(value: string | null | undefined): value 
   return MVP_RADICABLE_CASE_TYPES.includes(value as MvpRadicableCaseType);
 }
 
-/** Tipos con flujo implementado en la app (radicación + etapas + plantillas tutela). */
-export function filterToMvpProductScope<T extends { legacy_case_type: string | null }>(rows: T[]): T[] {
-  return rows.filter((r) => isMvpRadicableCaseType(r.legacy_case_type));
-}
-
-/** Tipos civiles habilitados en módulo Procesos (listado + detalle; radicación civil en fase posterior). */
+/** Tipos civiles habilitados en módulo Procesos. */
 export const CIVIL_CASE_TYPES = [
   'civil_ordinario',
   'civil_ejecutivo',
@@ -38,6 +28,23 @@ export type CivilCaseType = (typeof CIVIL_CASE_TYPES)[number];
 
 export function isCivilCaseType(value: string | null | undefined): value is CivilCaseType {
   return CIVIL_CASE_TYPES.includes(value as CivilCaseType);
+}
+
+/** Tipos radicables en UI (tutela MVP + procesos civiles). */
+export const RADICABLE_CASE_TYPES = [
+  ...MVP_RADICABLE_CASE_TYPES,
+  ...CIVIL_CASE_TYPES,
+] as const satisfies readonly CaseType[];
+
+export type RadicableCaseType = (typeof RADICABLE_CASE_TYPES)[number];
+
+export function isRadicableCaseType(value: string | null | undefined): value is CaseType {
+  return (RADICABLE_CASE_TYPES as readonly string[]).includes(String(value ?? ''));
+}
+
+/** Tipos con flujo tutela completo (radicación + etapas + plantillas tutela). */
+export function filterToMvpProductScope<T extends { legacy_case_type: string | null }>(rows: T[]): T[] {
+  return rows.filter((r) => isMvpRadicableCaseType(r.legacy_case_type));
 }
 
 /** Definiciones habilitadas en despacho: tutela MVP + dominio civil. */
@@ -59,18 +66,6 @@ export type ComingSoonProcessPreview = {
 
 export const COMING_SOON_PROCESS_PREVIEWS: readonly ComingSoonProcessPreview[] = [
   {
-    id: 'civil_ordinario',
-    emoji: '⚖️',
-    title: 'Proceso civil ordinario',
-    subtitle: 'Demanda, admisión, contestación y trámite ordinario',
-  },
-  {
-    id: 'civil_ejecutivo',
-    emoji: '📑',
-    title: 'Proceso ejecutivo',
-    subtitle: 'Ejecutivo singular y cobro judicial',
-  },
-  {
     id: 'laboral_ordinario',
     emoji: '👷',
     title: 'Proceso laboral',
@@ -83,3 +78,34 @@ export const COMING_SOON_PROCESS_PREVIEWS: readonly ComingSoonProcessPreview[] =
     subtitle: 'Trámite penal (circuito / conocimiento)',
   },
 ];
+
+export const CIVIL_PROCESS_CARD_COPY: Record<
+  CivilCaseType,
+  { emoji: string; title: string; subtitle: string }
+> = {
+  civil_ordinario: {
+    emoji: '⚖️',
+    title: 'Proceso civil ordinario',
+    subtitle: 'Demanda, admisión, contestación y trámite ordinario',
+  },
+  civil_ejecutivo: {
+    emoji: '📑',
+    title: 'Proceso ejecutivo',
+    subtitle: 'Ejecutivo singular y cobro judicial',
+  },
+  civil_jurisdiccion_voluntaria: {
+    emoji: '📋',
+    title: 'Jurisdicción voluntaria',
+    subtitle: 'Asuntos no contenciosos civiles',
+  },
+  civil_insolvencia: {
+    emoji: '🏦',
+    title: 'Insolvencia',
+    subtitle: 'Proceso de insolvencia empresarial o personal',
+  },
+  civil_otros: {
+    emoji: '📁',
+    title: 'Otros procesos civiles',
+    subtitle: 'Asuntos civiles diversos del despacho',
+  },
+};

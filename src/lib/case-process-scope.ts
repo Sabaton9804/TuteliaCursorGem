@@ -36,6 +36,12 @@ export function mapTipoProcesoToCivilCaseType(tipoProceso: string | null | undef
   return 'civil_ordinario';
 }
 
+export function isTutelaListRow(c: Pick<Case, 'caseType' | 'catalogMetadata'>): boolean {
+  if (isProcesosCivilListRow(c)) return false;
+  const t = c.caseType ?? 'tutela_primera';
+  return isMvpRadicableCaseType(t) || t === 'consulta_desacato';
+}
+
 export function mapInstanciaToTutelaCaseType(instancia: string | null | undefined): CaseType {
   const i = (instancia || '').toLowerCase();
   if (i.includes('segunda') || i.includes('2')) return 'tutela_segunda';

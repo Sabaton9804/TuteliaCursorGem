@@ -31,19 +31,22 @@ function rowToClassOption(
   const code = String(classRow.code ?? '');
   if (!id || !code) return null;
 
+  const sectionCode = String(sectionRow?.code ?? '');
+  const isCivilSection = sectionCode.startsWith('civil');
   const derecho = sierjuClassCodeToDerecho(code);
-  if (!derecho) return null;
+  if (!derecho && !isCivilSection) return null;
+  const resolvedDerecho = derecho ?? ('OTROS' as DerechoTuteladoCode);
 
   return {
     id,
     code,
     label: String(classRow.label ?? code),
     sortOrder: Number(classRow.sort_order ?? 0),
-    sectionCode: String(sectionRow?.code ?? ''),
+    sectionCode,
     sectionLabel: String(sectionRow?.label ?? ''),
     isDefault: linkRow.is_default === true,
-    fundamentalRight: derechoToFundamental(derecho),
-    derechoTuteladoCode: derecho,
+    fundamentalRight: derechoToFundamental(resolvedDerecho),
+    derechoTuteladoCode: resolvedDerecho,
   };
 }
 

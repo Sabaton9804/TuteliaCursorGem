@@ -39,6 +39,8 @@ import { tiptapJsonToPlainText } from '../../lib/tiptap-to-plain-text';
 import { formatRadicado } from '../../lib/formatters';
 import { supabase } from '../../lib/supabase';
 import { recordBorradorAutoEnviadoRevision } from '../../lib/case-stages-service';
+import { isCivilCaseType } from '../../lib/process-product-scope';
+import { isCivilEjecutivoCaseType } from '../../lib/sgde-case-scope';
 import { useCourtOperational } from '../../contexts/CourtOperationalContext';
 import { marcadoresParaPlantilla } from '../../lib/plantilla-marcadores-catalog';
 import { defaultToggleDefsForPlantilla } from '../../lib/plantilla-template-default-toggles';
@@ -105,6 +107,8 @@ export function CaseDespachoDocumentosPanel({
   const autoDraftTouchedRef = useRef(false);
 
   const radSlug = formatRadicado(caseItem.radicado) || caseItem.radicado;
+  const isCivil = isCivilCaseType(caseItem.caseType);
+  const isEjecutivo = isCivilEjecutivoCaseType(caseItem.caseType);
 
   const nombreJuezRevision = useMemo(() => nameByRole('judge'), [nameByRole]);
 
@@ -523,6 +527,7 @@ export function CaseDespachoDocumentosPanel({
       const displayName = sanitizeCaseDocumentLogicalName(informePdfNombre, DEFAULT_INFORME_INGRESO_PDF_NAME);
       await registerCaseInformeIngresoWithExpedientePdf({
         caseId,
+        caseType: caseItem?.caseType,
         pdfBytes,
         displayName,
         docs,
@@ -988,7 +993,13 @@ export function CaseDespachoDocumentosPanel({
             <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-900">
               Despacho
             </span>
-            <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">Auto admisorio (tutela)</h3>
+            <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">
+              {isEjecutivo
+                ? 'Mandamiento de pago (proceso ejecutivo — CGP)'
+                : isCivil
+                  ? 'Auto admisorio (proceso civil — CGP)'
+                  : 'Auto admisorio (tutela)'}
+            </h3>
           </div>
           <div className="mt-3">
             <label className="block text-[11px] font-semibold text-slate-600">

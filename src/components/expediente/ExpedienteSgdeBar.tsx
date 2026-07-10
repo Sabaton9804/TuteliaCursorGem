@@ -21,6 +21,7 @@ import {
 } from '../../lib/expediente-sgde-sync';
 import type { Document } from '../../types';
 import { expedientePiezasParaLista } from '../../lib/expediente-viewer-doc';
+import { isSgdeAutoCreateCaseType } from '../../lib/sgde-case-scope';
 import type { SgdeTreeNodeJson } from './CaseSgdePanel';
 
 async function authHeaders(): Promise<HeadersInit> {
@@ -213,7 +214,7 @@ export function ExpedienteSgdeBar({
   }, [caseId, loadTree, onRefetchCase]);
 
   const canCreateInSgde =
-    (caseItem.caseType === 'tutela_primera' || !caseItem.caseType) &&
+    isSgdeAutoCreateCaseType(caseItem.caseType) &&
     (linkStatus === 'unlinked' || caseItem.sgdeSyncStatus === 'error');
 
   const createInSgde = useCallback(async () => {
