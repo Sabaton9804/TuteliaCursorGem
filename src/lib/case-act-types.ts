@@ -215,6 +215,8 @@ export const UPLOADABLE_ACT_CODES_TUTELA: readonly CaseActCode[] = [
   'fallo_tutela',
   'notificacion_fallo',
   'constancia_notificacion_fallo',
+  'impugnacion_escrito',
+  'remision_superior',
   'remision_corte',
 ];
 

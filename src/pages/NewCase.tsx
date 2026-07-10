@@ -14,7 +14,8 @@ import { getSupabaseAuthErrorMessage } from '../lib/supabase-auth-errors';
 import { handleDataPermissionError } from '../lib/error-handler';
 import { motion } from 'motion/react';
 import { PDFDocument } from 'pdf-lib';
-import { COURT_CONSTANTS, RIGHTS_LIST } from '../constants';
+import { RIGHTS_LIST } from '../constants';
+import { CUI_INSTANCE_PRIMERA } from '../lib/radicado-cui';
 import { formatRadicado } from '../lib/formatters';
 import {
   buildRadicadoPrimeraInstancia,
@@ -57,8 +58,12 @@ import {
   fetchSierjuClassesForCaseType,
 } from '../lib/sierju-catalog-service';
 import { CaseSierjuClassification } from '../components/expediente/CaseSierjuClassification';
-import { startOfLocalDay, businessDayTermEnd } from '../lib/business-days';
+import { startOfLocalDay } from '../lib/business-days';
 import { caseTermBusinessDaysFromDecreto2591 } from '../lib/decreto-2591-plazos';
+import {
+  computePlazoFallarDeadlineAt,
+  shouldSetPlazoFallarAtRadicacion,
+} from '../lib/plazo-fallar-tutela';
 import { useSessionCourt } from '../contexts/SessionCourtContext';
 import {
   useCourtOperational,
@@ -241,6 +246,15 @@ function getUserFriendlyRadicadoError(err: any): string {
       'El contenido del correo o de la IA incluye caracteres que la base de datos no admite en metadatos JSON ' +
       '(p. ej. bytes nulos o texto mal codificado). Intente de nuevo; si persiste, reenvíe el correo o quite anexos problemáticos.'
     );
+  }
+
+  if (
+    code === '23505' ||
+    rawMessage.includes('duplicate key') ||
+    rawMessage.includes('unique constraint') ||
+    rawMessage.includes('cases_court_id_radicado')
+  ) {
+    return 'Ya existe un expediente con ese radicado en este despacho. Verifique el consecutivo o consulte la lista de expedientes.';
   }
 
   return message || 'Error desconocido al radicar expediente.';
@@ -896,13 +910,13 @@ export default function NewCase() {
       });
       const filingForTerm = startOfLocalDay(new Date());
       let deadlineAtIso: string | null = null;
-      if (flow === 'tutela_primera' || flow === 'tutela_segunda') {
+      if (shouldSetPlazoFallarAtRadicacion(flow)) {
         const termDays =
           processDef?.case_term_type === 'habiles' && processDef.case_term_days != null && processDef.case_term_days > 0
             ? processDef.case_term_days
             : caseTermBusinessDaysFromDecreto2591(flow);
         if (termDays != null) {
-          deadlineAtIso = businessDayTermEnd(filingForTerm, termDays).toISOString();
+          deadlineAtIso = computePlazoFallarDeadlineAt(flow, filingForTerm);
         }
       }
       const caseRow: Record<string, unknown> = {
@@ -1636,7 +1650,7 @@ export default function NewCase() {
               radicadoConflict={radicadoConflict}
               radicacion={radicacion}
               instanceCode={
-                caseFlowType ? instanceCodeForCaseType(caseFlowType) : COURT_CONSTANTS.INSTANCE_CODE
+                caseFlowType ? instanceCodeForCaseType(caseFlowType) : CUI_INSTANCE_PRIMERA
               }
               segundaInstancia={
                 caseFlowType === 'tutela_segunda'

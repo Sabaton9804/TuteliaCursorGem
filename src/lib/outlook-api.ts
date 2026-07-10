@@ -480,6 +480,11 @@ export async function sendOutlookMail(payload: {
   bodyHtml: string;
   to: string[];
   cc?: string[];
+  attachments?: Array<{
+    name: string;
+    contentType: string;
+    contentBytesBase64: string;
+  }>;
 }): Promise<void> {
   const res = await fetch('/api/outlook/send', {
     method: 'POST',

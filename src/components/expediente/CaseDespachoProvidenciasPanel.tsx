@@ -10,6 +10,8 @@ import {
   descargarTxt,
   textoAutoTramiteBorrador,
   textoAutoTramiteBorradorTipTapDoc,
+  textoFalloTutelaBorrador,
+  textoFalloTutelaBorradorTipTapDoc,
   textoSentenciaBorrador,
   textoSentenciaBorradorTipTapDoc,
   type ProvidenciaDespachoContext,
@@ -41,11 +43,42 @@ type ProvidenciaConfig = {
   context: ProvidenciaDespachoContext;
   templateTipo: DocumentTemplateTipo;
   documentType: string;
-  fileSlug: 'AutoTramite' | 'Sentencia';
+  fileSlug: 'AutoTramite' | 'Sentencia' | 'FalloTutela';
   label: string;
-  recordKind: 'auto_tramite' | 'sentencia';
-  plantillaContext: 'auto_tramite' | 'sentencia';
+  recordKind: 'auto_tramite' | 'sentencia' | 'fallo';
+  plantillaContext: ProvidenciaDespachoContext;
 };
+
+function isTutelaFalloCase(caseType: Case['caseType']): boolean {
+  return (
+    caseType === 'tutela_primera' ||
+    caseType === 'tutela_segunda' ||
+    caseType === 'consulta_desacato'
+  );
+}
+
+function resolveFalloSentenciaConfig(caseItem: Case): ProvidenciaConfig {
+  if (isTutelaFalloCase(caseItem.caseType)) {
+    return {
+      context: 'fallo_tutela',
+      templateTipo: 'sentencia',
+      documentType: 'borrador_fallo_revision',
+      fileSlug: 'FalloTutela',
+      label: 'Fallo de tutela',
+      recordKind: 'fallo',
+      plantillaContext: 'fallo_tutela',
+    };
+  }
+  return {
+    context: 'sentencia',
+    templateTipo: 'sentencia',
+    documentType: 'borrador_sentencia_revision',
+    fileSlug: 'Sentencia',
+    label: 'Sentencia',
+    recordKind: 'sentencia',
+    plantillaContext: 'sentencia',
+  };
+}
 
 const AUTO_TRAMITE_CONFIG: ProvidenciaConfig = {
   context: 'auto_tramite',
@@ -55,16 +88,6 @@ const AUTO_TRAMITE_CONFIG: ProvidenciaConfig = {
   label: 'Auto de trámite',
   recordKind: 'auto_tramite',
   plantillaContext: 'auto_tramite',
-};
-
-const SENTENCIA_CONFIG: ProvidenciaConfig = {
-  context: 'sentencia',
-  templateTipo: 'sentencia',
-  documentType: 'borrador_sentencia_revision',
-  fileSlug: 'Sentencia',
-  label: 'Sentencia',
-  recordKind: 'sentencia',
-  plantillaContext: 'sentencia',
 };
 
 function ProvidenciaBorradorSection({
@@ -124,6 +147,9 @@ function ProvidenciaBorradorSection({
     if (config.context === 'auto_tramite') {
       return textoAutoTramiteBorrador(caseItem, membreteState, tpl?.contenidoBase);
     }
+    if (config.context === 'fallo_tutela') {
+      return textoFalloTutelaBorrador(caseItem, membreteState, tpl?.contenidoBase);
+    }
     return textoSentenciaBorrador(caseItem, membreteState, tpl?.contenidoBase);
   }, [config.context, caseItem, membreteState, tpl?.contenidoBase]);
 
@@ -132,7 +158,9 @@ function ProvidenciaBorradorSection({
     const doc =
       config.context === 'auto_tramite'
         ? textoAutoTramiteBorradorTipTapDoc(caseItem, membreteState, tpl.contenidoBase)
-        : textoSentenciaBorradorTipTapDoc(caseItem, membreteState, tpl.contenidoBase);
+        : config.context === 'fallo_tutela'
+          ? textoFalloTutelaBorradorTipTapDoc(caseItem, membreteState, tpl.contenidoBase)
+          : textoSentenciaBorradorTipTapDoc(caseItem, membreteState, tpl.contenidoBase);
     if (doc) return docToStorage(doc);
     return docToStorage(plainTextToTiptapDoc(textoBorrador));
   }, [config.context, tpl, caseItem, membreteState, textoBorrador]);
@@ -159,7 +187,9 @@ function ProvidenciaBorradorSection({
     const doc =
       config.context === 'auto_tramite'
         ? textoAutoTramiteBorradorTipTapDoc(caseItem, membreteState, tpl?.contenidoBase)
-        : textoSentenciaBorradorTipTapDoc(caseItem, membreteState, tpl?.contenidoBase);
+        : config.context === 'fallo_tutela'
+          ? textoFalloTutelaBorradorTipTapDoc(caseItem, membreteState, tpl?.contenidoBase)
+          : textoSentenciaBorradorTipTapDoc(caseItem, membreteState, tpl?.contenidoBase);
     if (doc) return doc;
     return draft || textoBorrador;
   }, [config.context, caseItem, membreteState, tpl?.contenidoBase, draft, textoBorrador]);
@@ -314,6 +344,7 @@ function ProvidenciaBorradorSection({
               await uploadGeneratedDocxToExpedienteWithWordReview({
                 caseId,
                 courtId: caseItem.courtId,
+                caseType: caseItem.caseType,
                 radicado: formatRadicado(caseItem.radicado) || caseItem.radicado,
                 docxBytes: bytes,
                 displayName,
@@ -321,6 +352,7 @@ function ProvidenciaBorradorSection({
                 documentType: config.documentType,
                 actorUserName: revisionActorDisplayName,
                 tipTapContent,
+                commentThreads: Object.keys(commentThreads).length > 0 ? commentThreads : undefined,
               });
               try {
                 await recordBorradorProvidenciaEnviadoRevision(supabase, {
@@ -447,9 +479,8 @@ export function CaseDespachoProvidenciasPanel({
     };
   }, [caseItem.courtId]);
 
-  useEffect(() => {
-    setMembreteState(loadPlantillas());
-  }, [caseItem.courtId]);
+  const falloConfig = useMemo(() => resolveFalloSentenciaConfig(caseItem), [caseItem]);
+  const isTutela = isTutelaFalloCase(caseItem.caseType);
 
   return (
     <div className="space-y-4">
@@ -492,17 +523,19 @@ export function CaseDespachoProvidenciasPanel({
               Ocasional
             </span>
             <Gavel className="h-4 w-4 text-slate-600" aria-hidden />
-            <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500">Sentencia</h3>
+            <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500">
+              {isTutela ? 'Fallo de tutela' : 'Sentencia'}
+            </h3>
             <span className="text-[10px] font-medium text-slate-400">(aprox. 2–3 al mes)</span>
           </div>
           <p className="mt-2 text-xs leading-relaxed text-slate-500">
-            Use cuando el proceso está en ingreso al despacho para sentencia / fallo. Mismo ciclo de revisión y PDF
-            firmado; al vincular el PDF avanza la etapa procesal.
+            Use cuando el proceso está en ingreso al despacho para {isTutela ? 'fallo' : 'sentencia'}. Mismo ciclo de
+            revisión y PDF firmado; al vincular el PDF avanza la etapa procesal.
           </p>
         </summary>
         <div className="p-6 pt-4">
           <ProvidenciaBorradorSection
-            config={SENTENCIA_CONFIG}
+            config={falloConfig}
             caseItem={caseItem}
             caseId={caseId}
             docs={docs}

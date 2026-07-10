@@ -11,10 +11,12 @@ import type {
   DocumentTemplateToggleDef,
 } from '../types';
 import { mergePageLayout } from './document-template-page-layout';
-import { insertCaseDocumentRowReturningId, uploadCaseAttachment } from './case-document-storage';
+import { insertCaseDocumentRowReturningId, removeCaseDocumentObjects, uploadCaseAttachment } from './case-document-storage';
 import { notebookCodeForCaseType } from './expediente-notebook';
 import { nextSortOrderInPrincipalNotebook } from './expediente-document-order';
 import { createCaseWordReview } from './case-word-reviews';
+import { applyStageTransitionExpedienteRecibidoAlDespacho } from './case-stages-service';
+import type { CommentThreadsMap } from './review-markup-payload';
 import { insertWordReviewJudgeNotifications } from './word-review-notifications';
 import type { JSONContent } from '@tiptap/core';
 import { docToStorage } from './tiptap-template-storage';
@@ -215,10 +217,15 @@ export async function updateDocumentTemplate(
 /** Sube el PDF del informe al expediente (cuaderno principal, al final del orden) y marca el caso. */
 export async function registerCaseInformeIngresoWithExpedientePdf(opts: {
   caseId: string;
+  courtId?: string;
+  radicado?: string;
   caseType?: CaseType;
+  caseAssignedTo?: string | null;
   pdfBytes: Uint8Array;
   displayName: string;
   docs: Document[];
+  /** Si es false, no avanza etapa aunque el tipo sea tutela 2ª / consulta desacato. */
+  advanceStage?: boolean;
 }): Promise<void> {
   await ensureSupabaseSessionForWrites();
   const notebookCode = notebookCodeForCaseType(opts.caseType);
@@ -252,6 +259,23 @@ export async function registerCaseInformeIngresoWithExpedientePdf(opts: {
     })
     .eq('id', opts.caseId);
   if (error) throw error;
+
+  const ct = opts.caseType;
+  if (
+    opts.advanceStage !== false &&
+    ct &&
+    (ct === 'tutela_segunda' || ct === 'consulta_desacato') &&
+    opts.courtId?.trim() &&
+    opts.radicado?.trim()
+  ) {
+    await applyStageTransitionExpedienteRecibidoAlDespacho(supabase, {
+      caseId: opts.caseId,
+      courtId: opts.courtId.trim(),
+      radicado: opts.radicado.trim(),
+      caseType: ct,
+      caseAssignedTo: opts.caseAssignedTo,
+    });
+  }
 }
 
 /** Registra un PDF tipado como acto procesal en el expediente digital. */
@@ -288,9 +312,14 @@ export async function registerCaseActoPdfEnExpediente(opts: {
   };
   if (opts.partyEntity?.trim()) row.party_entity = opts.partyEntity.trim();
 
-  const { id: documentId } = await insertCaseDocumentRowReturningId(supabase, row);
-  await supabase.from('cases').update({ updated_at: new Date().toISOString() }).eq('id', opts.caseId);
-  return { documentId };
+  try {
+    const { id: documentId } = await insertCaseDocumentRowReturningId(supabase, row);
+    await supabase.from('cases').update({ updated_at: new Date().toISOString() }).eq('id', opts.caseId);
+    return { documentId };
+  } catch (err) {
+    await removeCaseDocumentObjects(supabase, [up.path]);
+    throw err;
+  }
 }
 
 /**
@@ -314,6 +343,8 @@ export async function uploadGeneratedDocxToExpedienteWithWordReview(opts: {
   actorUserName?: string;
   /** Contenido del editor judicial al enviar a revisión (misma vista que verá el juez en Tutelia). */
   tipTapContent?: JSONContent | null;
+  /** Hilos de comentarios marginales del borrador (persisten en review_markup_json). */
+  commentThreads?: CommentThreadsMap;
 }): Promise<{ documentId: string; reviewId: string }> {
   await ensureSupabaseSessionForWrites();
   const sortOrder = nextSortOrderInPrincipalNotebook(opts.docs);
@@ -347,7 +378,13 @@ export async function uploadGeneratedDocxToExpedienteWithWordReview(opts: {
 
   const reviewMarkupJson: CaseWordReviewMarkupV1 | null =
     opts.tipTapContent != null && opts.tipTapContent.type === 'doc'
-      ? { v: 1, storage: docToStorage(opts.tipTapContent) }
+      ? {
+          v: 1,
+          storage: docToStorage(opts.tipTapContent),
+          ...(opts.commentThreads && Object.keys(opts.commentThreads).length > 0
+            ? { commentThreads: opts.commentThreads }
+            : {}),
+        }
       : null;
   const review = await createCaseWordReview(opts.caseId, documentId, reviewMarkupJson);
   const label = (opts.documentLabel ?? name).trim() || name;

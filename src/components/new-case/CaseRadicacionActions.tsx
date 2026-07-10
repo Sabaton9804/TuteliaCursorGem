@@ -5,7 +5,6 @@ import { AlertCircle, ArrowRight, Check, CheckCircle2, Edit2, Loader2, Sparkles 
 import { defaultRadicacionConfig } from '../../lib/court-radicacion-config';
 import { formatRadicado } from '../../lib/formatters';
 import { CUI_INSTANCE_PRIMERA, CUI_INSTANCE_SEGUNDA } from '../../lib/radicado-cui';
-import { COURT_CONSTANTS } from '../../constants';
 import type { CourtRadicacionConfig } from '../../lib/process-definition-types';
 import type { LegalAnalysis } from './new-case-types';
 
@@ -38,7 +37,7 @@ export function CaseRadicacionConsecutivePanel({
   segundaInstancia,
 }: CaseRadicacionConsecutivePanelProps) {
   const cui = radicacion ?? defaultRadicacionConfig('');
-  const inst = instanceCode ?? COURT_CONSTANTS.INSTANCE_CODE;
+  const inst = instanceCode ?? CUI_INSTANCE_PRIMERA;
   if (segundaInstancia) {
     const originDigits = segundaInstancia.originRadicado.replace(/\D/g, '');
     const originOk = originDigits.length === 23;

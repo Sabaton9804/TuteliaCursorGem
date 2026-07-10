@@ -22,7 +22,7 @@ from public.cases c
 join public.process_definitions pd on pd.id = c.process_definition_id
 join public.process_stages_definition psd
   on psd.process_definition_id = pd.id
- and psd.code = cs.stage_code
 where cs.case_id = c.id
+  and psd.code = cs.stage_code
   and cs.stage_definition_id is null
   and c.process_definition_id is not null;

@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Inter, sans-serif; background: #111; padding: 24px; }
+  .shot { width: 1280px; height: 720px; border-radius: 16px; overflow: hidden; margin-bottom: 24px; border: 1px solid rgba(55,138,221,.35); box-shadow: 0 24px 80px rgba(0,0,0,.55); }
+  .app { display: flex; height: 100%; background: #0B1528; color: #E8EEFF; }
+  .side { width: 220px; background: #050D1A; border-right: 1px solid rgba(55,138,221,.2); padding: 20px 14px; }
+  .logo { font-size: 22px; font-weight: 800; margin-bottom: 28px; }
+  .logo span { color: #378ADD; }
+  .nav { font-size: 12px; color: #8899BB; padding: 10px 12px; border-radius: 8px; margin-bottom: 4px; }
+  .nav.on { background: rgba(55,138,221,.15); color: #F0F4FF; border: 1px solid rgba(55,138,221,.3); }
+  .main { flex: 1; padding: 22px 26px; }
+  .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+  .top h1 { font-size: 24px; font-weight: 800; }
+  .top p { font-size: 12px; color: #8899BB; margin-top: 4px; }
+  .pill { font-size: 11px; padding: 6px 12px; border-radius: 999px; background: rgba(34,197,94,.12); color: #22C55E; border: 1px solid rgba(34,197,94,.35); }
+  .stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 16px; }
+  .stat { background: rgba(255,255,255,.04); border: 1px solid rgba(55,138,221,.18); border-radius: 12px; padding: 14px; }
+  .stat .n { font-size: 26px; font-weight: 800; }
+  .stat .l { font-size: 11px; color: #8899BB; margin-top: 4px; }
+  .stat.warn .n { color: #F59E0B; }
+  .stat.bad .n { color: #EF4444; }
+  .stat.ok .n { color: #22C55E; }
+  .grid2 { display: grid; grid-template-columns: 1.2fr .8fr; gap: 12px; }
+  .panel { background: rgba(255,255,255,.04); border: 1px solid rgba(55,138,221,.18); border-radius: 12px; padding: 14px; }
+  .panel h3 { font-size: 13px; font-weight: 700; margin-bottom: 10px; }
+  .row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.06); font-size: 12px; }
+  .row:last-child { border-bottom: none; }
+  .tag { font-size: 10px; padding: 3px 8px; border-radius: 999px; font-weight: 600; }
+  .tag.g { background: rgba(34,197,94,.15); color: #22C55E; }
+  .tag.y { background: rgba(245,158,11,.15); color: #F59E0B; }
+  .tag.r { background: rgba(239,68,68,.15); color: #EF4444; }
+  .tag.b { background: rgba(55,138,221,.15); color: #378ADD; }
+  .email { padding: 12px; border-radius: 10px; background: rgba(255,255,255,.03); border: 1px solid rgba(55,138,221,.12); margin-bottom: 8px; }
+  .email.sel { border-color: rgba(55,138,221,.45); background: rgba(55,138,221,.08); }
+  .email .s { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+  .email .m { font-size: 10px; color: #8899BB; }
+  .btn { display: inline-block; margin-top: 10px; padding: 8px 14px; border-radius: 8px; background: #378ADD; color: #fff; font-size: 11px; font-weight: 700; }
+  .task { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.06); }
+  .task:last-child { border-bottom: none; }
+  .chk { width: 16px; height: 16px; border-radius: 4px; border: 2px solid #378ADD; margin-top: 2px; }
+  .task h4 { font-size: 12px; font-weight: 600; }
+  .task p { font-size: 10px; color: #8899BB; margin-top: 2px; }
+  .hero-shot { position: relative; background: linear-gradient(135deg, #050D1A 0%, #042C53 100%); }
+  .hero-shot .glow { position: absolute; width: 400px; height: 400px; border-radius: 50%; filter: blur(80px); background: rgba(55,138,221,.25); top: -100px; right: -50px; }
+  .hero-content { position: relative; z-index: 1; padding: 60px; display: grid; grid-template-columns: 1fr 1fr; gap: 40px; height: 100%; align-items: center; }
+  .hero-content h1 { font-size: 42px; font-weight: 900; line-height: 1.1; letter-spacing: -.03em; }
+  .hero-content h1 em { font-style: normal; color: #378ADD; }
+  .hero-content p { margin-top: 16px; font-size: 15px; color: #8899BB; line-height: 1.6; }
+  .mini-app { background: #0B1528; border: 1px solid rgba(55,138,221,.35); border-radius: 14px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.4); }
+  .chrome { background: #050D1A; padding: 10px 14px; display: flex; gap: 6px; align-items: center; border-bottom: 1px solid rgba(55,138,221,.2); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .flow-shot { background: linear-gradient(180deg, #050D1A, #0A1830); padding: 50px; }
+  .flow-row { display: grid; grid-template-columns: repeat(7,1fr); gap: 10px; margin-top: 30px; }
+  .fstep { text-align: center; background: rgba(255,255,255,.04); border: 1px solid rgba(55,138,221,.2); border-radius: 12px; padding: 16px 8px; }
+  .fstep .num { font-size: 22px; font-weight: 800; color: #378ADD; }
+  .fstep h4 { font-size: 11px; font-weight: 700; margin: 8px 0 4px; }
+  .fstep p { font-size: 9px; color: #8899BB; }
+  .ia-shot { background: radial-gradient(circle at 70% 20%, rgba(55,138,221,.25), transparent 50%), #050D1A; padding: 50px; display: grid; grid-template-columns: 1fr 1fr; gap: 30px; align-items: center; }
+  .tower { display: flex; flex-direction: column-reverse; gap: 4px; align-items: center; }
+  .block { width: 120px; height: 22px; background: linear-gradient(90deg, #378ADD, #5BA3F5); border-radius: 4px; opacity: .85; }
+  .block:nth-child(odd) { width: 100px; opacity: .65; }
+</style>
+</head>
+<body>
+
+<div class="shot hero-shot" id="hero">
+  <div class="glow"></div>
+  <div class="hero-content">
+    <div>
+      <div style="font-size:36px;font-weight:900;margin-bottom:12px">Jurion<span style="color:#378ADD">.</span></div>
+      <h1>La Rama estaba en mil herramientas.<br><em>Ahora, un solo despacho digital.</em></h1>
+      <p>Outlook · SGDE · plazos · expediente · IA judicial</p>
+    </div>
+    <div class="mini-app">
+      <div class="chrome"><span class="dot" style="background:#EF4444"></span><span class="dot" style="background:#F59E0B"></span><span class="dot" style="background:#22C55E"></span><span style="margin-left:8px;font-size:10px;color:#8899BB">Jurion · Resumen operativo</span></div>
+      <div style="padding:14px">
+        <div class="stats" style="grid-template-columns:repeat(3,1fr);margin-bottom:10px">
+          <div class="stat ok"><div class="n">24</div><div class="l">En término</div></div>
+          <div class="stat warn"><div class="n">5</div><div class="l">Urgentes</div></div>
+          <div class="stat bad"><div class="n">1</div><div class="l">Vencido</div></div>
+        </div>
+        <div class="panel"><div class="row"><span>Tutela 2026-00142</span><span class="tag y">URGENTE</span></div><div class="row"><span>Tutela 2026-00138</span><span class="tag g">EN TÉRMINO</span></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="shot" id="dashboard">
+  <div class="app">
+    <div class="side">
+      <div class="logo">Jurion<span>.</span></div>
+      <div class="nav on">📊 Resumen</div>
+      <div class="nav">📬 Correo</div>
+      <div class="nav">📋 Centro de trabajo</div>
+      <div class="nav">📁 Expedientes</div>
+      <div class="nav">📚 Precedentes</div>
+    </div>
+    <div class="main">
+      <div class="top"><div><h1>Resumen operativo</h1><p>Juzgado 051 Civil · Tutelas de urgencia</p></div><div class="pill">● En vivo</div></div>
+      <div class="stats">
+        <div class="stat ok"><div class="n">24</div><div class="l">En término</div></div>
+        <div class="stat warn"><div class="n">5</div><div class="l">Urgentes</div></div>
+        <div class="stat bad"><div class="n">1</div><div class="l">Vencido</div></div>
+        <div class="stat"><div class="n">8</div><div class="l">Pendientes ingreso</div></div>
+      </div>
+      <div class="grid2">
+        <div class="panel"><h3>Términos críticos</h3>
+          <div class="row"><span>2026-00142 · MORENO vs EPS</span><span class="tag y">3 días</span></div>
+          <div class="row"><span>2026-00138 · RODRÍGUEZ vs IPS</span><span class="tag g">7 días</span></div>
+          <div class="row"><span>2026-00129 · GARCÍA vs EPS</span><span class="tag r">VENCIDO</span></div>
+        </div>
+        <div class="panel"><h3>Actividad reciente</h3>
+          <div class="row"><span>Ingreso aprobado · .eml</span><span class="tag b">IA</span></div>
+          <div class="row"><span>SGDE sincronizado</span><span class="tag g">OK</span></div>
+          <div class="row"><span>Revisión juez · Auto</span><span class="tag y">Pendiente</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="shot" id="correo">
+  <div class="app">
+    <div class="side"><div class="logo">Jurion<span>.</span></div><div class="nav">📊 Resumen</div><div class="nav on">📬 Correo</div><div class="nav">📋 Centro de trabajo</div></div>
+    <div class="main">
+      <div class="top"><div><h1>Pendientes de ingreso</h1><p>Correo judicial · Outlook M365</p></div><div class="btn">Analizar bandeja con IA</div></div>
+      <div class="grid2">
+        <div>
+          <div class="email sel"><div class="s">REPARTO — Tutela MORENO vs EPS SALUD TOTAL</div><div class="m">reparto.civil@ramajudicial.gov.co · Hoy 08:42</div></div>
+          <div class="email"><div class="s">MEMORIAL — Tutela 2026-00138 · Anexo prueba</div><div class="m">secretaria@juzgado051.gov.co · Ayer</div></div>
+          <div class="email"><div class="s">RESPUESTA — Tutela 2026-00102 · EPS</div><div class="m">notificaciones@eps.com · Lun</div></div>
+        </div>
+        <div class="panel">
+          <h3>🤖 Propuesta IA · Reparto nuevo</h3>
+          <div class="row"><span>Tipo</span><span class="tag b">Reparto tutela</span></div>
+          <div class="row"><span>Demandante</span><span>HECTOR MORENO</span></div>
+          <div class="row"><span>Demandado</span><span>EPS SALUD TOTAL</span></div>
+          <div class="row"><span>Piezas detectadas</span><span>2 PDF</span></div>
+          <div class="btn">Aprobar ingreso</div>
+          <div class="btn" style="margin-left:6px;background:#042C53;border:1px solid rgba(55,138,221,.4)">✉ Enviar correo</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="shot" id="trabajo">
+  <div class="app">
+    <div class="side"><div class="logo">Jurion<span>.</span></div><div class="nav">📊 Resumen</div><div class="nav">📬 Correo</div><div class="nav on">📋 Centro de trabajo</div></div>
+    <div class="main">
+      <div class="top"><div><h1>Centro de trabajo</h1><p>Sustanciador · Mis tareas automáticas</p></div></div>
+      <div class="panel">
+        <div class="task"><div class="chk"></div><div><h4>Elaborar informe de ingreso · 2026-00142</h4><p>Etapa: Admisión · Plazo: 2 días</p></div><span class="tag y">URGENTE</span></div>
+        <div class="task"><div class="chk"></div><div><h4>Corregir auto tras revisión juez · 2026-00138</h4><p>Observaciones en Word · 3 comentarios</p></div><span class="tag b">Revisión</span></div>
+        <div class="task"><div class="chk"></div><div><h4>Sincronizar piezas SGDE · 2026-00129</h4><p>2 documentos pendientes de carga</p></div><span class="tag g">SGDE</span></div>
+        <div class="task"><div class="chk"></div><div><h4>Proyecto de fallo · 2026-00102</h4><p>Sugerencias precedentes IA disponibles</p></div><span class="tag b">IA</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="shot flow-shot" id="flow">
+  <div style="font-size:14px;font-weight:700;color:#378ADD;letter-spacing:.1em;text-transform:uppercase">Flujo completo</div>
+  <h2 style="font-size:32px;font-weight:900;margin-top:8px">De Outlook al expediente en SGDE</h2>
+  <div class="flow-row">
+    <div class="fstep"><div class="num">1</div><h4>Correo</h4><p>M365</p></div>
+    <div class="fstep"><div class="num">2</div><h4>IA clasifica</h4><p>Propone piezas</p></div>
+    <div class="fstep"><div class="num">3</div><h4>Humano aprueba</h4><p>Cola</p></div>
+    <div class="fstep"><div class="num">4</div><h4>Expediente</h4><p>CUI</p></div>
+    <div class="fstep"><div class="num">5</div><h4>SGDE</h4><p>Sync</p></div>
+    <div class="fstep"><div class="num">6</div><h4>Revisión</h4><p>Juez</p></div>
+    <div class="fstep"><div class="num">7</div><h4>Precedentes</h4><p>IA</p></div>
+  </div>
+</div>
+
+<div class="shot flow-shot" id="oficios">
+  <div style="font-size:14px;font-weight:700;color:#22C55E;letter-spacing:.1em;text-transform:uppercase">De punta a punta</div>
+  <h2 style="font-size:34px;font-weight:900;margin-top:8px;margin-bottom:6px">Ingresa el reparto, <span style="color:#378ADD">sale el oficio</span></h2>
+  <p style="font-size:13px;color:#8899BB;margin-bottom:24px;max-width:820px">Plantillas · envío Outlook M365 · registro en expediente · trazabilidad completa</p>
+  <div class="flow-row" style="grid-template-columns:repeat(5,1fr)">
+    <div class="fstep"><div class="num">1</div><h4>Correo reparto</h4><p>IA clasifica · .eml</p></div>
+    <div class="fstep"><div class="num">2</div><h4>Expediente</h4><p>Radicación · CUI</p></div>
+    <div class="fstep"><div class="num">3</div><h4>Auto / fallo</h4><p>Revisión juez</p></div>
+    <div class="fstep"><div class="num">4</div><h4>Oficio</h4><p>Plantilla CSJ</p></div>
+    <div class="fstep"><div class="num">5</div><h4>Envío + registro</h4><p>Outlook · auditoría</p></div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:28px">
+    <div class="panel" style="margin:0"><h3>📬 Correo entrante y saliente</h3><p style="font-size:11px;color:#8899BB;margin-top:8px">Mail.Read + Mail.Send en M365</p></div>
+    <div class="panel" style="margin:0;border-color:rgba(34,197,94,.35)"><h3>📄 Oficios de notificación</h3><p style="font-size:11px;color:#8899BB;margin-top:8px">Auto admisorio · fallo · secretaría</p></div>
+    <div class="panel" style="margin:0"><h3>🛡️ Trazabilidad</h3><p style="font-size:11px;color:#8899BB;margin-top:8px">Quién envió qué y cuándo</p></div>
+  </div>
+</div>
+
+<div class="shot ia-shot" id="ia">
+  <div>
+    <div style="font-size:14px;font-weight:700;color:#378ADD;letter-spacing:.1em;text-transform:uppercase">Inteligencia jurídica</div>
+    <h2 style="font-size:34px;font-weight:900;margin:10px 0 14px">IA con memoria del despacho</h2>
+    <p style="font-size:14px;color:#8899BB;line-height:1.6">Biblioteca vectorial de precedentes propios + jurisprudencia. Búsqueda semántica con similitud. La IA sugiere; el juez decide.</p>
+  </div>
+  <div class="tower">
+    <div class="block"></div><div class="block"></div><div class="block"></div><div class="block"></div><div class="block"></div><div class="block"></div><div class="block"></div>
+    <div style="margin-top:10px;font-size:11px;color:#8899BB">pgvector · precedentes indexados</div>
+  </div>
+</div>
+
+</body>
+</html>

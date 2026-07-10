@@ -23,6 +23,7 @@ import {
 } from '../src/lib/case-document-storage.ts';
 import {
   businessDayTermEnd,
+  businessDayTermEndAfterEvent,
   startOfLocalDay,
   CONTESTACION_BUSINESS_DAYS,
   IMPUGNACION_BUSINESS_DAYS,
@@ -58,7 +59,7 @@ function responsibleRoleForStage(stage: CaseStageCode): 'secretaria' | 'despacho
 }
 
 function metadataForContestacionDeadline(notifiedOn: Date): Record<string, unknown> {
-  const end = businessDayTermEnd(startOfLocalDay(notifiedOn), CONTESTACION_BUSINESS_DAYS);
+  const end = businessDayTermEndAfterEvent(notifiedOn, CONTESTACION_BUSINESS_DAYS);
   return {
     stage_deadline_at: end.toISOString(),
     stage_deadline_kind: 'contestacion_accionados',
@@ -67,7 +68,7 @@ function metadataForContestacionDeadline(notifiedOn: Date): Record<string, unkno
 }
 
 function metadataForImpugnacionDeadline(notifiedOn: Date): Record<string, unknown> {
-  const end = businessDayTermEnd(startOfLocalDay(notifiedOn), IMPUGNACION_BUSINESS_DAYS);
+  const end = businessDayTermEndAfterEvent(notifiedOn, IMPUGNACION_BUSINESS_DAYS);
   return {
     stage_deadline_at: end.toISOString(),
     stage_deadline_kind: 'impugnacion',
@@ -287,6 +288,61 @@ async function nextConsecutive(admin: SupabaseClient, courtId: string): Promise<
     }
   }
   return max + 1;
+}
+
+async function radicarSintetico(
+  admin: SupabaseClient,
+  secretarioId: string,
+  steps: StepLog[],
+): Promise<{ caseId: string; radicado: string }> {
+  const courtId = COURT_ID;
+  const cons = await nextConsecutive(admin, courtId);
+  const radicado = buildRadicadoPrimeraInstancia(String(cons), {
+    cityCode: '11001',
+    entityCode: '31',
+    specialtyCode: '05',
+    despachoCode: '051',
+  });
+  const caseId = randomUUID();
+  const filing = startOfLocalDay(new Date());
+  const deadlineAt = businessDayTermEnd(filing, caseTermBusinessDaysFromDecreto2591('tutela_primera')).toISOString();
+
+  const { error: insErr } = await admin.from('cases').insert({
+    id: caseId,
+    court_id: courtId,
+    radicado,
+    deadline_at: deadlineAt,
+    claimant: 'Accionante E2E sintético',
+    defendant: 'Entidad accionada E2E',
+    status: 'received',
+    source_channel: 'manual',
+    subject: 'Tutela E2E sintética — sin .eml',
+    raw_text: 'Demanda sintética para prueba E2E bots.',
+    case_type: 'tutela_primera',
+    assigned_to: 'Bot Sustanciador',
+  });
+  if (insErr) throw insErr;
+  logStep(steps, 'Bot Secretario', 'Radicar tutela sintética (sin .eml)', true, radicado);
+
+  const now = new Date().toISOString();
+  await insertStage(admin, {
+    courtId,
+    caseId,
+    stage: 'RADICACION',
+    enteredAt: now,
+    createdBy: secretarioId,
+    metadata: { source: 'radicacion', bot_e2e: true, synthetic: true },
+  });
+  await enqueueTask(admin, {
+    courtId,
+    caseId,
+    radicado,
+    stage: 'RADICACION',
+    creatorId: secretarioId,
+  });
+  logStep(steps, 'Bot Secretario', 'Abrir etapa RADICACION', true);
+
+  return { caseId, radicado };
 }
 
 async function radicarDesdeTutelaEml(
@@ -715,61 +771,74 @@ async function escribienteNotificaFallo(
 
 async function main() {
   loadEnv();
-  const url = normalizeUrl(process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '');
+  const url = normalizeUrl(
+    process.env.VITE_SUPABASE_URL ||
+      process.env.NEXT_PUBLIC_SUPABASE_URL ||
+      process.env.SUPABASE_URL ||
+      '',
+  );
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceKey) {
     console.error('Faltan SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY');
     process.exit(1);
   }
 
+  const synthetic = process.argv.includes('--synthetic');
+  const emlArgs = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+
   const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const steps: StepLog[] = [];
   const inconvenientes: string[] = [];
 
-  const emlPaths = process.argv.slice(2).length ? process.argv.slice(2) : [...DEFAULT_EMLS];
+  const emlPaths = emlArgs.length ? emlArgs : synthetic ? [] : [...DEFAULT_EMLS];
 
   console.log('='.repeat(72));
   console.log('E2E BOTS — Tutela completa hasta notificación del fallo');
+  if (synthetic) console.log('Modo: --synthetic (sin .eml)');
   console.log('='.repeat(72));
 
-  console.log('\n--- Análisis de los correos descargados ---\n');
-  const analyses: Awaited<ReturnType<typeof analyzeEml>>[] = [];
-  for (const p of emlPaths) {
-    if (!fs.existsSync(p)) {
-      console.log(`✗ No existe: ${p}`);
-      inconvenientes.push(`Archivo no encontrado: ${p}`);
-      continue;
-    }
-    const a = await analyzeEml(p);
-    analyses.push(a);
-    const isTutelaGen = /generaci[oó]n de tutela/i.test(String(a.parsed.subject));
-    const isDemandaCivil = /demanda en l[ií]nea/i.test(String(a.parsed.subject));
-    const isNotifImpugnacion = /notificaci[oó]n.*impugnaci[oó]n/i.test(String(a.parsed.subject));
-    console.log(`📧 ${path.basename(p)}`);
-    console.log(`   Asunto: ${a.parsed.subject}`);
-    console.log(`   De: ${a.parsed.from}`);
-    console.log(`   Adjuntos parseados: ${a.parsed.attachments?.length ?? 0} | Enlace Archivo: ${a.parsed.linkFound ? 'sí' : 'no'}`);
-    if (isDemandaCivil) {
-      inconvenientes.push(
-        `«${path.basename(p)}» es demanda CIVIL (DemandaEnLinea), no tutela. La app MVP solo radica tutela_primera/segunda/consulta_desacato.`,
-      );
-    }
-    if (isNotifImpugnacion) {
-      inconvenientes.push(
-        `«${path.basename(p)}» es auto de CONCESIÓN DE IMPUGNACIÓN (2ª instancia / superior). No encaja en el carril de radicación + auto admisorio de 1ª instancia.`,
-      );
-      if (a.si.isSegundaInstancia) {
-        console.log(`   Detección 2ª instancia: sí | CUI origen: ${a.si.originRadicado ?? '—'}`);
-      }
-    }
-    if (isTutelaGen) console.log('   ✓ Correo válido para radicación tutela 1ª instancia');
-    console.log('');
-  }
+  let tutelaEml: Awaited<ReturnType<typeof analyzeEml>> | undefined;
 
-  const tutelaEml = analyses.find((a) => /generaci[oó]n de tutela/i.test(String(a.parsed.subject)));
-  if (!tutelaEml) {
-    console.error('No hay correo de Generación de Tutela para radicar.');
-    process.exit(1);
+  if (!synthetic && emlPaths.length) {
+    console.log('\n--- Análisis de los correos descargados ---\n');
+    const analyses: Awaited<ReturnType<typeof analyzeEml>>[] = [];
+    for (const p of emlPaths) {
+      if (!fs.existsSync(p)) {
+        console.log(`✗ No existe: ${p}`);
+        inconvenientes.push(`Archivo no encontrado: ${p}`);
+        continue;
+      }
+      const a = await analyzeEml(p);
+      analyses.push(a);
+      const isTutelaGen = /generaci[oó]n de tutela/i.test(String(a.parsed.subject));
+      const isDemandaCivil = /demanda en l[ií]nea/i.test(String(a.parsed.subject));
+      const isNotifImpugnacion = /notificaci[oó]n.*impugnaci[oó]n/i.test(String(a.parsed.subject));
+      console.log(`📧 ${path.basename(p)}`);
+      console.log(`   Asunto: ${a.parsed.subject}`);
+      console.log(`   De: ${a.parsed.from}`);
+      console.log(`   Adjuntos parseados: ${a.parsed.attachments?.length ?? 0} | Enlace Archivo: ${a.parsed.linkFound ? 'sí' : 'no'}`);
+      if (isDemandaCivil) {
+        inconvenientes.push(
+          `«${path.basename(p)}» es demanda CIVIL (DemandaEnLinea), no tutela. La app MVP solo radica tutela_primera/segunda/consulta_desacato.`,
+        );
+      }
+      if (isNotifImpugnacion) {
+        inconvenientes.push(
+          `«${path.basename(p)}» es auto de CONCESIÓN DE IMPUGNACIÓN (2ª instancia / superior). No encaja en el carril de radicación + auto admisorio de 1ª instancia.`,
+        );
+        if (a.si.isSegundaInstancia) {
+          console.log(`   Detección 2ª instancia: sí | CUI origen: ${a.si.originRadicado ?? '—'}`);
+        }
+      }
+      if (isTutelaGen) console.log('   ✓ Correo válido para radicación tutela 1ª instancia');
+      console.log('');
+    }
+
+    tutelaEml = analyses.find((a) => /generaci[oó]n de tutela/i.test(String(a.parsed.subject)));
+    if (!tutelaEml) {
+      console.error('No hay correo de Generación de Tutela para radicar. Use --synthetic para omitir .eml.');
+      process.exit(1);
+    }
   }
 
   const secretarioId = await authUserId(admin, BOT_EMAILS.secretario);
@@ -782,13 +851,17 @@ async function main() {
   let caseId: string;
   let radicado: string;
   try {
-    ({ caseId, radicado } = await radicarDesdeTutelaEml(admin, tutelaEml, secretarioId, steps));
+    if (synthetic) {
+      ({ caseId, radicado } = await radicarSintetico(admin, secretarioId, steps));
+    } else {
+      ({ caseId, radicado } = await radicarDesdeTutelaEml(admin, tutelaEml!, secretarioId, steps));
+    }
   } catch (e) {
     logStep(steps, 'Bot Secretario', 'Radicación', false, String(e));
     process.exit(1);
   }
 
-  if ((tutelaEml.parsed.attachments?.length ?? 0) === 0) {
+  if (!synthetic && (tutelaEml!.parsed.attachments?.length ?? 0) === 0) {
     inconvenientes.push(
       'El parse judicial en CLI no reexpone el buffer base64 de adjuntos en la respuesta JSON; en la UI el servidor sí los guarda en sesión. El script sube adjuntos solo si vienen en parsed.attachments con content.',
     );

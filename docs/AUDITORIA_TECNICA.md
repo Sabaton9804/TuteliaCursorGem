@@ -2,7 +2,19 @@
 
 **Alcance:** informe derivado del análisis del repositorio en disco (TypeScript/SQL/configuración). Donde algo no aparece en el código revisado, se indica explícitamente como *no verificado en este informe*.
 
-**Fecha de referencia del árbol:** según el estado del workspace al momento de la auditoría.
+**Última actualización:** julio 2026 (F0 — alineación con estado real del repo).  
+**Plan de cierre de gaps:** `docs/plan-maestro-cierre-gaps-operacion-judicial.md`
+
+### Cambios respecto a versiones anteriores de este informe
+
+| Tema | Antes (informe desactualizado) | Ahora (código jul 2026) |
+|------|-------------------------------|---------------------------|
+| Migraciones SQL | ~22 archivos | **64** en `supabase/migrations/` |
+| SGDE | «No implementado» | **Operativo:** `/sgde`, `/import-sgde`, `server/sgde-*.ts`, credenciales en `Settings.tsx` |
+| Procesos civiles | Solo tutelas | **5 tipos civiles** radicables + `/procesos/civiles` |
+| Contexto despacho | Solo `SessionCourtContext` | **`CourtOperationalContext`** + `process_definitions` |
+| Etapas workflow | No documentadas | `case_stages`, `case-workflow-stages.ts`, carril UI |
+| Build | No verificado | `npm run build` **exitoso** (jul 2026) |
 
 ---
 
@@ -54,12 +66,12 @@
   - **`src/components/`** — UI modular (`layout`, `expediente`, `plantillas`, `settings`, `expedientes`, etc.).
   - **`src/lib/`** — lógica de dominio, consultas Supabase, generación de documentos, utilidades.
   - **`src/hooks/`** — p. ej. invalidación React Query ante Realtime.
-  - **`src/contexts/`** — `SessionCourtContext` (court activo desde perfil).
+  - **`src/contexts/`** — `CourtOperationalContext` (CUI, `process_definitions`, equipo); `SessionCourtContext` (court activo).
   - **`src/services/`** — `geminiService.ts` (nombre histórico; llama a API interna OpenAI, ver §2).
 - **`server.ts`** (raíz) — Express: APIs `/api/*`, integración Vite en desarrollo, estáticos `dist/` en producción.
 - **`docx-plantilla-server.ts`** — utilidades servidor para `.docx` e IA (importado solo desde `server.ts`).
 - **`pdf-acta-detect.ts`** — detección de acta de reparto en PDF (usado desde `server.ts`).
-- **`supabase/migrations/`** — 22 archivos SQL numerados (esquema Postgres + RLS + Storage).
+- **`supabase/migrations/`** — **64** archivos SQL numerados (esquema Postgres + RLS + Storage + workflow + SGDE + SIERJU + civil CGP).
 - **`scripts/`** — utilidades Node (`*.mts`) y `extract-protocolo-pdf.py`.
 - **`docs/`** — documentación Markdown del proyecto (incl. resumen de protocolo expediente).
 - **`prisma/`** — `schema.prisma` mínimo (ver §1.4).
@@ -97,12 +109,16 @@ Descripción basada en rutas (`src/App.tsx`), páginas y librerías enlazadas. E
 | Detalle expediente | `src/pages/CaseDetail.tsx` | Carga caso, documentos, actuaciones; cambio estado; campos legales/SIERJU; síntesis vía `summarizeCase` → `/api/ai/summarize`; paneles expediente digital, despacho (Word/PDF), revisiones Word, historial técnico `case_audit_log` + Realtime opcional. | Parcial (texto SGDE fijo en cabecera, ver §6) |
 | Estadísticas SIERJU | `src/pages/Estadisticas.tsx` | Consulta `cases` del despacho y muestra agregados; tabla `SIERJU_TUTELAS_COBERTURA` documenta explícitamente qué filas del formulario oficial **no** están modeladas (ver §5). | Parcial |
 | Plantillas y membrete | `src/pages/Plantillas.tsx`, `src/lib/plantillas-store.ts`, `src/lib/document-templates.ts` | Catálogo `document_templates` en Supabase; membrete en `localStorage` (`tutelia_plantillas_v1`); editores TipTap; importación `.docx` con APIs `/api/plantilla-docx/*`. | Completo (membrete local + plantillas BD/Storage) |
-| Configuración | `src/pages/Settings.tsx` | Reparto sustanciador (`courts.sustanciador_*`), botón inicializar `courts` + `profiles` demo. Bloque «Interconexión SGDE» con estado **Sin conexión** y botón deshabilitado. | Parcial (SGDE no implementado) |
+| Configuración | `src/pages/Settings.tsx` | Reparto sustanciador (`courts.sustanciador_*`), credenciales **SGDE por usuario** (`saveSgdeCredentials`, estado conexión). | Completo (SGDE usuario) |
+| Sincronización SGDE | `src/pages/SgdeSync.tsx`, `ImportFromSgde.tsx`, `server/sgde-routes.ts` | Rutas `/sgde`, `/import-sgde`; sync documentos y metadatos expediente. | Completo (requiere credenciales) |
+| Procesos civiles | `src/pages/ProcesosCivilesList.tsx`, pipelines CGP | Listado y radicación civil (`civil_ordinario`, `civil_ejecutivo`, etc.). | Parcial (expansión activa) |
+| Correo / Outlook | `src/pages/Correo.tsx`, `CorreoPendientes.tsx` | Bandeja, clasificación, vínculo expediente. | Completo (requiere Outlook conectado) |
+| Carril etapas | `CaseStagesExperience.tsx`, `case-stages-service.ts` | Tutela y civil con plazos D. 2591 / CGP. | Completo tutela; parcial civil |
 | Equipo | `src/pages/Team.tsx` | Intenta `rpc('court_team_members')`; si falla, `profiles` filtrados por `court_id`. Fusiona con catálogo fijo `DESPACHO_STAFF` en `court-staff-assignees.ts`. | Completo (con fallback y catálogo semilla) |
 | Notificaciones asignación | `src/components/layout/AssignmentNotificationBell.tsx`, `src/lib/assignment-notifications.ts` | Tabla `user_notifications`. | Completo (según implementación en lib citada) |
 | Servicios IA cliente | `src/services/geminiService.ts` | `summarizeCase` hace `fetch('/api/ai/summarize')` — **no** importa `@google/genai`. | Completo (nombre archivo engañoso) |
 
-**Ruta de menú sin página:** en `Shell.tsx`, ítem «Sincronización SGDE» apunta a `path: '/sgde'`. En `App.tsx` **no** existe `<Route path="/sgde" …>`; al navegar, el comportamiento depende del router (ruta no definida en el archivo de rutas revisado).
+**Rutas SGDE:** `App.tsx` define `<Route path="/sgde" element={<SgdeSync />} />` y `/import-sgde`. Menú en `Shell.tsx` / sidebar apunta a `/sgde`.
 
 ---
 
@@ -249,9 +265,9 @@ Interfaces TypeScript que reflejan las tablas anteriores (`Case`, `Document`, `A
 
 | Tema | Evidencia en código |
 |------|---------------------|
-| Página «Sincronización SGDE» (`/sgde`) | Enlace en `Shell.tsx`; **no** hay ruta en `App.tsx`. |
-| Interconexión SGDE operativa | `Settings.tsx`: texto «Sin Conexión», botón «CONFIGURAR TOKEN…» con `cursor-not-allowed` y sin handler de API. |
-| Referencia SGDE en cabecera del expediente | `CaseDetail.tsx`: cadena fija `CERTIFICADA-2026-0045`, no usa `caseItem.sgdeId`. |
+| Página «Sincronización SGDE» (`/sgde`) | **Implementada** — `SgdeSync.tsx`, `App.tsx` L59. |
+| Interconexión SGDE operativa | **Implementada** — `Settings.tsx` guarda credenciales por usuario; `server/sgde-*.ts` sincroniza. Requiere `SGDE_ENCRYPTION_KEY` y credenciales Rama. |
+| Referencia SGDE en cabecera del expediente | Verificar en `CaseDetail.tsx` si aún hay texto fijo vs `case.sgde_id` (puede variar por versión). |
 | Integración `@google/genai` / Gemini en runtime | Dependencia en `package.json`; **ningún** import en `src/` encontrado por búsqueda; síntesis usa OpenAI en servidor. |
 | Cobertura completa formulario SIERJU | `Estadisticas.tsx` array `SIERJU_TUTELAS_COBERTURA` marca varios bloques como `no` o `parcial`. |
 | Inventario inicial/final SIERJU | Mismo array: estado `no`. |
@@ -263,7 +279,9 @@ Interfaces TypeScript que reflejan las tablas anteriores (`Case`, `Document`, `A
 | Prisma como capa de acceso en la app | Esquema mínimo; aplicación no usa cliente Prisma en `src/` para CRUD. |
 | Políticas RLS restrictivas por tribunal en todas las tablas | `security_spec.md` y migraciones iniciales: `cases`, `case_documents`, `case_actions`, `case_word_reviews` con políticas **authenticated** amplias; `document_templates` y `case_audit_log` más acotadas; comentarios SQL piden «endurecer» en el futuro. |
 | Limpieza automática Storage al borrar caso | Comentarios en migraciones `case_documents_storage` y `case-document-storage.ts`: huérfanos posibles; mitigación descrita como futura (Edge Function/job), no implementada en el fragmento revisado. |
-| PDF/A obligatorio | Documentado en `docs/protocolo-gestion-documentos-electronicos-resumen.md` como mejora futura; no es lógica de validación en runtime de la app en el análisis realizado. |
+| Ley 2213 en notificaciones | Resumen en `docs/ley-2213-notificaciones-resumen.md`; **runtime F2 pendiente** (`notification_records`). |
+| Normativa consolidada en repo | `docs/normativa/full_text/` (CGP, 2213, Código Civil) — jul 2026. |
+| PDF/A obligatorio | Documentado en `docs/protocolo-gestion-documentos-electronicos-resumen.md` como mejora futura; no es lógica de validación en runtime. |
 
 ---
 
@@ -276,7 +294,7 @@ Interfaces TypeScript que reflejan las tablas anteriores (`Case`, `Document`, `A
 
 ### 6.2 UX / producto
 
-- **Menú SGDE** lleva a ruta no registrada en `App.tsx`.
+- **Menú SGDE** → ruta `/sgde` registrada en `App.tsx`.
 - **Referencia SGDE** visible al usuario es estática y no refleja `sgde_id` de la base.
 - **`index.html`:** título genérico «My Google AI Studio App» en lugar de marca Tutelia.
 
@@ -297,7 +315,7 @@ Interfaces TypeScript que reflejan las tablas anteriores (`Case`, `Document`, `A
 
 ## 7. Limitaciones de este documento
 
-- No se ejecutaron tests E2E ni `npm run build` como parte de esta auditoría; no se afirma estado de compilación o CI.
+- No se ejecutaron tests E2E en esta auditoría; **`npm run build` exitoso** (jul 2026).
 - No se revisó cada línea de los ~2000+ líneas de `CaseDetail.tsx` ni de todos los componentes: los flujos descritos se basan en imports, rutas, SQL y lectura parcial sistemática de archivos clave.
 - Comportamiento exacto de cada handler en `CaseDetail.tsx` (todas las pestañas) puede incluir ramas adicionales no enumeradas aquí.
 

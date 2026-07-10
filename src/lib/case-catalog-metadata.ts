@@ -19,6 +19,14 @@ export type CaseCatalogMetadata = {
   instancia?: string;
   anio?: number;
   link_expediente?: string;
+  /** planner | catalogo | manual */
+  link_expediente_fuente?: string;
+  planner_deposito?: string;
+  planner_estado?: string;
+  planner_etiquetas?: string;
+  planner_fecha_vencimiento?: string;
+  planner_importado_at?: string;
+  sgde_url_planner?: string;
 };
 
 export function parseCatalogMetadata(raw: unknown): CaseCatalogMetadata | undefined {
@@ -45,6 +53,13 @@ export function parseCatalogMetadata(raw: unknown): CaseCatalogMetadata | undefi
   str('encargado_nombre');
   str('instancia');
   str('link_expediente');
+  str('link_expediente_fuente');
+  str('planner_deposito');
+  str('planner_estado');
+  str('planner_etiquetas');
+  str('planner_fecha_vencimiento');
+  str('planner_importado_at');
+  str('sgde_url_planner');
   if (o.tipo_registro === 'civil' || o.tipo_registro === 'tutela') {
     out.tipo_registro = o.tipo_registro;
   }

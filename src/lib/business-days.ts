@@ -162,10 +162,9 @@ export function businessDaysRemainingWithStoredTermDeadline(
 
   if (t.getTime() <= end.getTime()) {
     const used = inclusiveBusinessDaysBetween(f, t);
-    return termBusinessDays + 1 - used;
+    return Math.max(0, termBusinessDays + 1 - used);
   }
-  const usedAfter = inclusiveBusinessDaysBetween(dayAfterEnd, t);
-  return 1 - usedAfter;
+  return 0;
 }
 
 /**
@@ -205,13 +204,21 @@ export function businessDayTermEnd(startDate: Date, termBusinessDays: number): D
   return d;
 }
 
+/**
+ * Último día de un término de N días hábiles **siguientes** al evento (el día del evento no cuenta).
+ * Ej.: impugnación art. 31 D.2591/91; remisión art. 32; contestación tras notificación.
+ */
+export function businessDayTermEndAfterEvent(eventDate: Date, termBusinessDays: number): Date {
+  return addBusinessDays(startOfLocalDay(eventDate), termBusinessDays);
+}
+
 /** Plazo para que accionados/entidad contesten tras notificar el auto admisorio (práctica despacho; informes art. 19: 1–3 días). */
 export const CONTESTACION_BUSINESS_DAYS = 2;
 
 export function contestacionDeadlineFrom(notifiedOn: Date): Date {
-  return businessDayTermEnd(startOfLocalDay(notifiedOn), CONTESTACION_BUSINESS_DAYS);
+  return businessDayTermEndAfterEvent(notifiedOn, CONTESTACION_BUSINESS_DAYS);
 }
 
 export function impugnacionDeadlineFrom(notifiedOn: Date): Date {
-  return businessDayTermEnd(startOfLocalDay(notifiedOn), IMPUGNACION_BUSINESS_DAYS);
+  return businessDayTermEndAfterEvent(notifiedOn, IMPUGNACION_BUSINESS_DAYS);
 }

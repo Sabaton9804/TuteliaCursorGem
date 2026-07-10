@@ -8,12 +8,21 @@ export function normalizeSupabaseProjectUrl(raw: string | undefined): string | u
   return s || undefined;
 }
 
+function envSupabaseValue(...keys: string[]): string | undefined {
+  const meta = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+  for (const key of keys) {
+    const fromMeta = meta?.[key]?.trim();
+    if (fromMeta) return fromMeta;
+    const fromProcess = typeof process !== 'undefined' ? process.env[key]?.trim() : undefined;
+    if (fromProcess) return fromProcess;
+  }
+  return undefined;
+}
+
 const url = normalizeSupabaseProjectUrl(
-  (import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL) as string | undefined
+  envSupabaseValue('VITE_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL'),
 );
-const anonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) as
-  | string
-  | undefined;
+const anonKey = envSupabaseValue('VITE_SUPABASE_ANON_KEY', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY');
 
 export function isSupabaseConfigured(): boolean {
   return Boolean(url?.trim() && anonKey?.trim());

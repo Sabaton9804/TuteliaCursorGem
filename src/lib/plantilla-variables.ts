@@ -34,11 +34,12 @@ export type MapaVariablesPlantillaContext =
   | 'auto_admisorio'
   | 'auto_tramite'
   | 'sentencia'
+  | 'fallo_tutela'
   | 'notificacion_admisorio'
   | 'notificacion_fallo'
   | 'oficio_secretaria';
 
-export type ProvidenciaDespachoContext = 'auto_tramite' | 'sentencia';
+export type ProvidenciaDespachoContext = 'auto_tramite' | 'sentencia' | 'fallo_tutela';
 
 function tipoProcesoDesdeCase(caseItem: Case): string {
   const ct = caseItem.caseType;
@@ -55,7 +56,8 @@ function contextoFirmaJuez(context: MapaVariablesPlantillaContext | null | undef
   return (
     context === 'auto_admisorio' ||
     context === 'auto_tramite' ||
-    context === 'sentencia'
+    context === 'sentencia' ||
+    context === 'fallo_tutela'
   );
 }
 
@@ -155,7 +157,7 @@ export function mapaVariablesDesdeCaso(
       : caseItem.claimant || '—',
     ACCIONADOS_LISTA: accionadosLista,
     ACCIONADOS_NOTIFICAR: accionadosLista,
-    DESTINATARIO_OFICIO: '—',
+    DESTINATARIO_OFICIO: primerAccionado || accionadosLista.split('\n')[0]?.trim() || '—',
     RESUMEN_HECHOS_NOTIFICACION: caseItem.legalHechos ? caseItem.legalHechos.slice(0, 400) : '—',
     VINCULADOS_LISTA: '—',
     VINCULADOS_NOTIFICAR: '—',
@@ -388,6 +390,38 @@ export function plantillaSentenciaInterna(m: PlantillasStateV2): string {
     return cuerpoEditablePredeterminadoPlantilla('sentencia', m);
   }
   return `${prefijoAutoAntesDelCuerpo(m)}\n${cuerpoEditablePredeterminadoPlantilla('sentencia', m)}`;
+}
+
+function cuerpoFalloTutelaPredeterminado(): string {
+  return [
+    'Acción de tutela rad. {{RADICACION}}, promovida por {{ACCIONANTE}} contra {{ACCIONADOS_LISTA}}.',
+    '',
+    'ANTECEDENTES',
+    '',
+    '1. [Síntesis de la demanda y trámite]',
+    '2. [Contestaciones o silencio de los accionados]',
+    '',
+    'CONSIDERACIONES',
+    '',
+    '1. [Competencia y procedencia]',
+    '2. [Problema jurídico y derecho tutelado: {{DESCRIPCION_DERECHOS}}]',
+    '3. [Análisis del caso concreto]',
+    '',
+    'RESUELVE',
+    '',
+    'PRIMERO: [Decisión de fondo — conceder, negar o declarar improcedente]',
+    '',
+    'SEGUNDO: NOTIFÍQUESE este fallo a las partes conforme al Decreto 2591 de 1991.',
+    '',
+    'NOTIFÍQUESE Y CÚMPLASE.',
+  ].join('\n');
+}
+
+export function plantillaFalloTutelaInterna(m: PlantillasStateV2): string {
+  if (hasMembreteRichContent(m.membrete)) {
+    return cuerpoFalloTutelaPredeterminado();
+  }
+  return `${prefijoAutoAntesDelCuerpo(m)}\n${cuerpoFalloTutelaPredeterminado()}`;
 }
 
 /** Encabezado y variables de proceso tal como se concatenan al generar el borrador (sin el cuerpo editable). */
@@ -794,7 +828,9 @@ export function textoAutoAdmisorioBorrador(
 }
 
 function plantillaProvidenciaInterna(context: ProvidenciaDespachoContext, m: PlantillasStateV2): string {
-  return context === 'auto_tramite' ? plantillaAutoTramiteInterna(m) : plantillaSentenciaInterna(m);
+  if (context === 'auto_tramite') return plantillaAutoTramiteInterna(m);
+  if (context === 'fallo_tutela') return plantillaFalloTutelaInterna(m);
+  return plantillaSentenciaInterna(m);
 }
 
 function mapaContextoProvidencia(context: ProvidenciaDespachoContext): MapaVariablesPlantillaContext {
@@ -802,7 +838,7 @@ function mapaContextoProvidencia(context: ProvidenciaDespachoContext): MapaVaria
 }
 
 function finTextoProvidencia(context: ProvidenciaDespachoContext, s: string): string {
-  if (context === 'sentencia') return s;
+  if (context === 'sentencia' || context === 'fallo_tutela') return s;
   return renumberJudicialDisponeNumerals(
     stripAutoOptionalNumeralsFromPlainIfNoToggleMarkers(s, undefined, undefined),
   );
@@ -869,6 +905,15 @@ export function textoSentenciaBorrador(
   opciones?: PlantillaBorradorOpciones,
 ): string {
   return textoProvidenciaDespachoBorrador(caseItem, m, 'sentencia', contenidoBaseOverride, opciones);
+}
+
+export function textoFalloTutelaBorrador(
+  caseItem: Case,
+  m: PlantillasStateV2,
+  contenidoBaseOverride?: string | null,
+  opciones?: PlantillaBorradorOpciones,
+): string {
+  return textoProvidenciaDespachoBorrador(caseItem, m, 'fallo_tutela', contenidoBaseOverride, opciones);
 }
 
 export function textoProvidenciaDespachoBorradorTipTapDoc(
@@ -940,6 +985,21 @@ export function textoSentenciaBorradorTipTapDoc(
     caseItem,
     m,
     'sentencia',
+    contenidoBaseOverride,
+    opciones,
+  );
+}
+
+export function textoFalloTutelaBorradorTipTapDoc(
+  caseItem: Case,
+  m: PlantillasStateV2,
+  contenidoBaseOverride?: string | null,
+  opciones?: PlantillaBorradorOpciones,
+): JSONContent | null {
+  return textoProvidenciaDespachoBorradorTipTapDoc(
+    caseItem,
+    m,
+    'fallo_tutela',
     contenidoBaseOverride,
     opciones,
   );

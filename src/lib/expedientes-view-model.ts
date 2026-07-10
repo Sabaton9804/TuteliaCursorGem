@@ -11,6 +11,7 @@ import { DERECHO_TUTELADO_LABELS, resolveDerechoTuteladoCodeForInforme } from '.
 import type { ExpedienteAssignee } from './court-staff-assignees';
 import { resolveAssigneeForCase } from './court-staff-assignees';
 import { getCachedCaseTermBusinessDays } from './process-definitions-service';
+import { plazoFallarSnapshotForCase } from './plazo-fallar-tutela';
 
 export type { ExpedienteAssignee } from './court-staff-assignees';
 
@@ -178,15 +179,19 @@ export function buildExpedienteViewRow(
 ): ExpedienteViewRow {
   const filingDate = startOfLocalDay(new Date(c.createdAt));
   const caseTermBusinessDays = getCachedCaseTermBusinessDays(c.caseType);
+  const plazoSnap = plazoFallarSnapshotForCase(c);
   const storedDeadline =
     c.deadlineAt?.trim() && !Number.isNaN(Date.parse(c.deadlineAt))
       ? startOfLocalDay(new Date(c.deadlineAt))
       : null;
   const deadlineDate =
-    storedDeadline ?? businessDayTermEnd(filingDate, caseTermBusinessDays);
-  const remaining = storedDeadline
-    ? businessDaysRemainingWithStoredTermDeadline(filingDate, storedDeadline, caseTermBusinessDays)
-    : businessDaysRemainingInTermWindow(filingDate, caseTermBusinessDays);
+    storedDeadline ??
+    (plazoSnap?.end ?? (c.caseType === 'tutela_segunda' ? filingDate : businessDayTermEnd(filingDate, caseTermBusinessDays)));
+  const remaining =
+    plazoSnap?.remaining ??
+    (storedDeadline
+      ? businessDaysRemainingWithStoredTermDeadline(filingDate, storedDeadline, caseTermBusinessDays)
+      : businessDaysRemainingInTermWindow(filingDate, caseTermBusinessDays));
   const stage = caseToBoardStage(c);
   const urgency = urgencyFromRemainingBusinessDays(remaining, c.status, stage);
   const assignee = resolveAssigneeForCase(c.assignedTo, c.id, courtAssignmentMode);

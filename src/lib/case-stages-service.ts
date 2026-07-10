@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { CaseType, Document } from '../types';
-import { startOfLocalDay } from './business-days';
+import { startOfLocalDay, businessDayTermEndAfterEvent } from './business-days';
 import {
   canRegistrarImpugnacionRecibida,
   canRegistrarNotificacionAutoEnviada,
@@ -31,7 +31,9 @@ import {
 import { insertWorkflowStageEntryNotifications } from './workflow-stage-notifications';
 import { ensureSupabaseSessionForWrites } from './supabase-write-auth';
 import { getCachedStageDefinitionId } from './process-definitions-service';
+import { getLinearNextStage, resolveTerminoRespuestaVencidoNext } from './process-stage-transitions';
 import { rowToCaseDoc } from './supabase-mappers';
+import { caseHasAnyAct } from './case-act-types';
 import {
   supportsContestacionWorkflow,
   supportsNotificacionFalloWorkflow,
@@ -39,6 +41,7 @@ import {
   supportsApelacionWorkflow,
 } from './sgde-case-scope';
 import { isCivilCaseType } from './process-product-scope';
+import { computePlazoFallarDeadlineAt } from './plazo-fallar-tutela';
 
 export {
   canManualManageCaseStages,
@@ -113,6 +116,26 @@ async function fetchOpenStageRow(
   }
   if (!data) return null;
   return data as CaseStageRowDb;
+}
+
+function requireOpenStageAt(
+  open: CaseStageRowDb | null,
+  expected: CaseStageCode | CaseStageCode[],
+  actionLabel: string,
+): CaseStageRowDb {
+  const expectedList = Array.isArray(expected) ? expected : [expected];
+  if (!open?.stage_code) {
+    throw new Error(
+      `No hay etapa abierta. Para ${actionLabel} el expediente debe estar en ${expectedList.map((s) => STAGE_LABEL_ES[s]).join(' o ')}.`,
+    );
+  }
+  const current = open.stage_code as CaseStageCode;
+  if (!expectedList.includes(current)) {
+    throw new Error(
+      `Para ${actionLabel} la etapa debe ser ${expectedList.map((s) => STAGE_LABEL_ES[s]).join(' o ')}, pero está en ${STAGE_LABEL_ES[current] ?? current}.`,
+    );
+  }
+  return open;
 }
 
 async function enqueueWorkflowTaskForStage(
@@ -275,7 +298,7 @@ export async function recordBorradorProvidenciaEnviadoRevision(
   opts: {
     caseId: string;
     documentLabel?: string;
-    kind: 'auto_admisorio' | 'auto_tramite' | 'sentencia';
+    kind: 'auto_admisorio' | 'auto_tramite' | 'sentencia' | 'fallo';
   },
 ): Promise<void> {
   await ensureSupabaseSessionForWrites();
@@ -283,6 +306,7 @@ export async function recordBorradorProvidenciaEnviadoRevision(
     auto_admisorio: 'Borrador del auto admisorio enviado a revisión',
     auto_tramite: 'Borrador de auto de trámite enviado a revisión',
     sentencia: 'Borrador de sentencia enviado a revisión',
+    fallo: 'Borrador de fallo de tutela enviado a revisión',
   };
   const { userId, userName } = await authActor(supabase);
   await insertCaseAction(supabase, {
@@ -338,7 +362,7 @@ export async function applyStageTransitionJudgeApprovedBorrador(
 
   if (supportsContestacionWorkflow(opts.caseType) && isBorradorAutoAdmisorioDocType(opts.wordDocumentType)) {
     if (current !== 'RADICACION') return;
-    const next: CaseStageCode = 'ADMISION';
+    const next: CaseStageCode = getLinearNextStage(opts.caseType, 'RADICACION') ?? 'ADMISION';
     await closeStageById(supabase, open.id, now);
     await insertOpenStage(supabase, {
       courtId: opts.courtId,
@@ -536,6 +560,8 @@ export async function applyStageTransitionNotificacionAutoEnviada(
     caseAssignedTo?: string | null;
     /** Si se omite, se consulta `case_documents` antes de avanzar etapa. */
     expedienteDocs?: Document[];
+    /** Fecha real de notificación (día civil); por defecto hoy. */
+    notifiedAt?: string | Date;
   },
 ): Promise<void> {
   if (!supportsContestacionWorkflow(opts.caseType)) return;
@@ -543,11 +569,14 @@ export async function applyStageTransitionNotificacionAutoEnviada(
   const gate = canRegistrarNotificacionAutoEnviada(opts.caseType, docs);
   if (!gate.ok) throw new Error('message' in gate ? gate.message : 'Faltan piezas en el expediente.');
   await ensureSupabaseSessionForWrites();
-  const open = await fetchOpenStageRow(supabase, opts.caseId);
-  if (!open || open.stage_code !== 'ADMISION') return;
+  const open = requireOpenStageAt(
+    await fetchOpenStageRow(supabase, opts.caseId),
+    'ADMISION',
+    'registrar notificación del auto admisorio',
+  );
   const { userId, userName } = await authActor(supabase);
   const now = new Date().toISOString();
-  const t0 = new Date().toISOString();
+  const t0 = now;
   const notif: CaseStageCode = 'NOTIFICACION_AUTO_ADMISORIO';
   const termino: CaseStageCode = initialResponseTermStageForCaseType(opts.caseType);
 
@@ -563,7 +592,9 @@ export async function applyStageTransitionNotificacionAutoEnviada(
     caseType: opts.caseType,
     metadata: { source: 'notificacion_auto_instantanea' },
   });
-  const notifiedDay = startOfLocalDay(new Date());
+  const notifiedDay = startOfLocalDay(
+    opts.notifiedAt != null ? new Date(opts.notifiedAt) : new Date(),
+  );
   await insertOpenStage(supabase, {
     courtId: opts.courtId,
     caseId: opts.caseId,
@@ -574,7 +605,7 @@ export async function applyStageTransitionNotificacionAutoEnviada(
     caseType: opts.caseType,
     metadata: {
       source: 'notificacion_auto_enviada',
-      notified_at: t0,
+      notified_at: notifiedDay.toISOString(),
       ...metadataForResponseTermDeadline(notifiedDay, opts.caseType),
     },
   });
@@ -772,7 +803,7 @@ export async function applyStageTransitionIfTerminoRespuestaVencido(
   await ensureSupabaseSessionForWrites();
   const { userId, userName } = await authActor(supabase);
   const now = new Date().toISOString();
-  const next: CaseStageCode = isCivilCaseType(opts.caseType) ? 'TRAMITE' : 'INGRESO_DESPACHO_FALLO';
+  const next: CaseStageCode = resolveTerminoRespuestaVencidoNext(opts.caseType);
   const prev = open.stage_code as CaseStageCode;
   await closeStageById(supabase, open.id, now);
   await insertOpenStage(supabase, {
@@ -822,9 +853,12 @@ export async function applyStageTransitionContestacionCerrada(
 ): Promise<void> {
   if (!isCivilCaseType(opts.caseType)) return;
   await ensureSupabaseSessionForWrites();
-  const open = await fetchOpenStageRow(supabase, opts.caseId);
   const responseStage = initialResponseTermStageForCaseType(opts.caseType);
-  if (!open || open.stage_code !== responseStage) return;
+  const open = requireOpenStageAt(
+    await fetchOpenStageRow(supabase, opts.caseId),
+    responseStage,
+    'cerrar el término de contestación',
+  );
   const { userId, userName } = await authActor(supabase);
   const now = new Date().toISOString();
   const next: CaseStageCode = 'TRAMITE';
@@ -869,6 +903,85 @@ export async function applyStageTransitionContestacionCerrada(
   });
 }
 
+/** Tutela 2ª / consulta desacato: expediente recibido (informe ingreso) → ingreso despacho / fallo. */
+export async function applyStageTransitionExpedienteRecibidoAlDespacho(
+  supabase: SupabaseClient,
+  opts: {
+    caseId: string;
+    courtId: string;
+    radicado: string;
+    caseType: CaseType;
+    caseAssignedTo?: string | null;
+    expedienteDocs?: Document[];
+  },
+): Promise<void> {
+  if (opts.caseType !== 'tutela_segunda' && opts.caseType !== 'consulta_desacato') return;
+  const docs = await resolveExpedienteDocsForGate(supabase, opts.caseId, opts.expedienteDocs);
+  if (!caseHasAnyAct(docs, ['informe_ingreso'])) {
+    throw new Error(
+      'Registre el informe de ingreso al despacho (PDF) en el expediente digital antes de avanzar la etapa.',
+    );
+  }
+  await ensureSupabaseSessionForWrites();
+  const open = requireOpenStageAt(
+    await fetchOpenStageRow(supabase, opts.caseId),
+    'RADICACION',
+    'registrar ingreso del expediente al despacho',
+  );
+  const { userId, userName } = await authActor(supabase);
+  const now = new Date().toISOString();
+  const next: CaseStageCode = 'INGRESO_DESPACHO_FALLO';
+  const prev = open.stage_code as CaseStageCode;
+  await closeStageById(supabase, open.id, now);
+  await insertOpenStage(supabase, {
+    courtId: opts.courtId,
+    caseId: opts.caseId,
+    stage: next,
+    enteredAt: now,
+    previousStageCode: prev,
+    createdBy: userId,
+    caseType: opts.caseType,
+    metadata: { source: 'expediente_recibido_al_despacho' },
+  });
+  await insertCaseAction(supabase, {
+    caseId: opts.caseId,
+    type: 'CAMBIO_ETAPA_AUTOMATICO',
+    description: `${STAGE_LABEL_ES[prev]} → Ingreso despacho / fallo`,
+    userId,
+    userName,
+    metadata: {
+      etapa_anterior: prev,
+      etapa_nueva: next,
+      trigger: 'SECRETARIA_EXPEDIENTE_RECIBIDO_AL_DESPACHO',
+      usuario: userName,
+    },
+  });
+  await insertWorkflowStageEntryNotifications(supabase, {
+    courtId: opts.courtId,
+    caseId: opts.caseId,
+    radicado: opts.radicado,
+    enteredStage: next,
+  });
+  await enqueueWorkflowTaskForStage(supabase, {
+    courtId: opts.courtId,
+    caseId: opts.caseId,
+    radicado: opts.radicado,
+    stage: next,
+    creatorId: userId,
+    caseAssignedTo: opts.caseAssignedTo,
+  });
+
+  if (opts.caseType === 'tutela_segunda') {
+    const deadlineAt = computePlazoFallarDeadlineAt('tutela_segunda', new Date());
+    if (deadlineAt) {
+      await supabase
+        .from('cases')
+        .update({ deadline_at: deadlineAt, updated_at: now })
+        .eq('id', opts.caseId);
+    }
+  }
+}
+
 /** Despacho civil: trámite concluido → ingreso al despacho para sentencia. */
 export async function applyStageTransitionIngresoDespachoParaSentencia(
   supabase: SupabaseClient,
@@ -882,8 +995,11 @@ export async function applyStageTransitionIngresoDespachoParaSentencia(
 ): Promise<void> {
   if (!isCivilCaseType(opts.caseType)) return;
   await ensureSupabaseSessionForWrites();
-  const open = await fetchOpenStageRow(supabase, opts.caseId);
-  if (!open || open.stage_code !== 'TRAMITE') return;
+  const open = requireOpenStageAt(
+    await fetchOpenStageRow(supabase, opts.caseId),
+    'TRAMITE',
+    'registrar ingreso al despacho para sentencia',
+  );
   const { userId, userName } = await authActor(supabase);
   const now = new Date().toISOString();
   const next: CaseStageCode = 'INGRESO_DESPACHO_FALLO';
@@ -938,6 +1054,8 @@ export async function applyStageTransitionNotificacionFalloEnviada(
     caseType: CaseType;
     caseAssignedTo?: string | null;
     expedienteDocs?: Document[];
+    /** Fecha real de notificación (día civil); por defecto hoy. */
+    notifiedAt?: string | Date;
   },
 ): Promise<void> {
   if (!supportsNotificacionFalloWorkflow(opts.caseType)) return;
@@ -945,8 +1063,11 @@ export async function applyStageTransitionNotificacionFalloEnviada(
   const gate = canRegistrarNotificacionFalloEnviada(opts.caseType, docs);
   if (!gate.ok) throw new Error('message' in gate ? gate.message : 'Faltan piezas en el expediente.');
   await ensureSupabaseSessionForWrites();
-  const open = await fetchOpenStageRow(supabase, opts.caseId);
-  if (!open || open.stage_code !== 'FALLO') return;
+  const open = requireOpenStageAt(
+    await fetchOpenStageRow(supabase, opts.caseId),
+    'FALLO',
+    'registrar notificación del fallo',
+  );
   const { userId, userName } = await authActor(supabase);
   const now = new Date().toISOString();
   const t0 = now;
@@ -964,10 +1085,12 @@ export async function applyStageTransitionNotificacionFalloEnviada(
     caseType: opts.caseType,
     metadata: { source: 'notificacion_fallo_instantanea' },
   });
-  const notifiedDay = startOfLocalDay(new Date());
+  const notifiedDay = startOfLocalDay(
+    opts.notifiedAt != null ? new Date(opts.notifiedAt) : new Date(),
+  );
   const terminoMetadata: Record<string, unknown> = {
     source: 'notificacion_fallo_enviada',
-    notified_at: t0,
+    notified_at: notifiedDay.toISOString(),
   };
   if (termino === 'TERMINO_IMPUGNACION') {
     Object.assign(terminoMetadata, metadataForImpugnacionDeadline(notifiedDay, opts.caseType));
@@ -1252,7 +1375,7 @@ export async function applyStageTransitionImpugnacionRecibida(
     metadata: { source: 'impugnacion_recibida' },
   });
   const remStart = startOfLocalDay(new Date());
-  const remEnd = businessDayTermEnd(remStart, PLAZO_REMISION_EXPEDIENTE_IMPUGNACION_DIAS);
+  const remEnd = businessDayTermEndAfterEvent(remStart, PLAZO_REMISION_EXPEDIENTE_IMPUGNACION_DIAS);
   await insertOpenStage(supabase, {
     courtId: opts.courtId,
     caseId: opts.caseId,

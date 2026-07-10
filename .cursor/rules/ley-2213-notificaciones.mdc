@@ -1,0 +1,28 @@
+---
+description: Ley 2213/2022 en notificaciones y comunicaciones judiciales electrónicas
+globs:
+  - src/lib/notificacion-secretaria-flow.ts
+  - src/components/expediente/CaseNotificacionesPanel.tsx
+  - src/lib/plantilla-variables.ts
+  - src/data/catalogos/tipos-oficio-secretaria.json
+  - server/**/*
+---
+
+# Ley 2213 — notificaciones y oficios electrónicos
+
+Al proponer cambios en **notificaciones**, **oficios**, **constancias** o **cómputo de términos** tras notificar:
+
+1. Leer `docs/ley-2213-notificaciones-resumen.md` y, si hace falta fundamento textual, `docs/normativa/full_text/LEY_2213_2022_consolidado.txt`.
+
+2. **Art. 8 (notificación personal por mensaje de datos):**
+   - Presunción de notificación a los **2 días hábiles** del envío.
+   - Términos desde **acuse de recibo** o constancia de acceso del destinatario, cuando exista.
+   - Anexos de traslado por el mismo medio electrónico.
+
+3. **Art. 11 (oficios):** comunicaciones desde correo **oficial** del despacho; presunción de autenticidad. Alinear con estándar J51 (skill `oficios-juzgado-51-civil-bogota`).
+
+4. **Complementariedad:** la 2213 no sustituye plazos del **Decreto 2591** (tutela) ni del **CGP** (civil). El medio es electrónico; el plazo sustantivo sigue la norma procesal del caso.
+
+5. **Constancias en expediente:** toda notificación enviada debe dejar PDF en expediente con nombre protocolo CSJ (`ConstanciaNotificacionAAAAMMDD.pdf` cuando aplique fecha en nombre — ver `docs/protocolo-gestion-documentos-electronicos-resumen.md`).
+
+6. **No implementar** reglas 2213 solo en copy de marketing; deben vivir en lógica (`notification_records`, `ley-2213-notificacion-rules.ts` — plan F2).

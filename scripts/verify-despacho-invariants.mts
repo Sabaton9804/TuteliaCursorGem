@@ -51,7 +51,7 @@ const CIVIL_PIPELINE = CIVIL_ORDINARIO_PIPELINE;
 assert.equal(hasRoleCapability('clerk', 'registrar_hitos_secretaria'), true);
 assert.equal(hasRoleCapability('sustanciador', 'registrar_hitos_secretaria'), false);
 assert.equal(hasRoleCapability('judge', 'registrar_rama_admision'), true);
-assert.equal(hasRoleCapability('sustanciador', 'registrar_rama_admision'), false);
+assert.equal(hasRoleCapability('sustanciador', 'registrar_rama_admision'), true);
 assert.equal(hasRoleCapability('clerk', 'registrar_rama_admision'), true);
 assert.equal(hasRoleCapability('judge', 'manual_etapas'), true);
 assert.equal(hasRoleCapability('escribiente', 'manual_etapas'), false);
@@ -91,5 +91,35 @@ assert.ok(
 assert.equal(isCivilCaseType('tutela_primera'), false);
 assert.equal(hasRoleCapability('admin', 'invitar_equipo'), true);
 assert.equal(hasRoleCapability('official', 'ver_correo'), true);
+
+import {
+  businessDayTermEnd,
+  businessDayTermEndAfterEvent,
+  impugnacionDeadlineFrom,
+  startOfLocalDay,
+} from '../src/lib/business-days.ts';
+import {
+  computePlazoFallarDeadlineAt,
+  shouldSetPlazoFallarAtRadicacion,
+} from '../src/lib/plazo-fallar-tutela.ts';
+
+const lunes = startOfLocalDay(new Date(2026, 1, 2));
+assert.equal(businessDayTermEnd(lunes, 3).getDate(), 4, 'inclusive: 3 hábiles desde lunes → miércoles');
+assert.equal(
+  businessDayTermEndAfterEvent(lunes, 3).getDate(),
+  5,
+  'siguientes: 3 hábiles tras lunes → jueves',
+);
+assert.equal(impugnacionDeadlineFrom(lunes).getDate(), 5, 'impugnación art.31: día notificación no cuenta');
+assert.equal(shouldSetPlazoFallarAtRadicacion('tutela_primera'), true);
+assert.equal(shouldSetPlazoFallarAtRadicacion('tutela_segunda'), false);
+const recepcion = startOfLocalDay(new Date(2026, 1, 2));
+const dlSegunda = computePlazoFallarDeadlineAt('tutela_segunda', recepcion);
+assert.ok(dlSegunda, 'tutela 2ª: deadline desde recepción');
+assert.equal(
+  startOfLocalDay(new Date(dlSegunda!)).getTime(),
+  businessDayTermEndAfterEvent(recepcion, 20).getTime(),
+  'tutela 2ª: 20 días háb. siguientes desde recepción',
+);
 
 console.log('verify-despacho-invariants: OK');

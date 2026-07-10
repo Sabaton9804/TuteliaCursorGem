@@ -355,6 +355,11 @@ export async function sendMail(
     bodyHtml: string;
     to: string[];
     cc?: string[];
+    attachments?: Array<{
+      name: string;
+      contentType: string;
+      contentBytesBase64: string;
+    }>;
   }
 ): Promise<void> {
   const toRecipients = payload.to.map((address) => ({ emailAddress: { address: address.trim() } })).filter((r) => r.emailAddress.address);
@@ -362,6 +367,15 @@ export async function sendMail(
   const ccRecipients = (payload.cc ?? [])
     .map((address) => ({ emailAddress: { address: address.trim() } }))
     .filter((r) => r.emailAddress.address);
+
+  const attachments = (payload.attachments ?? [])
+    .filter((a) => a.name.trim() && a.contentBytesBase64.trim())
+    .map((a) => ({
+      '@odata.type': '#microsoft.graph.fileAttachment',
+      name: a.name.trim(),
+      contentType: a.contentType.trim() || 'application/octet-stream',
+      contentBytes: a.contentBytesBase64.trim(),
+    }));
 
   await graphRequest(accessToken, graphMailboxPath(target, '/sendMail'), {
     method: 'POST',
@@ -372,6 +386,7 @@ export async function sendMail(
         body: { contentType: 'HTML', content: payload.bodyHtml },
         toRecipients,
         ...(ccRecipients.length ? { ccRecipients } : {}),
+        ...(attachments.length ? { attachments } : {}),
       },
       saveToSentItems: true,
     }),

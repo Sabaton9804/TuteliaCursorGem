@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jurion — One Pager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    @page { size: letter; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 8.5in; min-height: 11in;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: #050D1A; color: #F0F4FF;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .page { width: 8.5in; min-height: 11in; position: relative; overflow: hidden; padding: 0.36in 0.42in 0.32in; }
+    .accent-top { position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, #378ADD, #5BA3F5, #378ADD); }
+    .glow { position: absolute; border-radius: 50%; filter: blur(60px); pointer-events: none; }
+    .glow-1 { width: 260px; height: 260px; top: -70px; right: -30px; background: rgba(55,138,221,0.22); }
+    .header { position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+    .logo { font-size: 1.75rem; font-weight: 900; letter-spacing: -0.03em; }
+    .logo span { color: #378ADD; }
+    .badge { font-size: 0.52rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #378ADD; border: 1px solid rgba(55,138,221,0.35); background: rgba(55,138,221,0.08); padding: 5px 9px; border-radius: 999px; }
+    .hero-img { position: relative; z-index: 1; border-radius: 10px; overflow: hidden; border: 1px solid rgba(55,138,221,0.3); margin-bottom: 8px; box-shadow: 0 14px 40px rgba(0,0,0,0.45); }
+    .hero-img img { width: 100%; display: block; }
+    .hero-copy { position: relative; z-index: 1; margin-bottom: 8px; }
+    .hero-copy h1 { font-size: 1.08rem; font-weight: 800; line-height: 1.2; margin-bottom: 4px; }
+    .hero-copy h1 em { font-style: normal; color: #378ADD; }
+    .hero-copy p { font-size: 0.6rem; line-height: 1.45; color: #8899BB; }
+    .hero-copy .punch { margin-top: 5px; font-size: 0.62rem; font-weight: 700; color: #22C55E; }
+    .priorities { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-bottom: 8px; }
+    .pri {
+      background: linear-gradient(145deg, rgba(34,197,94,0.1), rgba(4,44,83,0.45));
+      border: 1px solid rgba(34,197,94,0.35);
+      border-radius: 9px; padding: 9px 10px;
+    }
+    .pri .tag { font-size: 0.48rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #22C55E; margin-bottom: 4px; }
+    .pri h2 { font-size: 0.64rem; font-weight: 800; margin-bottom: 3px; line-height: 1.2; }
+    .pri p { font-size: 0.52rem; color: #8899BB; line-height: 1.35; }
+    .flow-img { position: relative; z-index: 1; border-radius: 9px; overflow: hidden; border: 1px solid rgba(55,138,221,0.28); margin-bottom: 8px; }
+    .flow-img img { width: 100%; display: block; }
+    .grid-2 { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 8px; }
+    .card { background: rgba(255,255,255,0.04); border: 1px solid rgba(55,138,221,0.2); border-radius: 9px; padding: 9px 10px; }
+    .card.featured { border-color: rgba(55,138,221,0.45); background: linear-gradient(145deg, rgba(4,44,83,0.55), rgba(255,255,255,0.03)); }
+    .card-label { font-size: 0.48rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #378ADD; margin-bottom: 4px; }
+    .card h2 { font-size: 0.64rem; font-weight: 800; margin-bottom: 4px; line-height: 1.2; }
+    .card li { font-size: 0.52rem; color: #8899BB; line-height: 1.35; margin-bottom: 2px; list-style: none; padding-left: 9px; position: relative; }
+    .card li::before { content: ''; position: absolute; left: 0; top: 0.42em; width: 4px; height: 4px; border-radius: 50%; background: #378ADD; }
+    .shots-row { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 8px; }
+    .shot-mini { border-radius: 7px; overflow: hidden; border: 1px solid rgba(55,138,221,0.25); }
+    .shot-mini img { width: 100%; display: block; }
+    .cta { position: relative; z-index: 1; background: linear-gradient(135deg, #042C53 0%, rgba(55,138,221,0.25) 100%); border: 1px solid rgba(55,138,221,0.4); border-radius: 10px; padding: 11px 13px; text-align: center; }
+    .cta h2 { font-size: 0.78rem; font-weight: 800; margin-bottom: 3px; }
+    .cta p { font-size: 0.55rem; color: #8899BB; line-height: 1.4; }
+    .footer { position: relative; z-index: 1; margin-top: 7px; text-align: center; font-size: 0.44rem; color: #5A6A88; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="accent-top"></div>
+    <div class="glow glow-1"></div>
+
+    <header class="header">
+      <div class="logo">Jurion<span>.</span></div>
+      <div class="badge">PCSJA24-12243 · Ley 2213/2022 · Colombia 2026</div>
+    </header>
+
+    <div class="hero-img"><img src="assets/hero.png" alt="Jurion"></div>
+
+    <div class="hero-copy">
+      <h1>La Rama estaba en mil herramientas.<br><em>Ahora, un solo despacho digital.</em></h1>
+      <p>Correo M365 · SGDE · oficios · plantillas CSJ · plazos · precedentes IA · estadística SIERJU.</p>
+      <p class="punch">De punta a punta: ingresa el reparto, sale el oficio — con trazabilidad.</p>
+    </div>
+
+    <div class="priorities">
+      <article class="pri">
+        <div class="tag">Prioridad 1</div>
+        <h2>Trazabilidad y auditoría</h2>
+        <p>Quién cambió qué y cuándo: actuaciones, piezas, envíos y revisiones Word.</p>
+      </article>
+      <article class="pri">
+        <div class="tag">Prioridad 1</div>
+        <h2>Estadística SIERJU</h2>
+        <p>Movimiento de Tutelas por periodo — sin rellenar Excel a mano.</p>
+      </article>
+      <article class="pri">
+        <div class="tag">Prioridad 1</div>
+        <h2>Oficios + correo</h2>
+        <p>Plantilla → envío Outlook → registro de notificación en el expediente.</p>
+      </article>
+    </div>
+
+    <div class="flow-img"><img src="assets/oficios.png" alt="Flujo oficios"></div>
+
+    <div class="grid-2">
+      <article class="card featured">
+        <div class="card-label">IA judicial</div>
+        <h2>Precedentes + lectura rápida por documento</h2>
+        <ul>
+          <li>Similitud semántica con fallos del despacho.</li>
+          <li>Resumen de cada pieza: propósito, puntos clave, fechas.</li>
+          <li>Términos automáticos en tablero 24/7.</li>
+        </ul>
+      </article>
+      <article class="card">
+        <div class="card-label">Operación rutinaria</div>
+        <h2>Reparto y memorial ~10 min → 3–5 min</h2>
+        <ul>
+          <li>IA clasifica correo; humano aprueba ingreso.</li>
+          <li>Sync SGDE bidireccional.</li>
+          <li>Centro de trabajo por rol.</li>
+        </ul>
+      </article>
+    </div>
+
+    <div class="shots-row">
+      <div class="shot-mini"><img src="assets/correo.png" alt="Correo"></div>
+      <div class="shot-mini"><img src="assets/trabajo.png" alt="Centro de trabajo"></div>
+    </div>
+
+    <section class="cta">
+      <h2>Actualicemos la justicia juntos</h2>
+      <p>Hecho con quienes viven el despacho cada día · Conforme Decreto 2591/91 · © 2026 Jurion</p>
+    </section>
+
+    <footer class="footer">Jurion · Sistema operativo del despacho judicial</footer>
+  </div>
+</body>
+</html>

@@ -7,6 +7,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useCaseDetail } from '../../contexts/CaseDetailContext';
 import { formatRadicado } from '../../lib/formatters';
 import { isTutelaFalloPlazoCaseType, plazoFallarAjusteManualHint, plazoFallarLabelForCase } from '../../lib/decreto-2591-plazos';
+import { plazoFallarSnapshotForCase } from '../../lib/plazo-fallar-tutela';
 import { CASE_STATUS_LABEL } from './case-detail-status-labels';
 import { PrecedentSourceBadge } from './PrecedentSourceBadge';
 
@@ -114,6 +115,7 @@ export function CaseSintesisPanel({
   const showTutelaFalloPlazo = isTutelaFalloPlazoCaseType(caseItem.caseType);
   const plazoFallarLabel = plazoFallarLabelForCase(caseItem.caseType);
   const plazoFallarAjusteHint = plazoFallarAjusteManualHint(caseItem.caseType);
+  const plazoFallarSnap = plazoFallarSnapshotForCase(caseItem);
 
   return (
     <div className="card-modern w-full min-w-0 overflow-hidden shadow-sm transition-all hover:shadow-lg">
@@ -372,9 +374,11 @@ export function CaseSintesisPanel({
             {showTutelaFalloPlazo && plazoFallarLabel ? (
               <li>
                 <span className="font-semibold text-slate-500">{plazoFallarLabel}: </span>
-                {caseItem.deadlineAt && isValid(parseISO(caseItem.deadlineAt))
-                  ? format(parseISO(caseItem.deadlineAt), "EEEE d 'de' MMMM yyyy", { locale: es })
-                  : 'No registrado — use el desplegable siguiente o el backfill de plazos'}
+                {plazoFallarSnap?.pendingAnchor
+                  ? 'Pendiente de recepción del expediente en despacho (informe de ingreso)'
+                  : caseItem.deadlineAt && isValid(parseISO(caseItem.deadlineAt))
+                    ? format(parseISO(caseItem.deadlineAt), "EEEE d 'de' MMMM yyyy", { locale: es })
+                    : 'No registrado — use el desplegable siguiente o el backfill de plazos'}
                 {caseItem.deadlineOverrideNote?.trim() ? (
                   <span className="mt-0.5 block font-normal text-slate-500">
                     Nota al plazo: {caseItem.deadlineOverrideNote.trim()}

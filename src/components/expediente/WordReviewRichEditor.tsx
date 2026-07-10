@@ -21,6 +21,11 @@ export type ReviewMarkupPayloadV1 = { v: 1; doc: JSONContent };
 
 export type WordReviewRichSaverApi = { flush: () => Promise<CaseWordReviewMarkupV1 | void> };
 
+export type WordReviewMarkupSavePayload = {
+  storage: string;
+  commentThreads?: CommentThreadsMap;
+};
+
 type Props = {
   storagePath: string;
   /** Cadena `tiptap:` persistida; vacía si sólo hay semilla desde el .docx. */
@@ -33,10 +38,12 @@ type Props = {
   reviewActorDisplayName?: string | null;
   /** Sufijo estable por revisión para ids DOM del carril (varias tarjetas abiertas). */
   commentRailDomIdSuffix?: string;
+  /** Hilos de comentarios persistidos en BD (review_markup_json.commentThreads). */
+  initialCommentThreads?: CommentThreadsMap;
   puedeEditar: boolean;
   /** Solo `import.meta.env.DEV`: depuración de permisos (role / status). */
   devAuth?: { role: UserRole | undefined; status: WordReviewStatus };
-  onDebouncedSave?: (storage: string) => void | Promise<unknown>;
+  onDebouncedSave?: (payload: WordReviewMarkupSavePayload) => void | Promise<unknown>;
   registerSaverApi?: (api: WordReviewRichSaverApi | null) => void;
 };
 
@@ -75,6 +82,7 @@ export function WordReviewRichEditor({
   membrete,
   reviewActorDisplayName = null,
   commentRailDomIdSuffix,
+  initialCommentThreads,
   puedeEditar,
   devAuth,
   onDebouncedSave,
@@ -86,7 +94,15 @@ export function WordReviewRichEditor({
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const judicialRef = useRef<JudicialDocEditorHandle>(null);
   const [bodyEditor, setBodyEditor] = useState<Editor | null>(null);
-  const [commentThreads, setCommentThreads] = useState<CommentThreadsMap>({});
+  const [commentThreads, setCommentThreads] = useState<CommentThreadsMap>(
+    () => initialCommentThreads ?? {},
+  );
+  const commentThreadsRef = useRef(commentThreads);
+  commentThreadsRef.current = commentThreads;
+
+  useEffect(() => {
+    setCommentThreads(initialCommentThreads ?? {});
+  }, [initialCommentThreads]);
 
   const padRichCuerpo = useMemo(
     () => ({
@@ -190,7 +206,9 @@ export function WordReviewRichEditor({
       saveTimer.current = setTimeout(() => {
         saveTimer.current = null;
         const storage = docToStorage(doc);
-        void Promise.resolve(onDebouncedSave(storage)).catch(() => {});
+        void Promise.resolve(
+          onDebouncedSave({ storage, commentThreads: commentThreadsRef.current }),
+        ).catch(() => {});
       }, 1800);
     },
     [onDebouncedSave, puedeEditar],
@@ -217,8 +235,13 @@ export function WordReviewRichEditor({
         const ed = judicialRef.current?.getEditor();
         if (!ed) return;
         const storage = docToStorage(ed.getJSON());
-        const payload: CaseWordReviewMarkupV1 = { v: 1, storage };
-        await Promise.resolve(onDebouncedSave(storage));
+        const threads = commentThreadsRef.current;
+        const payload: CaseWordReviewMarkupV1 = {
+          v: 1,
+          storage,
+          ...(Object.keys(threads).length > 0 ? { commentThreads: threads } : {}),
+        };
+        await Promise.resolve(onDebouncedSave({ storage, commentThreads: threads }));
         return payload;
       },
     };
@@ -303,7 +326,12 @@ export function WordReviewRichEditor({
                   disabled={!puedeEditar}
                   displayName={reviewActorDisplayName}
                   threads={commentThreads}
-                  onThreadsChange={setCommentThreads}
+                  onThreadsChange={(next) => {
+                    setCommentThreads(next);
+                    commentThreadsRef.current = next;
+                    const ed = judicialRef.current?.getEditor();
+                    if (ed && puedeEditar && onDebouncedSave) scheduleSave(ed.getJSON());
+                  }}
                   editorDomIdSuffix={commentRailDomIdSuffix}
                 />
               </div>

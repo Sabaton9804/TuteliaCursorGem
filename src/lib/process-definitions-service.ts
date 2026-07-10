@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 import type { CaseType } from '../types';
-import type { ProcessDefinitionRow, ProcessStageDefinitionRow } from './process-definition-types';
+import type { ProcessDefinitionRow, ProcessStageDefinitionRow, ProcessStageTransitionRow } from './process-definition-types';
 import {
   STAGE_PIPELINE_BY_CASE_TYPE,
   STAGE_LABEL_ES,
@@ -8,9 +8,11 @@ import {
 } from './case-workflow-stages';
 import { filterToEnabledCourtProcesses, isRadicableCaseType } from './process-product-scope';
 import { caseTermBusinessDaysFromDecreto2591 } from './decreto-2591-plazos';
+import { isProcessRuntimeBdOnly, warnProcessPipelineFallback } from './process-runtime-config';
 
 export type LoadedProcessDefinition = ProcessDefinitionRow & {
   stages: ProcessStageDefinitionRow[];
+  transitions: ProcessStageTransitionRow[];
   pipeline: readonly CaseStageCode[];
 };
 
@@ -44,6 +46,11 @@ export function getCachedPipelineForCaseType(caseType: CaseType | undefined): re
   const loaded = getCachedProcessDefinitionByCaseType(caseType);
   if (loaded?.pipeline.length) return loaded.pipeline;
   const t = caseType ?? 'tutela_primera';
+  if (isProcessRuntimeBdOnly()) {
+    warnProcessPipelineFallback(t, 'sin pipeline en caché BD (PROCESS_RUNTIME_BD_ONLY)');
+    return [];
+  }
+  warnProcessPipelineFallback(t, 'usando STAGE_PIPELINE_BY_CASE_TYPE');
   return STAGE_PIPELINE_BY_CASE_TYPE[t] ?? STAGE_PIPELINE_BY_CASE_TYPE.tutela_primera;
 }
 
@@ -124,6 +131,16 @@ function rowToStageDefinition(row: Record<string, unknown>): ProcessStageDefinit
   };
 }
 
+function rowToTransition(row: Record<string, unknown>): ProcessStageTransitionRow {
+  return {
+    process_definition_id: String(row.process_definition_id ?? ''),
+    from_stage_code: String(row.from_stage_code ?? ''),
+    to_stage_code: String(row.to_stage_code ?? ''),
+    label: row.label == null ? null : String(row.label),
+    is_default: row.is_default === true,
+  };
+}
+
 function pipelineFromStages(stages: ProcessStageDefinitionRow[]): CaseStageCode[] {
   return stages
     .filter((s) => s.stage_kind === 'linear' || s.stage_kind === 'optional')
@@ -166,14 +183,26 @@ export async function fetchEnabledProcessDefinitions(courtId: string): Promise<L
   if (!rows.length) return [];
 
   const ids = rows.map((r) => String(r.id));
-  const { data: stages, error: stErr } = await supabase
-    .from('process_stages_definition')
-    .select('*')
-    .in('process_definition_id', ids)
-    .order('order_index', { ascending: true });
+  const [stagesRes, transRes] = await Promise.all([
+    supabase
+      .from('process_stages_definition')
+      .select('*')
+      .in('process_definition_id', ids)
+      .order('order_index', { ascending: true }),
+    supabase
+      .from('process_stage_transitions')
+      .select('process_definition_id, from_stage_code, to_stage_code, label, is_default')
+      .in('process_definition_id', ids),
+  ]);
+
+  const { data: stages, error: stErr } = stagesRes;
+  const { data: transitions, error: trErr } = transRes;
 
   if (stErr) {
     console.warn('[process-definitions-service] process_stages_definition:', stErr.message);
+  }
+  if (trErr) {
+    console.warn('[process-definitions-service] process_stage_transitions:', trErr.message);
   }
 
   const stagesByDef = new Map<string, ProcessStageDefinitionRow[]>();
@@ -184,15 +213,36 @@ export async function fetchEnabledProcessDefinitions(courtId: string): Promise<L
     stagesByDef.set(st.process_definition_id, list);
   }
 
+  const transitionsByDef = new Map<string, ProcessStageTransitionRow[]>();
+  for (const raw of (transitions as Record<string, unknown>[]) ?? []) {
+    const tr = rowToTransition(raw);
+    const list = transitionsByDef.get(tr.process_definition_id) ?? [];
+    list.push(tr);
+    transitionsByDef.set(tr.process_definition_id, list);
+  }
+
   return filterToEnabledCourtProcesses(
     rows.map((raw) => {
       const def = rowToProcessDefinition(raw);
       const stList = stagesByDef.get(def.id) ?? [];
+      const trList = transitionsByDef.get(def.id) ?? [];
       const pipeline = pipelineFromStages(stList);
+      const legacyType = def.legacy_case_type as CaseType | null;
+      let resolvedPipeline = pipeline;
+      if (!resolvedPipeline.length && legacyType) {
+        if (isProcessRuntimeBdOnly()) {
+          warnProcessPipelineFallback(legacyType, 'process_stages_definition vacío');
+          resolvedPipeline = [];
+        } else {
+          warnProcessPipelineFallback(legacyType, 'process_stages_definition vacío');
+          resolvedPipeline = [...(STAGE_PIPELINE_BY_CASE_TYPE[legacyType] ?? [])];
+        }
+      }
       return {
         ...def,
         stages: stList,
-        pipeline: pipeline.length ? pipeline : (STAGE_PIPELINE_BY_CASE_TYPE[def.legacy_case_type as CaseType] ?? []),
+        transitions: trList,
+        pipeline: resolvedPipeline,
       };
     }),
   );

@@ -269,7 +269,7 @@ export function descargarBlob(blob: Blob, nombreArchivo: string) {
 
 export function nombreArchivoDocx(
   radicadoSlug: string,
-  sufijo: 'Informe-ingreso' | 'Auto-admisorio' | 'AutoTramite' | 'Sentencia',
+  sufijo: 'Informe-ingreso' | 'Auto-admisorio' | 'AutoTramite' | 'Sentencia' | 'FalloTutela',
 ) {
   const safe = radicadoSlug.replace(/[^\w\-]+/g, '_').slice(0, 80);
   return `${sufijo}_${safe}.docx`;

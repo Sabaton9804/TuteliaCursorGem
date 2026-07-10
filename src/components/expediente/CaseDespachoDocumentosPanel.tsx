@@ -527,7 +527,10 @@ export function CaseDespachoDocumentosPanel({
       const displayName = sanitizeCaseDocumentLogicalName(informePdfNombre, DEFAULT_INFORME_INGRESO_PDF_NAME);
       await registerCaseInformeIngresoWithExpedientePdf({
         caseId,
+        courtId: caseItem?.courtId,
+        radicado: caseItem?.radicado,
         caseType: caseItem?.caseType,
+        caseAssignedTo: caseItem?.assignedTo,
         pdfBytes,
         displayName,
         docs,

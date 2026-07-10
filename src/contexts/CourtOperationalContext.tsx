@@ -18,7 +18,6 @@ import {
   type LoadedProcessDefinition,
 } from '../lib/process-definitions-service';
 import type { UserRole } from '../types';
-import { COURT_CONSTANTS } from '../constants';
 import { CUI_INSTANCE_PRIMERA, CUI_INSTANCE_SEGUNDA } from '../lib/radicado-cui';
 
 export type CourtOperationalContextValue = {
@@ -115,7 +114,7 @@ export function useCourtOperational(): CourtOperationalContextValue {
 /** Prefijo CUI para UI de radicación (compatible con buildRadicadoPrimeraInstancia). */
 export function radicacionCourtPrefixFromConfig(
   config: CourtRadicacionConfig,
-  instanceCode = COURT_CONSTANTS.INSTANCE_CODE,
+  instanceCode = CUI_INSTANCE_PRIMERA,
 ) {
   return {
     cityCode: config.daneCode,

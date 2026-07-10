@@ -204,7 +204,7 @@ Cómputo de términos (CGP art. 118):
 Plazos frecuentes en autos CGP (aplica solo si el auto lo dice o se infiere con claridad):
 - Inadmisión con subsanación (art. 90 CGP): usualmente 5 días hábiles para corregir la demanda.
 - Traslado de excepciones previas: 10 días hábiles (art. 100 CGP).
-- Contestación de la demanda: 20 días hábiles (art. 371 CGP) desde notificación personal al demandado.
+- Contestación de la demanda: 20 días hábiles (art. 76 CGP) desde notificación personal al demandado (traslado ordinario).
 - Recurso de reposición contra autos: 3 días hábiles (art. 318 CGP) desde notificación.
 
 Salida operativa requerida:

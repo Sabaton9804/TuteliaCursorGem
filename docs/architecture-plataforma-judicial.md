@@ -4,7 +4,7 @@ Mapa de destino para escalar de **un despacho piloto (051 civil circuito Bogotá
 
 **Estado:** Fase 1 en migración `20260529120000_judicial_process_platform_phase1.sql`. **Fase 2 (runtime)** cableada: `CourtOperationalProvider`, CUI desde `courts`, equipo desde `profiles`, pipelines desde `process_definitions`.
 
-**Alcance de producto hoy (MVP):** solo **tutelas** — `tutela_primera`, `tutela_segunda`, `consulta_desacato`. La BD ya admite más `process_definitions`; el runtime filtra en `src/lib/process-product-scope.ts` hasta habilitar civil/laboral/penal con flujo completo.
+**Alcance de producto hoy:** **tutelas** con flujo completo (`tutela_primera`, `tutela_segunda`, `consulta_desacato`) + **procesos civiles** radicables (`civil_ordinario`, `civil_ejecutivo`, etc.) con pipeline CGP en expansión. Laboral y penal siguen en preview. Plan de cierre de gaps: `docs/plan-maestro-cierre-gaps-operacion-judicial.md`.
 
 ---
 
@@ -247,6 +247,7 @@ Los módulos no se cuelgan del juzgado individual sino de **dominio + categoría
 
 ## 10. Referencias en repo
 
+- **Plan maestro (gaps operación judicial):** `docs/plan-maestro-cierre-gaps-operacion-judicial.md` — **F0–F12**
 - Core tenant: `supabase/migrations/20250428120000_tutelia_core.sql`
 - Etapas: `supabase/migrations/20250512000001_tutelia_workflow_stages_precedents.sql`
 - Pipeline TS: `src/lib/case-workflow-stages.ts`

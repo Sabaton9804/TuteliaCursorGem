@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Jurion — Cuadro de valor operativo</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    @page { size: landscape letter; margin: 0.4in; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Inter, sans-serif;
+      background: #050D1A;
+      color: #F0F4FF;
+      padding: 24px 30px;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
+    .logo { font-size: 1.5rem; font-weight: 900; }
+    .logo span { color: #378ADD; }
+    .note { font-size: 0.62rem; color: #8899BB; max-width: 260px; text-align: right; line-height: 1.4; }
+    h1 { font-size: 1.25rem; font-weight: 800; margin-bottom: 4px; }
+    .sub { font-size: 0.72rem; color: #8899BB; margin-bottom: 14px; }
+    .section-label {
+      font-size: 0.58rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+      color: #22C55E; margin-bottom: 8px;
+    }
+    .featured { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 10px; }
+    .featured.secondary { grid-template-columns: repeat(3, 1fr); margin-bottom: 12px; }
+    .feat {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(55,138,221,0.2);
+      border-radius: 12px;
+      padding: 13px;
+    }
+    .feat.primary {
+      background: linear-gradient(145deg, rgba(34,197,94,0.12), rgba(4,44,83,0.55));
+      border-color: rgba(34,197,94,0.45);
+    }
+    .feat .tag { font-size: 0.55rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #378ADD; margin-bottom: 5px; }
+    .feat.primary .tag { color: #22C55E; }
+    .feat h2 { font-size: 0.78rem; font-weight: 800; margin-bottom: 5px; line-height: 1.25; }
+    .feat p { font-size: 0.62rem; color: #8899BB; line-height: 1.45; }
+    .feat .save { margin-top: 7px; font-size: 0.68rem; font-weight: 700; color: #22C55E; }
+    .wrap { background: rgba(255,255,255,0.03); border: 1px solid rgba(55,138,221,0.2); border-radius: 12px; overflow: hidden; margin-bottom: 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.65rem; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid rgba(55,138,221,0.12); vertical-align: top; }
+    th { color: #378ADD; font-weight: 700; font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.06em; }
+    td { color: #C5D0E8; }
+    td strong { color: #F0F4FF; }
+    tr:last-child td { border-bottom: none; }
+    .summary { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+    .sum { background: rgba(255,255,255,0.03); border: 1px solid rgba(55,138,221,0.18); border-radius: 10px; padding: 10px; text-align: center; }
+    .sum .n { font-size: 1.05rem; font-weight: 800; color: #378ADD; }
+    .sum .l { font-size: 0.58rem; color: #8899BB; margin-top: 3px; line-height: 1.35; }
+    .foot { font-size: 0.55rem; color: #5A6A88; text-align: center; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div>
+      <div class="logo">Jurion<span>.</span></div>
+      <h1>Valor operativo e institucional de Jurion</h1>
+      <p class="sub">Estimación pre-piloto · lo más importante: gobernanza, estadística y memoria jurídica</p>
+    </div>
+    <p class="note">La IA propone; el funcionario judicial aprueba. Estadística SIERJU en evolución iterativa según formulario CSJ.</p>
+  </div>
+
+  <p class="section-label">★ Lo más importante — gobernanza del despacho</p>
+  <div class="featured">
+    <article class="feat primary">
+      <div class="tag">Prioridad 1</div>
+      <h2>Trazabilidad y auditoría completas</h2>
+      <p>Libro de actuaciones procesales + historial técnico humanizado: quién subió, modificó, revisó o movió cada pieza, con usuario y hora. Revisiones Word, asignaciones y cambios de etapa quedan registrados.</p>
+      <div class="save">Rendir cuentas sin depender de «quién se acuerda»</div>
+    </article>
+    <article class="feat primary">
+      <div class="tag">Prioridad 1</div>
+      <h2>Estadística automática (SIERJU)</h2>
+      <p>Panel de estadísticas alineado al Excel «Movimiento de Tutelas»: filas por derecho tutelado, ingresos y salidas por periodo, tipos de decisión — sin rellenar a mano caso por caso.</p>
+      <div class="save">Horas de cierre mensual → minutos con datos ya en el sistema</div>
+    </article>
+  </div>
+
+  <p class="section-label">★ Oficios, notificaciones y correo</p>
+  <div class="featured">
+    <article class="feat primary">
+      <div class="tag">Flujo completo</div>
+      <h2>Oficios de notificación desde el expediente</h2>
+      <p>Auto admisorio o fallo firmado → tarea a secretaría → generación desde plantillas con datos del caso (partes, hechos, plazos) → firma del funcionario competente.</p>
+      <div class="save">Notificación auto admisorio · notificación del fallo · registro en etapa</div>
+    </article>
+    <article class="feat primary">
+      <div class="tag">Correo M365</div>
+      <h2>Recibir y enviar sin salir de Jurion</h2>
+      <p>Bandeja Outlook integrada: leer repartos y memorials, analizar con IA, radicar .eml y <strong>enviar oficios y comunicaciones</strong> a las partes desde la misma app (Mail.Read + Mail.Send).</p>
+      <div class="save">Ingreso + salida · trazabilidad del envío</div>
+    </article>
+  </div>
+
+  <p class="section-label">★ Diferenciadores IA y operación</p>
+  <div class="featured secondary">
+    <article class="feat">
+      <div class="tag">IA judicial</div>
+      <h2>Precedentes + similitud semántica</h2>
+      <p>Fallos del despacho indexados. Consulta en lenguaje natural con % de similitud.</p>
+      <div class="save">~30–90 min → 3–10 min</div>
+    </article>
+    <article class="feat">
+      <div class="tag">IA judicial</div>
+      <h2>Lectura rápida por documento</h2>
+      <p>Resumen de cada pieza: propósito, puntos clave, fechas — vistazo general del expediente.</p>
+      <div class="save">~15–45 min → 2–5 min</div>
+    </article>
+    <article class="feat">
+      <div class="tag">Cumplimiento</div>
+      <h2>Términos automáticos</h2>
+      <p>Tablero EN TÉRMINO · URGENTE · VENCIDO sin Excel ni revisión constante.</p>
+      <div class="save">Vigilancia 24/7</div>
+    </article>
+  </div>
+
+  <div class="wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Actividad rutinaria</th>
+          <th>Sin Jurion</th>
+          <th>Con Jurion</th>
+          <th>Ahorro</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Reparto nuevo</strong></td>
+          <td>~10 min</td>
+          <td>~3–5 min</td>
+          <td>~5–7 min</td>
+        </tr>
+        <tr>
+          <td><strong>Memorial / pieza</strong></td>
+          <td>~10 min</td>
+          <td>~2–4 min</td>
+          <td>~6–8 min</td>
+        </tr>
+        <tr>
+          <td><strong>Sync SGDE</strong></td>
+          <td>~10–15 min</td>
+          <td>~4–6 min</td>
+          <td>~5–9 min</td>
+        </tr>
+        <tr>
+          <td><strong>Oficios + envío correo</strong></td>
+          <td>Word + Outlook aparte</td>
+          <td>Plantilla → envío → registro</td>
+          <td>Mismo flujo en Jurion</td>
+        </tr>
+        <tr>
+          <td><strong>Cierre estadístico SIERJU</strong></td>
+          <td>Horas rellenando Excel</td>
+          <td>Automático por periodo</td>
+          <td>Datos desde el expediente</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="summary">
+    <div class="sum"><div class="n">100 %</div><div class="l">Trazabilidad de cambios<br>en expediente y piezas</div></div>
+    <div class="sum"><div class="n">SIERJU</div><div class="l">Estadística desde<br>datos operativos</div></div>
+    <div class="sum"><div class="n">~26–30 h</div><div class="l">Ahorro mensual proyectado<br>+ valor institucional</div></div>
+  </div>
+
+  <p class="foot">Jurion · Sistema operativo del despacho judicial · Estimación orientativa · © 2026</p>
+</body>
+</html>

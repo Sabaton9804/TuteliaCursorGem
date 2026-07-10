@@ -115,6 +115,7 @@ export default function CaseDetail() {
   const [manualActSaving, setManualActSaving] = useState(false);
   const [derechoCodeSaving, setDerechoCodeSaving] = useState(false);
   const [decisionSaving, setDecisionSaving] = useState(false);
+  const [decisionErr, setDecisionErr] = useState<string | null>(null);
   const [decisionAtDraft, setDecisionAtDraft] = useState('');
   const [deadlineDraft, setDeadlineDraft] = useState('');
   const [deadlineNoteDraft, setDeadlineNoteDraft] = useState('');
@@ -602,6 +603,7 @@ export default function CaseDetail() {
       const prev = caseItem.decisionType;
       if ((next ?? undefined) === (prev ?? undefined)) return;
       setDecisionSaving(true);
+      setDecisionErr(null);
       try {
         await ensureSupabaseSessionForWrites();
         const now = new Date().toISOString();
@@ -642,6 +644,7 @@ export default function CaseDetail() {
         }
       } catch (err) {
         console.error(err);
+        setDecisionErr(err instanceof Error ? err.message : 'No se pudo guardar la decisión.');
       } finally {
         setDecisionSaving(false);
       }
@@ -679,6 +682,7 @@ export default function CaseDetail() {
       await refetchActions();
     } catch (err) {
       console.error(err);
+      setDecisionErr(err instanceof Error ? err.message : 'No se pudo guardar la fecha de decisión.');
     } finally {
       setDecisionSaving(false);
     }
@@ -897,6 +901,7 @@ export default function CaseDetail() {
                 {decisionSaving ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-slate-400" aria-hidden /> : null}
               </div>
             </div>
+            {decisionErr ? <p className="w-full text-xs text-red-700">{decisionErr}</p> : null}
             {caseItem.decisionType ? (
               <div className="min-w-[180px] space-y-1">
                 <label className="text-[9px] font-bold uppercase tracking-wider text-slate-400" htmlFor="decision-at">

@@ -97,6 +97,7 @@ const ROLE_CAPABILITIES: Record<UserRole, ReadonlySet<RoleCapability>> = {
     ...DESPACHO_BASE,
     'responder_borrador_sustanciador',
     'editar_plantillas_despacho',
+    'registrar_rama_admision',
     'cambiar_sustanciador',
     'config_sgde',
     'ver_correo',

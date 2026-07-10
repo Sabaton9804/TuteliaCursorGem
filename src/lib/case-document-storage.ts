@@ -15,23 +15,46 @@ export const CASE_DOCUMENTS_BUCKET = 'case-documents';
  */
 export const CASE_DOCUMENT_SIGNED_URL_TTL_SEC = 30 * 60;
 
+const ALLOWED_STORAGE_EXTENSIONS = new Set([
+  'pdf',
+  'doc',
+  'docx',
+  'jpg',
+  'jpeg',
+  'png',
+  'gif',
+  'webp',
+  'tif',
+  'tiff',
+  'mp3',
+  'mpeg',
+  'mpg',
+]);
+
+function normalizeStorageExtension(rawExt: string | undefined, fallback = 'pdf'): string {
+  const ext = (rawExt || fallback).toLowerCase().replace(/^\./, '');
+  return ALLOWED_STORAGE_EXTENSIONS.has(ext) ? ext : fallback;
+}
+
 /**
  * Nombre lógico para `case_documents` / Storage: mismo criterio que la ruta del objeto (sin barras, longitud acotada).
- * Añade `.pdf` si falta. Si tras sanear queda vacío, usa `fallback`.
+ * Conserva la extensión original (PDF, Word, imagen, etc.). Si falta extensión, usa `fallback`.
  */
 export function sanitizeCaseDocumentLogicalName(raw: string, fallback: string): string {
   const fb = (fallback || 'documento.pdf').trim() || 'documento.pdf';
   let t = (raw || '').trim();
-  if (!t) return fb.endsWith('.pdf') ? fb : `${fb.replace(/\.+$/, '')}.pdf`;
-  if (!/\.pdf$/i.test(t)) t = `${t.replace(/\.+$/, '')}.pdf`;
-  const safe = t
+  if (!t) return fb;
+  const extMatch = t.match(/\.([a-zA-Z0-9]{1,8})$/);
+  const ext = normalizeStorageExtension(extMatch?.[1], normalizeStorageExtension(fb.split('.').pop()));
+  const base = (extMatch ? t.slice(0, -extMatch[0].length) : t).replace(/\.+$/, '');
+  const safeBase = base
     .replace(/[/\\]+/g, '_')
     .replace(/[^a-zA-Z0-9._-]+/g, '_')
     .replace(/_+/g, '_')
     .replace(/^_|_$/g, '')
     .slice(0, 120);
-  const out = safe.toLowerCase().endsWith('.pdf') ? safe : `${safe}.pdf`;
-  return out || (fb.toLowerCase().endsWith('.pdf') ? fb : `${fb}.pdf`);
+  const out = safeBase ? `${safeBase}.${ext}` : fb;
+  return out || fb;
 }
 
 export function buildCaseAttachmentObjectPath(caseId: string, logicalName: string): string {

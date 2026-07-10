@@ -59,7 +59,7 @@ function isCivilCatalogRow(raw: {
 }
 
 const env = loadEnv();
-const url = (env.SUPABASE_URL || env.VITE_SUPABASE_URL || '').replace(/\/+$/, '');
+const url = (env.NEXT_PUBLIC_SUPABASE_URL || env.SUPABASE_URL || env.VITE_SUPABASE_URL || '').replace(/\/+$/, '');
 const key = env.SUPABASE_SERVICE_ROLE_KEY || '';
 const courtId = process.argv.find((a) => a.startsWith('--court='))?.split('=')[1] || 'court-1';
 const csvArg = process.argv.find((a) => a.startsWith('--csv='))?.split('=')[1];

@@ -4,6 +4,22 @@ import type { CaseStageCode } from './case-workflow-stages';
 import { isCivilCaseType } from './process-product-scope';
 import { isCivilEjecutivoCaseType } from './sgde-case-scope';
 
+function normalizeEntityKey(name: string): string {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function entityMatches(key: string, candidate: string): boolean {
+  const c = normalizeEntityKey(candidate);
+  const k = normalizeEntityKey(key);
+  if (!k || !c) return false;
+  return c.includes(k) || k.includes(c);
+}
+
 export type ContestacionPartyRow = {
   entityName: string;
   respuestaCargada: boolean;
@@ -29,18 +45,36 @@ function splitAccionados(defendant: string | undefined | null): string[] {
     .filter(Boolean);
 }
 
-function normalizeEntityKey(name: string): string {
-  return name
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '');
-}
-
-function entityMatches(partyKey: string, docEntity: string): boolean {
-  const dk = normalizeEntityKey(docEntity);
-  if (!dk || !partyKey) return false;
-  return dk.includes(partyKey) || partyKey.includes(dk);
+function partyResponseRows(
+  entityNames: string[],
+  responseDocs: Document[],
+  fallbackLabel: string,
+): ContestacionPartyRow[] {
+  if (entityNames.length === 0) {
+    return [
+      {
+        entityName: fallbackLabel,
+        respuestaCargada: responseDocs.length > 0,
+        correoIngresado: false,
+        piezasCount: responseDocs.length,
+      },
+    ];
+  }
+  return entityNames.map((name) => {
+    const key = normalizeEntityKey(name);
+    const matched = responseDocs.filter((d) => {
+      const pe = d.partyEntity?.trim();
+      if (pe && entityMatches(key, pe)) return true;
+      if (d.name && entityMatches(key, d.name)) return true;
+      return false;
+    });
+    return {
+      entityName: name,
+      respuestaCargada: matched.length > 0,
+      correoIngresado: false,
+      piezasCount: matched.length,
+    };
+  });
 }
 
 export function buildCaseContestacionChecklist(opts: {
@@ -56,25 +90,14 @@ export function buildCaseContestacionChecklist(opts: {
   if (isEjecutivo) {
     const excepciones = docs.filter((d) => inferActCodeFromDocument(d) === 'excepciones_ejecutivo');
     const demandados = splitAccionados(caseItem.defendant);
-    const parties: ContestacionPartyRow[] =
-      demandados.length > 0
-        ? demandados.map((name) => ({
-            entityName: name,
-            respuestaCargada: excepciones.length > 0,
-            correoIngresado: false,
-            piezasCount: excepciones.length,
-          }))
-        : [
-            {
-              entityName: caseItem.defendant?.trim() || 'Ejecutado',
-              respuestaCargada: excepciones.length > 0,
-              correoIngresado: false,
-              piezasCount: excepciones.length,
-            },
-          ];
+    const parties = partyResponseRows(
+      demandados,
+      excepciones,
+      caseItem.defendant?.trim() || 'Ejecutado',
+    );
     const totalRequired = parties.length;
-    const totalResponded = excepciones.length > 0 ? totalRequired : 0;
-    const allResponded = excepciones.length > 0;
+    const totalResponded = parties.filter((p) => p.respuestaCargada).length;
+    const allResponded = totalRequired > 0 && totalResponded === totalRequired;
     const enTermino = openStageCode === 'TERMINO_EXCEPCIONES' || openStageCode === 'TRAMITE';
     const listoParaFallo = enTermino && (allResponded || plazoVencido);
     let mensajeResumen: string;
@@ -99,25 +122,14 @@ export function buildCaseContestacionChecklist(opts: {
   if (isCivil) {
     const contestaciones = docs.filter((d) => inferActCodeFromDocument(d) === 'contestacion_demanda');
     const demandados = splitAccionados(caseItem.defendant);
-    const parties: ContestacionPartyRow[] =
-      demandados.length > 0
-        ? demandados.map((name) => ({
-            entityName: name,
-            respuestaCargada: contestaciones.length > 0,
-            correoIngresado: false,
-            piezasCount: contestaciones.length,
-          }))
-        : [
-            {
-              entityName: caseItem.defendant?.trim() || 'Demandado',
-              respuestaCargada: contestaciones.length > 0,
-              correoIngresado: false,
-              piezasCount: contestaciones.length,
-            },
-          ];
+    const parties = partyResponseRows(
+      demandados,
+      contestaciones,
+      caseItem.defendant?.trim() || 'Demandado',
+    );
     const totalRequired = parties.length;
-    const totalResponded = contestaciones.length > 0 ? totalRequired : 0;
-    const allResponded = contestaciones.length > 0;
+    const totalResponded = parties.filter((p) => p.respuestaCargada).length;
+    const allResponded = totalRequired > 0 && totalResponded === totalRequired;
     const enTermino = openStageCode === 'TERMINO_RESPUESTA' || openStageCode === 'TRAMITE';
     const listoParaFallo = enTermino && (allResponded || plazoVencido);
     let mensajeResumen: string;

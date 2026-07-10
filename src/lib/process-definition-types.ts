@@ -1,6 +1,5 @@
 /**
- * Tipos alineados a process_definitions / process_stages_definition (Fase 1 SQL).
- * El runtime sigue en case-workflow-stages.ts hasta Fase 2.
+ * Tipos alineados a process_definitions / process_stages_definition (Fase 1–2 SQL).
  */
 
 export type ProcessDomain =
@@ -47,6 +46,15 @@ export type ProcessStageDefinitionRow = {
   generates_alert: boolean;
   alert_threshold_pct: number;
   workflow_task_type: ProcessWorkflowTaskType | null;
+};
+
+/** Fila de public.process_stage_transitions (grafo de ramas). */
+export type ProcessStageTransitionRow = {
+  process_definition_id: string;
+  from_stage_code: string;
+  to_stage_code: string;
+  label: string | null;
+  is_default: boolean;
 };
 
 /** Configuración CUI de un despacho (public.courts). */

@@ -712,6 +712,7 @@ export function ExpedienteDigitalPanel({
           }
           const ins = await insertCaseDocumentRows(supabase, [row]);
           if (ins.error) {
+            await removeCaseDocumentObjects(supabase, [up.path]);
             await handleDataPermissionError(ins.error, 'create', 'case_documents');
             throw ins.error;
           }
@@ -931,6 +932,10 @@ export function ExpedienteDigitalPanel({
     try {
       await ensureSupabaseSessionForWrites();
       const path = doc.storagePath?.trim();
+      if (path) {
+        const removed = await removeCaseDocumentObjects(supabase, [path]);
+        if (!removed) throw new Error('No se pudo eliminar el archivo en almacenamiento.');
+      }
       const { error } = await supabase.from('case_documents').delete().eq('id', doc.id).eq('case_id', caseId);
       if (error) {
         await handleDataPermissionError(error, 'delete', 'case_documents');
@@ -945,10 +950,6 @@ export function ExpedienteDigitalPanel({
             updated_at: new Date().toISOString(),
           })
           .eq('id', caseId);
-      }
-      if (path) {
-        const removed = await removeCaseDocumentObjects(supabase, [path]);
-        if (!removed) throw new Error('No se pudo eliminar el archivo en almacenamiento.');
       }
       if (selectedDoc?.id === doc.id) onSelectDoc(null);
       await onRefetchDocs();

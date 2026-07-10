@@ -10,9 +10,14 @@
     "start": "node server.ts",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "verify:supabase": "tsx scripts/verify-supabase.mts",
     "verify:migrations-202605": "tsx scripts/verify-migrations-202605.mts",
     "verify:despacho-invariants": "tsx scripts/verify-despacho-invariants.mts",
+    "test:e2e": "npm run verify:despacho-invariants && tsx scripts/run-judicial-e2e.mts",
+    "test:e2e:judicial": "tsx scripts/run-judicial-e2e.mts",
+    "test:e2e:bots": "tsx scripts/run-bots-tutela-e2e.mts --synthetic",
     "seed:dev-admin": "tsx scripts/seed-dev-admin.mts",
     "seed:court-users": "tsx scripts/seed-court-users.mts",
     "seed:role-bots": "tsx scripts/seed-role-bots.mts",
@@ -27,6 +32,8 @@
     "supabase:ensure-case-documents": "tsx scripts/ensure-case-documents-bucket.mts",
     "backfill:case-deadlines": "tsx scripts/backfill-case-deadlines.mts",
     "import:plataforma-catalog": "tsx scripts/import-plataforma-catalog.mts",
+    "backfill:catalog": "tsx scripts/import-plataforma-catalog.mts --enrich-only",
+    "import:planner-links": "tsx scripts/import-planner-links.mts",
     "sync:plataforma-sgde-batch": "tsx scripts/sync-plataforma-sgde-batch.mts",
     "report:procesos-estado": "tsx scripts/report-procesos-estado.mts",
     "batch:sintesis-cognitiva": "tsx scripts/batch-sintesis-cognitiva.mts",
@@ -100,6 +107,7 @@
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "vitest": "^3.2.7"
   }
 }

@@ -4,6 +4,8 @@ import { Link } from 'react-router-dom';
 import type { Case, Document } from '../../types';
 import type { CaseStageCode } from '../../lib/case-workflow-stages';
 import { buildCaseContestacionChecklist } from '../../lib/case-contestacion-checklist';
+import { isCivilCaseType } from '../../lib/process-product-scope';
+import { isCivilEjecutivoCaseType } from '../../lib/sgde-case-scope';
 
 type Props = {
   caseItem: Case;
@@ -31,9 +33,23 @@ export function CaseContestacionChecklistPanel({
     [caseItem, docs, openStageCode, plazoVencido],
   );
 
-  if (caseItem.caseType !== 'tutela_primera') return null;
-  if (openStageCode !== 'TERMINO_RESPUESTA' && openStageCode !== 'INGRESO_DESPACHO_FALLO' && compact) {
+  if (checklist.parties.length === 0 && caseItem.caseType !== 'tutela_primera' && !isCivilCaseType(caseItem.caseType)) {
     return null;
+  }
+
+  const isCivil = isCivilCaseType(caseItem.caseType);
+  const isEjecutivo = isCivilEjecutivoCaseType(caseItem.caseType);
+  const panelTitle = isEjecutivo
+    ? 'Excepciones de mérito'
+    : isCivil
+      ? 'Contestaciones de demandados'
+      : 'Contestaciones de accionados';
+
+  if (compact) {
+    const relevantStages: CaseStageCode[] = isCivil
+      ? ['TERMINO_RESPUESTA', 'TERMINO_EXCEPCIONES', 'TRAMITE', 'INGRESO_DESPACHO_FALLO']
+      : ['TERMINO_RESPUESTA', 'INGRESO_DESPACHO_FALLO'];
+    if (openStageCode && !relevantStages.includes(openStageCode)) return null;
   }
 
   return (
@@ -47,7 +63,7 @@ export function CaseContestacionChecklistPanel({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <p className="text-[10px] font-black uppercase tracking-widest text-slate-700">
-            Contestaciones de accionados
+            {panelTitle}
           </p>
           <p className="mt-1 text-xs text-slate-700">{checklist.mensajeResumen}</p>
         </div>

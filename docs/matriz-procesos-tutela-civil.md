@@ -1,0 +1,129 @@
+# Matriz de procesos — tutela vs civil
+
+Referencia de producto para diferenciar flujos en Tutelia.  
+**Código:** `src/lib/process-product-scope.ts`, `src/lib/case-workflow-stages.ts`, `src/lib/case-act-types.ts`.
+
+---
+
+## Alcance radicable hoy
+
+| Dominio | `case_type` | Flujo |
+|---------|-------------|-------|
+| Constitucional | `tutela_primera`, `tutela_segunda`, `consulta_desacato` | **Completo** (MVP) |
+| Civil | `civil_ordinario`, `civil_ejecutivo`, `civil_jurisdiccion_voluntaria`, `civil_insolvencia`, `civil_otros` | **Radicable**; pipeline CGP en expansión |
+| Laboral / penal | previews UI | No radicable |
+
+---
+
+## Norma aplicable
+
+| Proceso | Norma principal | Plazos en código |
+|---------|-----------------|------------------|
+| Tutela 1ª | Decreto 2591/1991 | `decreto-2591-plazos.ts` |
+| Tutela 2ª | D. 2591 art. 32 | 20 háb. fallo; 10 háb. remisión Corte |
+| Civil ordinario | CGP | `civil-business-days.ts` |
+| Civil ejecutivo | CGP | Excepciones art. 443 |
+| Notificaciones (medio) | Ley 2213/2022 | Pendiente F2 |
+
+---
+
+## Pipeline de etapas (resumen)
+
+### Tutela primera instancia
+
+```
+RADICACION → ADMISION → NOTIFICACION_AUTO → TERMINO_RESPUESTA (2 háb.)
+→ INGRESO_DESPACHO_FALLO → FALLO → NOTIFICACION_FALLO
+→ TERMINO_IMPUGNACION (3 háb.) → IMPUGNACION → REMISION_SUPERIOR (2 háb.) → EJECUTORIA
+```
+
+### Civil ordinario
+
+```
+RADICACION → ADMISION → NOTIFICACION_AUTO → TERMINO_RESPUESTA (20 háb. art. 76)
+→ TRAMITE → INGRESO_DESPACHO_FALLO → FALLO/Sentencia → NOTIFICACION_FALLO
+→ TERMINO_APELACION (10 háb. art. 318) → APELACION → REMISION_SUPERIOR → EJECUTORIA
+```
+
+### Civil ejecutivo
+
+```
+RADICACION → ADMISION → NOTIFICACION_AUTO → TERMINO_EXCEPCIONES (5 háb. art. 443)
+→ TRAMITE → … → (igual post-trámite que ordinario con apelación)
+```
+
+**Diferencia clave ejecutivo vs ordinario:** etapa `TERMINO_EXCEPCIONES` en lugar de `TERMINO_RESPUESTA` con plazo de contestación.
+
+---
+
+## Plazos comparados
+
+| Etapa / concepto | Tutela 1ª | Civil ordinario | Civil ejecutivo |
+|------------------|-----------|-----------------|-----------------|
+| Plazo global caso | 10 háb. (art. 29) | Sin perentorio global | Sin perentorio global |
+| Traslado / contestación | 2 háb. (práctica 051) | 20 háb. (art. 76) | 5 háb. excepciones (art. 443) |
+| Recurso post-decisión | Impugnación 3 háb. (art. 31) | Apelación 10 háb. (art. 318) | Apelación 10 háb. |
+| Remisión superior | 2 háb. post-impugnación (art. 32) | Según apelación | Según apelación |
+| Remisión Corte | No (salvo consulta desacato) | No | No |
+| Trámite probatorio | No etapa `TRAMITE` | Sí | Sí |
+
+---
+
+## Actos procesales principales
+
+| Acto | Tutela | Civil ordinario | Civil ejecutivo |
+|------|--------|-----------------|-----------------|
+| Informe ingreso | `InformeIngresoDespacho.pdf` | Igual | Igual |
+| Auto admisorio | Auto admisorio tutela | Auto admisorio demanda | Mandamiento de pago |
+| Respuesta parte | Contestación / informe | Contestación demanda | Excepciones de mérito |
+| Decisión fondo | Fallo tutela | Sentencia | Sentencia |
+| Notificación | Correo Outlook + PDF | Igual | Igual |
+| Incidente desacato | Sí (en expediente madre) | No | No |
+
+Catálogo completo: `src/lib/case-act-types.ts`.
+
+---
+
+## Secretaría vs despacho
+
+| Rol | Etapas típicas |
+|-----|----------------|
+| **Secretaría** | Radicación, notificaciones, términos, impugnación/apelación, remisiones |
+| **Despacho** | Admisión, trámite, fallo/sentencia, ejecutoria |
+
+Definición: `SECRETARIA_STAGES` / `DESPACHO_STAGES` en `case-workflow-stages.ts`.
+
+---
+
+## SIERJU
+
+| Capa | Estado |
+|------|--------|
+| Catálogo fino | `sierju_process_classes` (26+ clases civiles circuito) |
+| Runtime app | 5 `case_type` civiles (colapsado) |
+| Campo expediente | `cases.sierju_process_class_id` (opcional hoy; obligatorio en F3) |
+| Tutela | `sierju-tutela-informe.ts` |
+
+---
+
+## Navegación UI
+
+| Módulo | Ruta |
+|--------|------|
+| Tutelas | `/cases`, `/new` |
+| Procesos civiles | `/procesos/civiles` |
+| Detalle expediente | `/case/:id` (común) |
+
+---
+
+## Incidente de desacato
+
+- **No** es `case_type` independiente ni expediente hijo.
+- Tabla `incident_desacato` + panel en `CaseDetail`.
+- Ver `docs/incidente-desacato-modelo-expediente.md`.
+
+---
+
+## Próximos tipos (plan F3)
+
+`civil_verbal`, `civil_abreviado`, `civil_verbal_sumario`, `civil_monitorio`, `civil_ejecutivo_hipotecario`.

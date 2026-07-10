@@ -17,6 +17,7 @@ import {
   type WordReviewSustanciadorNotifyCaseContext,
 } from '../../lib/word-review-notifications';
 import { applyStageTransitionFalloPdfFirmado, applyStageTransitionJudgeApprovedBorrador } from '../../lib/case-stages-service';
+import { hasRoleCapability } from '../../lib/role-capabilities';
 import { docToStorage, parseStorageToDoc } from '../../lib/tiptap-template-storage';
 import { ensureTipTapDocJSON, isTipTapDocSubstantivelyEmpty } from '../../lib/docx-to-tiptap-review-seed';
 import type { JSONContent } from '@tiptap/core';
@@ -34,8 +35,10 @@ import type { PlantillasStateV2 } from '../../lib/plantillas-store';
 import { loadPlantillas } from '../../lib/plantillas-store';
 import {
   WordReviewRichEditor,
+  type WordReviewMarkupSavePayload,
   type WordReviewRichSaverApi,
 } from './WordReviewRichEditor';
+import type { CommentThreadsMap } from '../../lib/review-markup-payload';
 
 type Props = {
   caseId: string;
@@ -62,6 +65,10 @@ function roleCanOpenReview(role: UserRole | undefined): boolean {
     role === 'judge' ||
     role === 'asistente_judicial'
   );
+}
+
+function roleCanApproveBorrador(role: UserRole | undefined): boolean {
+  return hasRoleCapability(role, 'aprobar_borrador_juez');
 }
 
 /** Edición TipTap en «pendiente de juez»: juez, asistente judicial o administrador (pruebas / soporte). */
@@ -127,7 +134,21 @@ function reviewMarkupRowToStorageString(m: CaseWordReview['reviewMarkupJson']): 
   return fromDoc();
 }
 
+function reviewMarkupCommentThreads(
+  m: CaseWordReview['reviewMarkupJson'],
+): CommentThreadsMap | undefined {
+  const raw = m?.commentThreads;
+  if (!raw || typeof raw !== 'object') return undefined;
+  return raw as CommentThreadsMap;
+}
+
+function hasCommentThreadsWithReplies(threads?: CommentThreadsMap): boolean {
+  if (!threads) return false;
+  return Object.values(threads).some((t) => Array.isArray(t?.replies) && t.replies.length > 0);
+}
+
 function hasMeaningfulReviewMarkup(row: CaseWordReview): boolean {
+  if (hasCommentThreadsWithReplies(reviewMarkupCommentThreads(row.reviewMarkupJson))) return true;
   const s = reviewMarkupRowToStorageString(row.reviewMarkupJson);
   if (!s.trim()) return false;
   try {
@@ -166,6 +187,7 @@ export function CaseWordReviewPanel({
 
   const role = profile?.role;
   const puedeDespacho = roleCanOpenReview(role);
+  const canApproveBorrador = roleCanApproveBorrador(role);
 
   const docxDocs = useMemo(() => docs.filter((d) => isCaseDocumentDocx(d)), [docs]);
   const pdfDocs = useMemo(() => docs.filter((d) => isCaseDocumentPdf(d)), [docs]);
@@ -248,9 +270,16 @@ export function CaseWordReviewPanel({
     await onRefetchDocs();
   };
 
-  const persistReviewMarkup = useCallback(async (reviewId: string, storage: string) => {
-    const trimmed = storage.trim();
-    const payload: CaseWordReviewMarkupV1 | null = trimmed ? { v: 1, storage: trimmed } : null;
+  const persistReviewMarkup = useCallback(async (reviewId: string, patch: WordReviewMarkupSavePayload) => {
+    const trimmed = patch.storage.trim();
+    const threads = patch.commentThreads;
+    const payload: CaseWordReviewMarkupV1 | null = trimmed
+      ? {
+          v: 1,
+          storage: trimmed,
+          ...(threads && Object.keys(threads).length > 0 ? { commentThreads: threads } : {}),
+        }
+      : null;
     try {
       await updateCaseWordReview(reviewId, { reviewMarkupJson: payload });
       setRows((prev) =>
@@ -492,11 +521,12 @@ export function CaseWordReviewPanel({
                               profile?.name?.trim() || profile?.email?.trim() || null
                             }
                             commentRailDomIdSuffix={r.id}
+                            initialCommentThreads={reviewMarkupCommentThreads(r.reviewMarkupJson)}
                             puedeEditar={puedeEditarRevision}
                             devAuth={
                               import.meta.env.DEV ? { role, status: r.status } : undefined
                             }
-                            onDebouncedSave={(storage) => persistReviewMarkup(r.id, storage)}
+                            onDebouncedSave={(payload) => persistReviewMarkup(r.id, payload)}
                             registerSaverApi={(api) => {
                               reviewFlushRef.current[r.id] = api;
                             }}
@@ -609,10 +639,17 @@ export function CaseWordReviewPanel({
                         </button>
                         <button
                           type="button"
-                          disabled={busy}
+                          disabled={busy || !canApproveBorrador}
+                          title={
+                            canApproveBorrador
+                              ? undefined
+                              : 'Solo el juez o asistente judicial puede aprobar borradores.'
+                          }
                           onClick={async () => {
                             setBusy(true);
+                            setErr(null);
                             try {
+                              await reviewFlushRef.current[r.id]?.flush?.();
                               await updateCaseWordReview(r.id, {
                                 judgeNotes: notes.trim() || null,
                                 status: 'aprobado_firma_pendiente',
@@ -630,6 +667,11 @@ export function CaseWordReviewPanel({
                                   });
                                 } catch (se) {
                                   console.error('Cambio de etapa automático:', se);
+                                  setErr(
+                                    se instanceof Error
+                                      ? `Borrador aprobado, pero no se actualizó la etapa: ${se.message}`
+                                      : 'Borrador aprobado, pero no se pudo actualizar la etapa procesal.',
+                                  );
                                 }
                                 await onRefetchCase?.();
                               }
@@ -665,6 +707,7 @@ export function CaseWordReviewPanel({
                               profile?.name?.trim() || profile?.email?.trim() || null
                             }
                             commentRailDomIdSuffix={`${r.id}-readonly`}
+                            initialCommentThreads={reviewMarkupCommentThreads(r.reviewMarkupJson)}
                             puedeEditar={false}
                             devAuth={
                               import.meta.env.DEV ? { role, status: r.status } : undefined

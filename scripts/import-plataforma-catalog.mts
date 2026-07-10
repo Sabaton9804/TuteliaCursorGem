@@ -10,6 +10,8 @@
  *   npm run import:plataforma-catalog -- --db "C:\...\catalogo.db" --court court-1
  *   npm run import:plataforma-catalog -- --solo-civiles
  *   npm run import:plataforma-catalog -- --solo-tutelas
+ *   npm run import:plataforma-catalog -- --enrich-only   # solo rellena casos ya migrados (sin insertar)
+ *   npm run backfill:catalog -- --db "C:\...\catalogo.db" --court court-1
  */
 import { spawnSync } from 'child_process';
 import dotenv from 'dotenv';
@@ -176,12 +178,73 @@ function shouldSkipMergeStatus(
   return false;
 }
 
+const PLACEHOLDER_PARTY = /pendiente|sin nombre|^—$|^-$|accionante e2e|entidad accionada/i;
+
+function isPlaceholderParty(v: unknown): boolean {
+  const s = str(v);
+  return !s || PLACEHOLDER_PARTY.test(s);
+}
+
+function buildEnrichPatch(
+  prev: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  let changed = false;
+
+  const setIfEmpty = (field: string, value: unknown, placeholder = false) => {
+    const prevVal = prev[field];
+    const inc = value == null ? '' : typeof value === 'string' ? value.trim() : value;
+    if (inc === '' || inc == null) return;
+    const prevEmpty = placeholder ? isPlaceholderParty(prevVal) : !str(prevVal);
+    if (prevEmpty) {
+      patch[field] = inc;
+      changed = true;
+    }
+  };
+
+  setIfEmpty('claimant', incoming.claimant, true);
+  setIfEmpty('defendant', incoming.defendant, true);
+  setIfEmpty('claimant_id', incoming.claimant_id);
+  setIfEmpty('defendant_id', incoming.defendant_id);
+  setIfEmpty('subject', incoming.subject);
+  setIfEmpty('legal_derecho_tutelado', incoming.legal_derecho_tutelado);
+  setIfEmpty('assigned_to', incoming.assigned_to);
+
+  const prevType = str(prev.case_type);
+  const incType = str(incoming.case_type);
+  if (incType && (!prevType || (prevType === 'tutela_primera' && incType.startsWith('civil_')))) {
+    patch.case_type = incType;
+    changed = true;
+  }
+  if (incoming.process_definition_id && !prev.process_definition_id) {
+    patch.process_definition_id = incoming.process_definition_id;
+    changed = true;
+  }
+
+  const prevMeta = (prev.catalog_metadata as CatalogMetadata | undefined) ?? {};
+  const incMeta = (incoming.catalog_metadata as CatalogMetadata | undefined) ?? {};
+  const mergedMeta: CatalogMetadata = { ...prevMeta, ...incMeta };
+  if (JSON.stringify(mergedMeta) !== JSON.stringify(prevMeta)) {
+    patch.catalog_metadata = mergedMeta;
+    changed = true;
+  }
+
+  if (str(prev.source_channel) !== 'plataforma_catalog') {
+    patch.source_channel = 'plataforma_catalog';
+    changed = true;
+  }
+
+  return changed ? patch : null;
+}
+
 const env = loadEnv();
-const urlRaw = env.VITE_SUPABASE_URL || env.SUPABASE_URL || '';
+const urlRaw = env.VITE_SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL || env.SUPABASE_URL || '';
 const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
+const enrichOnly = args.includes('--enrich-only') || args.includes('--solo-enriquecer');
 const soloCiviles = args.includes('--solo-civiles');
 const soloTutelas = args.includes('--solo-tutelas');
 const dbArg = args.find((a) => a.startsWith('--db='));
@@ -217,6 +280,7 @@ if (exported.status !== 0) {
 const payload = JSON.parse(exported.stdout) as {
   procesos: PlataformaProceso[];
   eventos: PlataformaEvento[];
+  reparto?: PlataformaProceso[];
 };
 
 async function loadProcessDefinitionIds(): Promise<Record<string, string>> {
@@ -246,7 +310,9 @@ async function loadAssigneeMap(court: string): Promise<Map<string, string>> {
 async function loadExistingCases(court: string): Promise<Map<string, Record<string, unknown>>> {
   const { data, error } = await admin
     .from('cases')
-    .select('id, radicado, status, sgde_id, catalog_metadata, case_type')
+    .select(
+      'id, radicado, status, sgde_id, catalog_metadata, case_type, claimant, defendant, claimant_id, defendant_id, subject, legal_derecho_tutelado, assigned_to, source_channel, process_definition_id',
+    )
     .eq('court_id', court);
   if (error) throw error;
   const map = new Map<string, Record<string, unknown>>();
@@ -292,8 +358,13 @@ async function main() {
 
   let inserted = 0;
   let updated = 0;
+  let enriched = 0;
   let skipped = 0;
   const caseIdByRadicado = new Map<string, string>();
+
+  if (payload.reparto?.length) {
+    console.log(`Tabla reparto: ${payload.reparto.length} fila(s) fusionadas con procesos.`);
+  }
 
   for (const p of payload.procesos) {
     const tipoRegistro = str(p.tipo_registro);
@@ -325,6 +396,12 @@ async function main() {
     }
 
     const prev = existing.get(radicado);
+
+    if (enrichOnly && !prev) {
+      skipped += 1;
+      continue;
+    }
+
     const mergedCatalog: CatalogMetadata = {
       ...(prev?.catalog_metadata as CatalogMetadata | undefined),
       ...catalogMeta,
@@ -368,6 +445,30 @@ async function main() {
 
     if (!prev && fechaIngreso) {
       row.created_at = fechaIngreso;
+    }
+
+    if (enrichOnly && prev) {
+      const patch = buildEnrichPatch(prev, row);
+      if (!patch) {
+        skipped += 1;
+        caseIdByRadicado.set(radicado, String(prev.id));
+        continue;
+      }
+      if (dryRun) {
+        console.log(`[dry-run enrich] ${radicado} → ${Object.keys(patch).join(', ')}`);
+        caseIdByRadicado.set(radicado, String(prev.id));
+        enriched += 1;
+        continue;
+      }
+      const { error } = await admin.from('cases').update(patch).eq('id', String(prev.id));
+      if (error) {
+        console.error(`Error enrich ${radicado}:`, error.message);
+        skipped += 1;
+        continue;
+      }
+      caseIdByRadicado.set(radicado, String(prev.id));
+      enriched += 1;
+      continue;
     }
 
     if (dryRun) {
@@ -453,12 +554,20 @@ async function main() {
     }
   }
 
+  console.log('='.repeat(60));
+  console.log('Import catálogo plataforma → Supabase');
+  if (enrichOnly) console.log('Modo: enrich-only (solo casos existentes, sin insertar)');
+  if (dryRun) console.log('Modo: dry-run');
+  console.log('='.repeat(60));
+
   console.log(
     JSON.stringify(
       {
         courtId,
         dryRun,
-        procesos: { inserted, updated, skipped, total: payload.procesos.length },
+        enrichOnly,
+        repartoRows: payload.reparto?.length ?? 0,
+        procesos: { inserted, updated, enriched, skipped, total: payload.procesos.length },
         eventos: { inserted: eventsInserted, skipped: eventsSkipped, total: payload.eventos.length },
       },
       null,

@@ -634,14 +634,27 @@ export function registerOutlookRoutes(app: Express, getSupabaseAdmin: () => Supa
   app.post('/api/outlook/send', async (req, res) => {
     const pack = await resolveCtxOrRespond(req, res, getSupabaseAdmin);
     if (!pack) return;
-    const body = req.body as { subject?: string; bodyHtml?: string; to?: string[]; cc?: string[] };
+    const body = req.body as {
+      subject?: string;
+      bodyHtml?: string;
+      to?: string[];
+      cc?: string[];
+      attachments?: Array<{ name?: string; contentType?: string; contentBytesBase64?: string }>;
+    };
     const subject = String(body.subject || '').trim();
     const bodyHtml = String(body.bodyHtml || '').trim();
     const to = Array.isArray(body.to) ? body.to.map(String) : [];
     const cc = Array.isArray(body.cc) ? body.cc.map(String) : [];
+    const attachments = Array.isArray(body.attachments)
+      ? body.attachments.map((a) => ({
+          name: String(a.name || '').trim(),
+          contentType: String(a.contentType || 'application/octet-stream').trim(),
+          contentBytesBase64: String(a.contentBytesBase64 || '').trim(),
+        }))
+      : [];
     if (!subject || !bodyHtml) return res.status(400).json({ error: 'Asunto y cuerpo son obligatorios.' });
     try {
-      await sendMail(pack.ctx.accessToken, pack.ctx.graphTarget, { subject, bodyHtml, to, cc });
+      await sendMail(pack.ctx.accessToken, pack.ctx.graphTarget, { subject, bodyHtml, to, cc, attachments });
       return res.json({ ok: true });
     } catch (e) {
       console.error('outlook/send:', e);

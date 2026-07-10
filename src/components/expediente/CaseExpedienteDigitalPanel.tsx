@@ -14,6 +14,7 @@ import { ExpedienteDigitalPanel } from './ExpedienteDigitalPanel';
 import { ExpedientePieceAiPanel } from './ExpedientePieceAiPanel';
 import { isCaseDocumentPdf } from '../../lib/expediente-docx';
 import { ExpedienteSgdeBar } from './ExpedienteSgdeBar';
+import { ExpedientePlannerLinkBar } from './ExpedientePlannerLinkBar';
 import { ExpedienteDocxPreview } from './ExpedienteDocxPreview';
 import { isCaseDocumentDocx } from '../../lib/expediente-docx';
 import type { Case, Document as CaseDoc } from '../../types';
@@ -956,7 +957,8 @@ export function CaseExpedienteDigitalPanel({
       ) : null}
 
       {docsLoaded ? (
-        <div className="w-full shrink-0">
+        <div className="flex w-full shrink-0 flex-col gap-2">
+          <ExpedientePlannerLinkBar caseItem={caseItem} />
           <ExpedienteSgdeBar
             caseId={caseId}
             caseItem={caseItem}

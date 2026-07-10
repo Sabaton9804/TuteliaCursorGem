@@ -23,6 +23,7 @@ import {
   applyStageTransitionImpugnacionRecibida,
   applyStageTransitionInadmisionRegistrada,
   applyStageTransitionContestacionCerrada,
+  applyStageTransitionExpedienteRecibidoAlDespacho,
   applyStageTransitionIngresoDespachoParaSentencia,
   applyStageTransitionNotificacionAutoEnviada,
   applyStageTransitionNotificacionFalloEnviada,
@@ -50,14 +51,10 @@ import {
 import { CaseContestacionChecklistPanel } from './CaseContestacionChecklistPanel';
 import { canRegistrarHitosSecretaria, canRegistrarRamaAdmision } from '../../lib/role-capabilities';
 import { isCivilCaseType } from '../../lib/process-product-scope';
+import { getBranchTransitionsFromStage } from '../../lib/process-stage-transitions';
 import { isCivilEjecutivoCaseType, supportsContestacionWorkflow } from '../../lib/sgde-case-scope';
-import {
-  businessDayTermEnd,
-  businessDaysRemainingInTermWindow,
-  businessDaysRemainingWithStoredTermDeadline,
-  startOfLocalDay,
-} from '../../lib/business-days';
-import { getCachedCaseTermBusinessDays } from '../../lib/process-definitions-service';
+import { startOfLocalDay } from '../../lib/business-days';
+import { plazoFallarSnapshotForCase } from '../../lib/plazo-fallar-tutela';
 import {
   businessDaysRemainingUntilSubDeadline,
   resolveSubStageDeadline,
@@ -85,6 +82,8 @@ export function CaseStagesExperience() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [localErr, setLocalErr] = useState<string | null>(null);
+  const [fechaNotifAuto, setFechaNotifAuto] = useState(() => format(new Date(), 'yyyy-MM-dd'));
+  const [fechaNotifFallo, setFechaNotifFallo] = useState(() => format(new Date(), 'yyyy-MM-dd'));
 
   const stages = useCaseStages({
     caseId,
@@ -147,26 +146,7 @@ export function CaseStagesExperience() {
   const openRow = stages.openRow;
   const badgeSecret = openRow?.responsibleRole === 'secretaria';
 
-  const plazoFallar = useMemo(() => {
-    const filed = caseItem.createdAt?.trim();
-    const dl = caseItem.deadlineAt?.trim();
-    if (!filed) return null;
-    try {
-      const filing = startOfLocalDay(parseISO(filed));
-      const termDays = getCachedCaseTermBusinessDays(caseType);
-      const remaining = dl
-        ? businessDaysRemainingWithStoredTermDeadline(
-            filing,
-            startOfLocalDay(parseISO(dl)),
-            termDays,
-          )
-        : businessDaysRemainingInTermWindow(filing, termDays);
-      const end = dl ? parseISO(dl) : businessDayTermEnd(filing, termDays);
-      return { remaining, end, valid: !end || !Number.isNaN(end.getTime()), termDays };
-    } catch {
-      return null;
-    }
-  }, [caseItem.createdAt, caseItem.deadlineAt, caseType]);
+  const plazoFallar = useMemo(() => plazoFallarSnapshotForCase(caseItem), [caseItem]);
 
   const plazoEtapa = useMemo(() => {
     if (!openRow) return null;
@@ -251,6 +231,12 @@ export function CaseStagesExperience() {
     return pipeline.filter((_, i) => i > i0);
   }, [pipeline, openRow]);
 
+  /** Ramas del grafo BD (`process_stage_transitions`) para la etapa abierta. */
+  const branchTransitions = useMemo(() => {
+    if (!openRow || !caseType) return [];
+    return getBranchTransitionsFromStage(caseType, openRow.stageCode);
+  }, [openRow, caseType]);
+
   const editEnteredAt = useCallback(
     async (rowId: string, currentIso: string) => {
       const raw = window.prompt(
@@ -295,6 +281,7 @@ export function CaseStagesExperience() {
         caseType: caseType ?? 'tutela_primera',
         caseAssignedTo: assignedTo,
         expedienteDocs: docs,
+        notifiedAt: fechaNotifAuto,
       });
       await stages.refetch();
       await refetch.refetchCase();
@@ -304,7 +291,7 @@ export function CaseStagesExperience() {
     } finally {
       setBusy(false);
     }
-  }, [caseId, courtId, radicado, caseType, assignedTo, docs, stages.refetch, refetch]);
+  }, [caseId, courtId, radicado, caseType, assignedTo, docs, fechaNotifAuto, stages.refetch, refetch]);
 
   const registrarNotifFallo = useCallback(async () => {
     setBusy(true);
@@ -315,6 +302,29 @@ export function CaseStagesExperience() {
         courtId,
         radicado,
         caseType: caseType ?? 'tutela_primera',
+        caseAssignedTo: assignedTo,
+        expedienteDocs: docs,
+        notifiedAt: fechaNotifFallo,
+      });
+      await stages.refetch();
+      await refetch.refetchCase();
+      await refetch.refetchActions();
+    } catch (e) {
+      setLocalErr(e instanceof Error ? e.message : 'No se pudo registrar.');
+    } finally {
+      setBusy(false);
+    }
+  }, [caseId, courtId, radicado, caseType, assignedTo, docs, fechaNotifFallo, stages.refetch, refetch]);
+
+  const registrarExpedienteRecibido = useCallback(async () => {
+    setBusy(true);
+    setLocalErr(null);
+    try {
+      await applyStageTransitionExpedienteRecibidoAlDespacho(supabase, {
+        caseId,
+        courtId,
+        radicado,
+        caseType: caseType ?? 'tutela_segunda',
         caseAssignedTo: assignedTo,
         expedienteDocs: docs,
       });
@@ -577,7 +587,7 @@ export function CaseStagesExperience() {
                 </div>
               ) : (
                 <>
-                  {caseType === 'tutela_primera' && (plazoFallar || plazoEtapa) ? (
+                  {(caseType === 'tutela_primera' || caseType === 'tutela_segunda') && (plazoFallar || plazoEtapa) ? (
                     <section className="rounded-xl border border-amber-100 bg-amber-50/60 px-3 py-3 text-xs text-amber-950">
                       <p className="text-[10px] font-black uppercase tracking-widest text-amber-800">
                         Plazos
@@ -585,12 +595,16 @@ export function CaseStagesExperience() {
                       {plazoFallar ? (
                         <p className="mt-2">
                           <span className="font-bold">
-                            Fallar la tutela ({plazoFallar.termDays} días háb. desde radicación):{' '}
+                            Fallar la tutela ({plazoFallar.termDays} días háb. desde {plazoFallar.anchorLabel}):{' '}
                           </span>
-                          {plazoFallar.remaining > 0 ? (
+                          {plazoFallar.pendingAnchor ? (
+                            <span className="text-amber-900">
+                              pendiente de registrar recepción del expediente en despacho
+                            </span>
+                          ) : plazoFallar.remaining > 0 ? (
                             <>
                               quedan <strong>{plazoFallar.remaining}</strong> día(s) hábil(es)
-                              {plazoFallar.end && plazoFallar.valid ? (
+                              {plazoFallar.end ? (
                                 <> — vence {format(plazoFallar.end, "d MMM yyyy", { locale: es })}</>
                               ) : null}
                             </>
@@ -630,7 +644,9 @@ export function CaseStagesExperience() {
                   ) : null}
 
                   {canRegistrarHitosSecretaria(role) &&
-                  (supportsContestacionWorkflow(caseType ?? 'tutela_primera') || caseType === 'tutela_segunda') ? (
+                  (supportsContestacionWorkflow(caseType ?? 'tutela_primera') ||
+                    caseType === 'tutela_segunda' ||
+                    caseType === 'consulta_desacato') ? (
                     <section className="rounded-xl border border-indigo-100 bg-indigo-50/50 px-3 py-3 text-xs">
                       <p className="text-[10px] font-black uppercase tracking-widest text-indigo-700">
                         Registrar hitos (secretaría)
@@ -639,6 +655,16 @@ export function CaseStagesExperience() {
                         {(caseType === 'tutela_primera' || supportsContestacionWorkflow(caseType ?? 'tutela_primera')) &&
                         openRow?.stageCode === 'ADMISION' ? (
                           <>
+                            <label className="block text-[11px] font-semibold text-indigo-950">
+                              Fecha de notificación
+                              <input
+                                type="date"
+                                value={fechaNotifAuto}
+                                onChange={(e) => setFechaNotifAuto(e.target.value)}
+                                className="input-modern mt-1 w-full text-sm"
+                                disabled={busy}
+                              />
+                            </label>
                             <button
                               type="button"
                               disabled={busy || !gateNotifAuto.ok}
@@ -656,6 +682,16 @@ export function CaseStagesExperience() {
                         ) : null}
                         {openRow?.stageCode === 'FALLO' ? (
                           <>
+                            <label className="block text-[11px] font-semibold text-indigo-950">
+                              Fecha de notificación
+                              <input
+                                type="date"
+                                value={fechaNotifFallo}
+                                onChange={(e) => setFechaNotifFallo(e.target.value)}
+                                className="input-modern mt-1 w-full text-sm"
+                                disabled={busy}
+                              />
+                            </label>
                             <button
                               type="button"
                               disabled={busy || !gateNotifFallo.ok}
@@ -704,6 +740,18 @@ export function CaseStagesExperience() {
                               </p>
                             ) : null}
                           </>
+                        ) : null}
+                        {(caseType === 'tutela_segunda' || caseType === 'consulta_desacato') &&
+                        openRow?.stageCode === 'RADICACION' &&
+                        caseItem.informeIngresoRegistradoAt ? (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void registrarExpedienteRecibido()}
+                            className="rounded-lg bg-emerald-700 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-emerald-800 disabled:opacity-40"
+                          >
+                            Expediente recibido → ingreso al despacho
+                          </button>
                         ) : null}
                         {caseType === 'tutela_segunda' && openRow?.stageCode === 'EJECUTORIA' ? (
                           <>
@@ -786,6 +834,15 @@ export function CaseStagesExperience() {
                       <p className="text-[10px] font-black uppercase tracking-widest text-amber-800">
                         Ramas de admisión (despacho)
                       </p>
+                      {branchTransitions.length > 0 ? (
+                        <ul className="mt-1 list-inside list-disc text-[10px] text-amber-900/80">
+                          {branchTransitions.map((t) => (
+                            <li key={`${t.from_stage_code}-${t.to_stage_code}`}>
+                              {t.label ?? `${t.from_stage_code} → ${t.to_stage_code}`}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
                       <div className="mt-2 flex flex-col gap-2">
                         {openRow?.stageCode === 'ADMISION' ? (
                           <>
@@ -857,6 +914,15 @@ export function CaseStagesExperience() {
                         En procesos civiles el carril ordinario es admisión → traslado → contestación → trámite →
                         sentencia. Use estas ramas solo cuando corresponda un auto inadmisorio o de rechazo.
                       </p>
+                      {branchTransitions.length > 0 ? (
+                        <ul className="mt-2 list-inside list-disc text-[10px] text-slate-600">
+                          {branchTransitions.map((t) => (
+                            <li key={`${t.from_stage_code}-${t.to_stage_code}`}>
+                              {t.label ?? `${t.from_stage_code} → ${t.to_stage_code}`}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
                       <div className="mt-2 flex flex-col gap-2">
                         {openRow?.stageCode === 'ADMISION' || openRow?.stageCode === 'INADMISION' ? (
                           <button

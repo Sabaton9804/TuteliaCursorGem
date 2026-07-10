@@ -3,6 +3,7 @@ import {
   CONTESTACION_BUSINESS_DAYS,
   IMPUGNACION_BUSINESS_DAYS,
   businessDayTermEnd,
+  businessDayTermEndAfterEvent,
   inclusiveBusinessDaysBetween,
   startOfLocalDay,
 } from './business-days';
@@ -17,6 +18,9 @@ export const META_STAGE_DEADLINE_KIND = 'stage_deadline_kind';
 export const META_STAGE_DEADLINE_DAYS = 'stage_deadline_business_days';
 
 export type StageDeadlineKind = 'contestacion_accionados' | 'impugnacion' | 'apelacion' | 'excepciones_ejecutivo';
+
+/** Cómo contar el término desde la fecha ancla. */
+export type StageTermCountMode = 'inclusive_event' | 'following_event';
 
 export function stageDeadlineFromMetadata(
   metadata: Record<string, unknown> | null | undefined,
@@ -41,8 +45,26 @@ function resolveStageTermBusinessDays(
   return null;
 }
 
-function stageDeadlineFromTerm(start: Date, termBusinessDays: number): Date {
-  return businessDayTermEnd(startOfLocalDay(start), termBusinessDays);
+function stageTermCountModeForStage(stageCode: CaseStageCode): StageTermCountMode {
+  if (
+    stageCode === 'TERMINO_RESPUESTA' ||
+    stageCode === 'TERMINO_EXCEPCIONES' ||
+    stageCode === 'TERMINO_IMPUGNACION' ||
+    stageCode === 'TERMINO_APELACION'
+  ) {
+    return 'following_event';
+  }
+  return 'inclusive_event';
+}
+
+function stageDeadlineFromTerm(
+  start: Date,
+  termBusinessDays: number,
+  mode: StageTermCountMode = 'following_event',
+): Date {
+  const day = startOfLocalDay(start);
+  if (mode === 'inclusive_event') return businessDayTermEnd(day, termBusinessDays);
+  return businessDayTermEndAfterEvent(day, termBusinessDays);
 }
 
 /** Plazo secundario de la etapa abierta (contestación / impugnación, etc.). */
@@ -62,7 +84,7 @@ export function resolveSubStageDeadline(
   if (Number.isNaN(start.getTime())) return null;
   const termDays = resolveStageTermBusinessDays(stageCode, caseType);
   if (termDays == null) return null;
-  return stageDeadlineFromTerm(start, termDays);
+  return stageDeadlineFromTerm(start, termDays, stageTermCountModeForStage(stageCode));
 }
 
 export function metadataForContestacionDeadline(
@@ -70,7 +92,7 @@ export function metadataForContestacionDeadline(
   caseType?: CaseType,
 ): Record<string, unknown> {
   const days = resolveStageTermBusinessDays('TERMINO_RESPUESTA', caseType) ?? CONTESTACION_BUSINESS_DAYS;
-  const end = stageDeadlineFromTerm(notifiedOn, days);
+  const end = stageDeadlineFromTerm(notifiedOn, days, 'following_event');
   return {
     [META_STAGE_DEADLINE_AT]: end.toISOString(),
     [META_STAGE_DEADLINE_KIND]: 'contestacion_accionados' satisfies StageDeadlineKind,
@@ -83,7 +105,7 @@ export function metadataForApelacionDeadline(
   caseType?: CaseType,
 ): Record<string, unknown> {
   const days = resolveStageTermBusinessDays('TERMINO_APELACION', caseType) ?? APELACION_CIVIL_BUSINESS_DAYS;
-  const end = stageDeadlineFromTerm(notifiedOn, days);
+  const end = stageDeadlineFromTerm(notifiedOn, days, 'following_event');
   return {
     [META_STAGE_DEADLINE_AT]: end.toISOString(),
     [META_STAGE_DEADLINE_KIND]: 'apelacion' satisfies StageDeadlineKind,
@@ -96,7 +118,7 @@ export function metadataForExcepcionesDeadline(
   caseType?: CaseType,
 ): Record<string, unknown> {
   const days = resolveStageTermBusinessDays('TERMINO_EXCEPCIONES', caseType) ?? EXCEPCIONES_EJECUTIVO_BUSINESS_DAYS;
-  const end = stageDeadlineFromTerm(notifiedOn, days);
+  const end = stageDeadlineFromTerm(notifiedOn, days, 'following_event');
   return {
     [META_STAGE_DEADLINE_AT]: end.toISOString(),
     [META_STAGE_DEADLINE_KIND]: 'excepciones_ejecutivo' satisfies StageDeadlineKind,
@@ -109,7 +131,7 @@ export function metadataForImpugnacionDeadline(
   caseType?: CaseType,
 ): Record<string, unknown> {
   const days = resolveStageTermBusinessDays('TERMINO_IMPUGNACION', caseType) ?? IMPUGNACION_BUSINESS_DAYS;
-  const end = stageDeadlineFromTerm(notifiedOn, days);
+  const end = stageDeadlineFromTerm(notifiedOn, days, 'following_event');
   return {
     [META_STAGE_DEADLINE_AT]: end.toISOString(),
     [META_STAGE_DEADLINE_KIND]: 'impugnacion' satisfies StageDeadlineKind,
@@ -127,7 +149,7 @@ export function subStageDeadlineLabel(stageCode: CaseStageCode, caseType?: CaseT
     return `Contestación de accionados (${days} días hábiles)`;
   }
   if (stageCode === 'TERMINO_IMPUGNACION') {
-    return `Impugnación (${days} días hábiles — D. 2591/91 art. 31)`;
+    return `Impugnación (${days} días háb. siguientes — D. 2591/91 art. 31)`;
   }
   if (stageCode === 'TERMINO_APELACION') {
     return `Apelación (${days} días hábiles — CGP art. 318)`;
