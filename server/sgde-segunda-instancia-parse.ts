@@ -148,17 +148,35 @@ function pdfAttachmentPriority(filename: string): number {
   return 9;
 }
 
+/** ¿Vale la pena OCR liviano de PDFs? Evita bloquear radicación de demandas 1ª instancia. */
+export function shouldDigestPdfsForSegundaInstancia(
+  subject: string,
+  text: string,
+  html: string,
+  preliminary: Pick<SegundaInstanciaEmailParse, 'isSegundaInstancia' | 'originRadicado'>
+): boolean {
+  if (preliminary.originRadicado) return false;
+  if (preliminary.isSegundaInstancia) return true;
+  const blob = `${subject}\n${text}\n${html}`.toLowerCase();
+  return /segunda\s*instancia|\bimpugnaci[oó]n\b|\bconsulta\b|\bapelaci[oó]n\b|acta\s*de\s*reparto|tribunal\s+superior|\bsgde\b/.test(
+    blob
+  );
+}
+
 /** Lee adjuntos PDF del correo (acta de reparto primero) para obtener Expediente / CUI de 23 dígitos. */
 export async function digestPdfAttachmentsForSegundaInstancia(
-  attachments: { buffer: Buffer; filename: string; contentType?: string }[]
+  attachments: { buffer: Buffer; filename: string; contentType?: string }[],
+  opts?: { maxPdfs?: number }
 ): Promise<string> {
+  const maxPdfs = opts?.maxPdfs ?? 3;
   const pdfs = attachments
     .filter((a) => {
       const ct = (a.contentType || '').toLowerCase();
       const fn = a.filename.toLowerCase();
       return ct.includes('pdf') || fn.endsWith('.pdf');
     })
-    .sort((a, b) => pdfAttachmentPriority(a.filename) - pdfAttachmentPriority(b.filename));
+    .sort((a, b) => pdfAttachmentPriority(a.filename) - pdfAttachmentPriority(b.filename))
+    .slice(0, maxPdfs);
 
   let digest = '';
   for (const att of pdfs) {

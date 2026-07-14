@@ -15,6 +15,10 @@ export type ParseSession = {
   createdAt: number;
   ownerUserId?: string;
   attachments: ParseSessionRow[];
+  /** URL «Archivo» / Demanda en línea pendiente o usada para enriquecer la sesión. */
+  linkUrl?: string;
+  linkFetchedAt?: number;
+  linkFetchError?: string;
 };
 
 const parseSessions = new Map<string, ParseSession>();
@@ -39,13 +43,18 @@ export function touchParseSession(sessionId: string): void {
   parseSessions.set(sessionId, { ...session, createdAt: Date.now() });
 }
 
-export function createParseSession(attachments: ParseSessionRow[], ownerUserId?: string): string {
+export function createParseSession(
+  attachments: ParseSessionRow[],
+  ownerUserId?: string,
+  opts?: { linkUrl?: string | null }
+): string {
   sweepParseSessions();
   const parseSessionId = randomUUID();
   parseSessions.set(parseSessionId, {
     createdAt: Date.now(),
     ownerUserId: ownerUserId?.trim() || undefined,
     attachments,
+    linkUrl: opts?.linkUrl?.trim() || undefined,
   });
   return parseSessionId;
 }
@@ -54,6 +63,46 @@ export function replaceParseSessionAttachments(sessionId: string, attachments: P
   sweepParseSessions();
   const session = parseSessions.get(sessionId);
   if (!session) return false;
-  parseSessions.set(sessionId, { ...session, attachments });
+  parseSessions.set(sessionId, { ...session, attachments, createdAt: Date.now() });
   return true;
+}
+
+/** Añade adjuntos (p. ej. PDF/ZIP del portal Demanda en línea) y reindexa sessionIndex. */
+export function appendParseSessionAttachments(
+  sessionId: string,
+  newRows: Omit<ParseSessionRow, 'sessionIndex' | 'order'>[]
+): ParseSessionRow[] | null {
+  sweepParseSessions();
+  const session = parseSessions.get(sessionId);
+  if (!session) return null;
+  const start = session.attachments.length;
+  const appended: ParseSessionRow[] = newRows.map((row, i) => ({
+    ...row,
+    sessionIndex: start + i,
+    order: start + i,
+  }));
+  const attachments = [...session.attachments, ...appended].map((a, idx) => ({
+    ...a,
+    sessionIndex: idx,
+    order: idx,
+  }));
+  parseSessions.set(sessionId, {
+    ...session,
+    attachments,
+    createdAt: Date.now(),
+    linkFetchedAt: Date.now(),
+    linkFetchError: undefined,
+  });
+  return attachments;
+}
+
+export function markParseSessionLinkError(sessionId: string, message: string): void {
+  const session = parseSessions.get(sessionId);
+  if (!session) return;
+  parseSessions.set(sessionId, {
+    ...session,
+    linkFetchError: message,
+    linkFetchedAt: Date.now(),
+    createdAt: Date.now(),
+  });
 }

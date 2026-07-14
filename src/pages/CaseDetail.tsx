@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { removeRealtimeChannel, subscribePostgresChanges } from '../lib/supabase-realtime-channel';
 import {
   rowToAction,
   rowToCase,
@@ -304,6 +305,13 @@ export default function CaseDetail() {
     };
   }, []);
 
+  const refetchDocsRef = useRef(refetchDocs);
+  const refetchActionsRef = useRef(refetchActions);
+  const refetchAuditRef = useRef(refetchAudit);
+  refetchDocsRef.current = refetchDocs;
+  refetchActionsRef.current = refetchActions;
+  refetchAuditRef.current = refetchAudit;
+
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
@@ -318,31 +326,55 @@ export default function CaseDetail() {
     }
 
     void loadCase();
-    void refetchDocs();
-    void refetchActions();
-    void refetchAudit();
+    void refetchDocsRef.current();
+    void refetchActionsRef.current();
+    void refetchAuditRef.current();
 
-    const channel = supabase
-      .channel(`case-detail-${id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'cases', filter: `id=eq.${id}` }, () => {
-        void loadCase();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'case_documents', filter: `case_id=eq.${id}` }, () => {
-        void refetchDocs();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'case_actions', filter: `case_id=eq.${id}` }, () => {
-        void refetchActions();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'case_audit_log', filter: `case_id=eq.${id}` }, () => {
-        void refetchAudit();
-      })
-      .subscribe();
+    let channel: ReturnType<typeof subscribePostgresChanges> | null = null;
+    try {
+      // Un solo .subscribe() tras todos los .on(); nombre único evita reutilizar canal ya suscrito (Strict Mode).
+      channel = subscribePostgresChanges({
+        topicPrefix: `case-detail-${id}`,
+        bindings: [
+          {
+            table: 'cases',
+            filter: `id=eq.${id}`,
+            onEvent: () => {
+              void loadCase();
+            },
+          },
+          {
+            table: 'case_documents',
+            filter: `case_id=eq.${id}`,
+            onEvent: () => {
+              void refetchDocsRef.current();
+            },
+          },
+          {
+            table: 'case_actions',
+            filter: `case_id=eq.${id}`,
+            onEvent: () => {
+              void refetchActionsRef.current();
+            },
+          },
+          {
+            table: 'case_audit_log',
+            filter: `case_id=eq.${id}`,
+            onEvent: () => {
+              void refetchAuditRef.current();
+            },
+          },
+        ],
+      });
+    } catch (e) {
+      console.warn('[CaseDetail] realtime no disponible:', e);
+    }
 
     return () => {
       cancelled = true;
-      void supabase.removeChannel(channel);
+      removeRealtimeChannel(channel);
     };
-  }, [id, refetchDocs, refetchActions, refetchAudit]);
+  }, [id]);
 
   useEffect(() => {
     const cid = caseItem?.courtId?.trim();

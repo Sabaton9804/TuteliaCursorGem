@@ -9,10 +9,10 @@ import { isLocalSupabaseAnonymousDisabled } from './supabase-auth-errors';
  */
 export async function ensureSupabaseSessionForWrites(): Promise<void> {
   const { data: sess } = await supabase.auth.getSession();
-  if (sess.session?.user) return;
+  if (sess.session?.access_token) return;
 
-  const { data: jwtUser } = await supabase.auth.getUser();
-  if (jwtUser.user) return;
+  const { data: refreshed } = await supabase.auth.refreshSession();
+  if (refreshed.session?.access_token) return;
 
   const { error: anonErr } = await supabase.auth.signInAnonymously();
   if (!anonErr) return;
@@ -27,4 +27,30 @@ export async function ensureSupabaseSessionForWrites(): Promise<void> {
   }
 
   throw anonErr;
+}
+
+/** Headers Authorization: Bearer para APIs Express locales (`/api/parse-email`, SGDE, IA…). */
+export async function apiAuthHeaders(opts?: {
+  /** Si true, añade Content-Type: application/json. Omitir con FormData. */
+  json?: boolean;
+}): Promise<Record<string, string>> {
+  await ensureSupabaseSessionForWrites();
+  let { data } = await supabase.auth.getSession();
+  let token = data.session?.access_token;
+  if (!token) {
+    const { data: refreshed } = await supabase.auth.refreshSession();
+    token = refreshed.session?.access_token ?? undefined;
+  }
+  if (!token) {
+    throw new Error(
+      'No hay sesión activa. Cierre sesión e ingrese de nuevo (admin/admin o su usuario del despacho).',
+    );
+  }
+  const h: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+  };
+  if (opts?.json) {
+    h['Content-Type'] = 'application/json';
+  }
+  return h;
 }

@@ -1,10 +1,14 @@
 import type { CaseAppellant, CaseOriginRuling, CaseType } from '../types';
-import type { MvpRadicableCaseType } from '../lib/process-product-scope';
+import {
+  CIVIL_PROCESS_CARD_COPY,
+  isCivilCaseType,
+  isRadicableCaseType,
+  type MvpRadicableCaseType,
+} from '../lib/process-product-scope';
 
-export const CASE_TYPE_CARD_COPY: Record<
-  MvpRadicableCaseType,
-  { emoji: string; title: string; subtitle: string }
-> = {
+export type CaseTypeCardCopy = { emoji: string; title: string; subtitle: string };
+
+export const CASE_TYPE_CARD_COPY: Record<MvpRadicableCaseType, CaseTypeCardCopy> = {
   tutela_primera: {
     emoji: '📄',
     title: 'Primera instancia',
@@ -21,6 +25,28 @@ export const CASE_TYPE_CARD_COPY: Record<
     subtitle: 'Incidente remitido por otro juzgado para revisión',
   },
 };
+
+const FALLBACK_CASE_TYPE_COPY: CaseTypeCardCopy = {
+  emoji: '📁',
+  title: 'Expediente',
+  subtitle: 'Tipo pendiente de confirmación',
+};
+
+/** Copia segura para cualquier CaseType (tutela MVP + civiles); evita crash si falta la clave. */
+export function resolveCaseTypeCardCopy(caseType: CaseType | null | undefined): CaseTypeCardCopy {
+  if (!caseType) return FALLBACK_CASE_TYPE_COPY;
+  if (caseType in CASE_TYPE_CARD_COPY) {
+    return CASE_TYPE_CARD_COPY[caseType as MvpRadicableCaseType];
+  }
+  if (isCivilCaseType(caseType)) {
+    return CIVIL_PROCESS_CARD_COPY[caseType];
+  }
+  return { ...FALLBACK_CASE_TYPE_COPY, title: String(caseType) };
+}
+
+export function isKnownRadicableCaseType(value: unknown): value is CaseType {
+  return isRadicableCaseType(typeof value === 'string' ? value : null);
+}
 
 export function validateCaseOriginForRadicate(
   flow: CaseType,

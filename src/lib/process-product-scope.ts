@@ -85,27 +85,27 @@ export const CIVIL_PROCESS_CARD_COPY: Record<
 > = {
   civil_ordinario: {
     emoji: '⚖️',
-    title: 'Proceso civil ordinario',
-    subtitle: 'Demanda, admisión, contestación y trámite ordinario',
+    title: 'Civil (declarativos y asimilados)',
+    subtitle: 'Filas SIERJU: DECLARATIVOS, pertenencia, RC, etc.',
   },
   civil_ejecutivo: {
     emoji: '📑',
-    title: 'Proceso ejecutivo',
-    subtitle: 'Ejecutivo singular y cobro judicial',
+    title: 'Civil — EJECUTIVOS',
+    subtitle: 'SIERJU: EJECUTIVOS / EJECUTIVOS - HIPOTECARIO',
   },
   civil_jurisdiccion_voluntaria: {
     emoji: '📋',
-    title: 'Jurisdicción voluntaria',
-    subtitle: 'Asuntos no contenciosos civiles',
+    title: 'PROCESOS DE JURISDICCIÓN VOLUNTARIA',
+    subtitle: 'Fila SIERJU exacta',
   },
   civil_insolvencia: {
     emoji: '🏦',
-    title: 'Insolvencia',
-    subtitle: 'Proceso de insolvencia empresarial o personal',
+    title: 'Insolvencia / liquidación',
+    subtitle: 'SIERJU: INSOLVENCIA… y PROCESOS DE LIQUIDACIÓN…',
   },
   civil_otros: {
     emoji: '📁',
-    title: 'Otros procesos civiles',
-    subtitle: 'Asuntos civiles diversos del despacho',
+    title: 'OTROS PROCESOS / conciliación',
+    subtitle: 'SIERJU: OTROS PROCESOS, CONCILIACIÓN EXTRAJUDICIAL',
   },
 };

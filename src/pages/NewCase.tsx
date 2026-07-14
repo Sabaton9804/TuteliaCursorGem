@@ -9,12 +9,11 @@ import {
   Search,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { ensureSupabaseSessionForWrites } from '../lib/supabase-write-auth';
+import { apiAuthHeaders, ensureSupabaseSessionForWrites } from '../lib/supabase-write-auth';
 import { getSupabaseAuthErrorMessage } from '../lib/supabase-auth-errors';
 import { handleDataPermissionError } from '../lib/error-handler';
 import { motion } from 'motion/react';
 import { PDFDocument } from 'pdf-lib';
-import { RIGHTS_LIST } from '../constants';
 import { CUI_INSTANCE_PRIMERA } from '../lib/radicado-cui';
 import { formatRadicado } from '../lib/formatters';
 import {
@@ -51,7 +50,11 @@ import {
   isMergeableAttachment,
 } from '../lib/new-case-email-attachment';
 import { NEW_CASE_FRESH_EVENT, NEW_CASE_FRESH_NAV_FLAG } from '../lib/new-case-nav';
-import { guessDerechoTuteladoCodeFromText } from '../lib/sierju-case-codes';
+import {
+  guessDerechoTuteladoCodeFromText,
+  sierjuDerechoSectionForCaseType,
+  sierjuDerechoTipoLabelsForPrompt,
+} from '../lib/sierju-case-codes';
 import type { DerechoTuteladoCode } from '../lib/sierju-case-codes';
 import {
   buildSierjuClassificationPatch,
@@ -83,9 +86,21 @@ import { deepSanitizeForPostgresInsert } from '../lib/sanitize-for-postgres';
 import type { CaseAppellant, CaseOriginRuling, CaseType } from '../types';
 import type { LegalAnalysis, LegalParty } from '../components/new-case/new-case-types';
 import { CaseRadicacionActions, CaseRadicacionConsecutivePanel } from '../components/new-case/CaseRadicacionActions';
-import { CASE_TYPE_CARD_COPY, validateCaseOriginForRadicate } from '../hooks/useNewCaseForm';
-import { CaseTypeSelector } from '../components/new-case/CaseTypeSelector';
+import {
+  isKnownRadicableCaseType,
+  validateCaseOriginForRadicate,
+} from '../hooks/useNewCaseForm';
 import { CaseEmailParser } from '../components/new-case/CaseEmailParser';
+import { CaseTypeInferredBanner } from '../components/new-case/CaseTypeInferredBanner';
+import { mapTipoProcesoToCivilCaseType } from '../lib/case-process-scope';
+import { inferCaseTypeFromParsedEmail } from '../lib/infer-case-type-from-email';
+import { isCivilCaseType } from '../lib/process-product-scope';
+import {
+  findSierjuTipoByCode,
+  matchSierjuTipoFromText,
+  SIERJU_CIVIL_ACTIVE_SECTION,
+  sierjuCivilTipoLabelsForPrompt,
+} from '../lib/sierju-process-tipos';
 import { CaseFormSegundaInstancia } from '../components/new-case/CaseFormSegundaInstancia';
 import { CaseFormConsultaDesacato } from '../components/new-case/CaseFormConsultaDesacato';
 import { CasePdfViewer } from '../components/new-case/CasePdfViewer';
@@ -140,6 +155,37 @@ function joinPartyField(parties: LegalParty[], key: keyof LegalParty): string {
     .map((p) => (p[key] || '').trim())
     .filter(Boolean)
     .join('; ');
+}
+
+/** Inferencia ligera de tipo cuando el flujo parte sin grilla (canal único + IA). */
+function inferCaseTypeFromAnalysisCorpus(
+  corpus: string,
+  current: CaseType | null,
+): CaseType | null {
+  const t = corpus.toLowerCase();
+  if (!t.trim()) return null;
+  if (/consulta\s+(de\s+)?(incidente\s+de\s+)?desacato/.test(t)) return 'consulta_desacato';
+  if (
+    (current === null || current === 'tutela_primera') &&
+    /impugnaci[oó]n/.test(t) &&
+    (/segunda\s+instancia|juzgado\s+.*remit|fallo\s+de\s+primera/.test(t) || /tutela/.test(t))
+  ) {
+    return 'tutela_segunda';
+  }
+  if (/proceso\s+ejecutivo|demanda\s+ejecutiva|juicio\s+ejecutivo/.test(t)) {
+    return 'civil_ejecutivo';
+  }
+  if (/jurisdicci[oó]n\s+voluntaria/.test(t)) return 'civil_jurisdiccion_voluntaria';
+  if (/\binsolvencia\b/.test(t)) return 'civil_insolvencia';
+  if (
+    /demanda\s+ordinaria|proceso\s+ordinario\s+civil|proceso\s+civil|c[oó]digo\s+general\s+del\s+proceso/.test(
+      t,
+    ) &&
+    !/tutela|derecho\s+fundamental/.test(t)
+  ) {
+    return mapTipoProcesoToCivilCaseType(t);
+  }
+  return null;
 }
 
 function buildLegalIdentificaciones(a: LegalAnalysis): string {
@@ -285,7 +331,8 @@ function NewCaseOriginFlowFields({
   conductDescription: string;
   setConductDescription: (v: string) => void;
 }) {
-  if (caseFlowType === 'tutela_primera') return null;
+  // Primera instancia (tutela o civil): no hay juzgado remitente ni consulta de desacato.
+  if (caseFlowType === 'tutela_primera' || isCivilCaseType(caseFlowType)) return null;
   if (caseFlowType === 'tutela_segunda') {
     return (
       <CaseFormSegundaInstancia
@@ -300,16 +347,19 @@ function NewCaseOriginFlowFields({
       />
     );
   }
-  return (
-    <CaseFormConsultaDesacato
-      originCourt={originCourt}
-      setOriginCourt={setOriginCourt}
-      originRadicado={originRadicado}
-      setOriginRadicado={setOriginRadicado}
-      conductDescription={conductDescription}
-      setConductDescription={setConductDescription}
-    />
-  );
+  if (caseFlowType === 'consulta_desacato') {
+    return (
+      <CaseFormConsultaDesacato
+        originCourt={originCourt}
+        setOriginCourt={setOriginCourt}
+        originRadicado={originRadicado}
+        setOriginRadicado={setOriginRadicado}
+        conductDescription={conductDescription}
+        setConductDescription={setConductDescription}
+      />
+    );
+  }
+  return null;
 }
 
 export default function NewCase() {
@@ -320,6 +370,10 @@ export default function NewCase() {
   const [parsedData, setParsedData] = useState<any>(null);
   const [attachments, setAttachments] = useState<any[]>([]);
   const [parseSessionId, setParseSessionId] = useState<string | null>(null);
+  const [archiveLinkStatus, setArchiveLinkStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>(
+    'idle',
+  );
+  const [archiveLinkError, setArchiveLinkError] = useState<string | null>(null);
   const [selectedDocIndex, setSelectedDocIndex] = useState<number>(0);
   const [selectedForMerge, setSelectedForMerge] = useState<number[]>([]);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -355,6 +409,44 @@ export default function NewCase() {
   const [segundaSuffixLoading, setSegundaSuffixLoading] = useState(false);
   const [sierjuDerechoSel, setSierjuDerechoSel] = useState<DerechoTuteladoCode | undefined>();
   const [sierjuClassIdSel, setSierjuClassIdSel] = useState<string | undefined>();
+  /** Código fila SIERJU TIPOS PROCESOS Civil-Oral (p. ej. ejecutivos). */
+  const [sierjuTipoCode, setSierjuTipoCode] = useState<string | undefined>();
+
+  const applySierjuTipoSelection = useCallback(
+    async (
+      codeOrLabel: string,
+      opts?: {
+        caseType?: CaseType;
+        note?: string;
+      },
+    ) => {
+      const hit = findSierjuTipoByCode(codeOrLabel) || matchSierjuTipoFromText(codeOrLabel);
+      const flow = opts?.caseType ?? hit?.caseType ?? 'civil_ordinario';
+      setCaseFlowType(flow);
+      if (hit) {
+        setSierjuTipoCode(hit.code);
+        setSegundaPrefillNote(
+          opts?.note ?? `Tipo SIERJU Civil-Oral: ${hit.label}.`,
+        );
+        try {
+          const classes = await fetchSierjuClassesForCaseType(courtId, flow);
+          const byCode =
+            classes.find((c) => c.code === hit.code && c.sectionCode === SIERJU_CIVIL_ACTIVE_SECTION) ||
+            classes.find((c) => c.code === hit.code && String(c.sectionCode || '').includes('oral')) ||
+            classes.find((c) => c.code === hit.code);
+          if (byCode) {
+            setSierjuClassIdSel(byCode.id);
+            setSierjuDerechoSel(byCode.derechoTuteladoCode);
+          }
+        } catch {
+          /* catálogo remoto opcional */
+        }
+      } else if (isCivilCaseType(flow)) {
+        setSierjuTipoCode(undefined);
+      }
+    },
+    [courtId],
+  );
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -386,14 +478,18 @@ export default function NewCase() {
     return combined.length > 0 ? combined.slice(0, 120_000) : null;
   }, [parsedData]);
 
+  const caseFlowTypeRef = useRef(caseFlowType);
+  caseFlowTypeRef.current = caseFlowType;
+
   const applySegundaInstanciaPrefill = useCallback(
     (parsed: Record<string, unknown>, opts?: { forceFlowType?: boolean }) => {
       const si = extractSegundaInstanciaFromParsedEmail(parsed);
-      const userChoseSegunda = opts?.forceFlowType || caseFlowType === 'tutela_segunda';
+      const currentFlow = caseFlowTypeRef.current;
+      const userChoseSegunda = opts?.forceFlowType || currentFlow === 'tutela_segunda';
       const autoSegunda = shouldUseSegundaInstanciaFlow(si);
       if (!userChoseSegunda && !autoSegunda) return false;
 
-      if (autoSegunda || opts?.forceFlowType || !caseFlowType) {
+      if (autoSegunda || opts?.forceFlowType || !currentFlow) {
         setCaseFlowType('tutela_segunda');
       }
       if (si.originRadicado) setOriginRadicado(si.originRadicado);
@@ -415,13 +511,15 @@ export default function NewCase() {
       }
       return Boolean(si.originRadicado || si.originCourt || si.sgdeNodeId);
     },
-    [caseFlowType, applySegundaFieldsExtract]
+    [applySegundaFieldsExtract]
   );
 
+  // Solo al cambiar el correo parseado (no en cada cambio de caseFlowType → evita bucles).
   useEffect(() => {
     if (!parsedData) return;
     applySegundaInstanciaPrefill(parsedData as Record<string, unknown>);
-  }, [parsedData, applySegundaInstanciaPrefill]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intencional: una sola pasada por parsedData
+  }, [parsedData]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -439,6 +537,7 @@ export default function NewCase() {
         };
         [key: string]: unknown;
       };
+      sessionStorage.removeItem('tutelia_outlook_radicacion');
       setParsedData(data);
       setParseSessionId(typeof data.parseSessionId === 'string' ? data.parseSessionId : null);
       const outlookAtt = Array.isArray(data.attachments) ? data.attachments : [];
@@ -447,7 +546,6 @@ export default function NewCase() {
       setSelectedDocIndex(0);
       setError(null);
       applySegundaInstanciaPrefill(data, { forceFlowType: true });
-      sessionStorage.removeItem('tutelia_outlook_radicacion');
       navigate('/new', { replace: true });
     } catch {
       setError('No se pudo cargar el correo importado desde Outlook.');
@@ -483,6 +581,9 @@ export default function NewCase() {
     setSegundaPrefillNote(null);
     setSgdePreflight(null);
     setSgdeNodeIdHint(null);
+    setSierjuDerechoSel(undefined);
+    setSierjuClassIdSel(undefined);
+    setSierjuTipoCode(undefined);
   }, []);
 
   useEffect(() => {
@@ -494,9 +595,14 @@ export default function NewCase() {
     try {
       const raw = localStorage.getItem(NEW_CASE_DRAFT_KEY);
       if (!raw) return;
+      // Borradores antiguos con PDFs en base64 congelan el hilo al parsear.
+      if (raw.length > 1_500_000) {
+        localStorage.removeItem(NEW_CASE_DRAFT_KEY);
+        return;
+      }
       const draft = JSON.parse(raw);
       const dType = draft.caseFlowType;
-      if (dType === 'tutela_primera' || dType === 'tutela_segunda' || dType === 'consulta_desacato') {
+      if (isKnownRadicableCaseType(dType)) {
         setCaseFlowType(dType);
       } else if (draft.parsedData) {
         setCaseFlowType('tutela_primera');
@@ -626,23 +732,60 @@ export default function NewCase() {
   useEffect(() => {
     if (!parsedData || radicationResult) return;
     try {
-      localStorage.setItem(NEW_CASE_DRAFT_KEY, JSON.stringify({
+      // Nunca persistir content/base64 de adjuntos: congelaba Chrome al JSON.stringify
+      // de PDFs grandes y al restaurar el borrador.
+      const lightAttachments = (Array.isArray(attachments) ? attachments : []).map((a) => {
+        const row = a as Record<string, unknown>;
+        const { content: _omit, ...rest } = row;
+        return {
+          ...rest,
+          hasContent: typeof row.content === 'string' && row.content.length > 0,
+        };
+      });
+      const lightParsed = (() => {
+        if (!parsedData || typeof parsedData !== 'object') return parsedData;
+        const p = { ...(parsedData as Record<string, unknown>) };
+        if (Array.isArray(p.attachments)) {
+          p.attachments = (p.attachments as Record<string, unknown>[]).map((att) => {
+            const { content: _c, ...r } = att;
+            return r;
+          });
+        }
+        if (typeof p.html === 'string' && p.html.length > 20_000) {
+          p.html = `${p.html.slice(0, 20_000)}…`;
+        }
+        if (typeof p.text === 'string' && p.text.length > 20_000) {
+          p.text = `${p.text.slice(0, 20_000)}…`;
+        }
+        return p;
+      })();
+      const payload = JSON.stringify({
         caseFlowType: caseFlowType ?? (parsedData ? 'tutela_primera' : null),
         originCourt,
         originRadicado,
         appellantSel,
         originRulingSel,
         conductDescription,
-        parsedData,
-        attachments,
+        parsedData: lightParsed,
+        attachments: lightAttachments,
         parseSessionId,
         selectedDocIndex,
         selectedForMerge,
         aiAnalysis,
         consecutive,
-      }));
+      });
+      if (payload.length > 1_500_000) {
+        localStorage.removeItem(NEW_CASE_DRAFT_KEY);
+        return;
+      }
+      localStorage.setItem(NEW_CASE_DRAFT_KEY, payload);
     } catch (e) {
       console.error('No se pudo guardar borrador local de radicacion', e);
+      try {
+        localStorage.removeItem(NEW_CASE_DRAFT_KEY);
+      } catch {
+        /* ignore */
+      }
     }
   }, [parsedData, radicationResult, attachments, parseSessionId, selectedDocIndex, selectedForMerge, aiAnalysis, consecutive, caseFlowType, originCourt, originRadicado, appellantSel, originRulingSel, conductDescription]);
 
@@ -657,12 +800,28 @@ export default function NewCase() {
   useEffect(() => {
     const text = aiAnalysis?.derechoTutelado || '';
     if (!text.trim()) return;
-    const guessed = guessDerechoTuteladoCodeFromText(text);
-    if (guessed) {
-      setSierjuDerechoSel(guessed);
-      setSierjuClassIdSel(undefined);
+    if (isCivilCaseType(caseFlowType)) {
+      const sierjuHit = matchSierjuTipoFromText(text);
+      if (sierjuHit) {
+        void applySierjuTipoSelection(sierjuHit.code, {
+          caseType: sierjuHit.caseType,
+          note: `Tipo SIERJU por IA: ${sierjuHit.label}.`,
+        });
+      }
+      return;
     }
-  }, [aiAnalysis?.derechoTutelado]);
+    if (
+      caseFlowType === 'tutela_primera' ||
+      caseFlowType === 'tutela_segunda' ||
+      caseFlowType === 'consulta_desacato'
+    ) {
+      const guessed = guessDerechoTuteladoCodeFromText(text);
+      if (guessed) {
+        setSierjuDerechoSel(guessed);
+        setSierjuClassIdSel(undefined);
+      }
+    }
+  }, [aiAnalysis?.derechoTutelado, applySierjuTipoSelection, caseFlowType]);
 
   const clearSgdeOriginState = useCallback(() => {
     setOriginRadicado('');
@@ -688,6 +847,35 @@ export default function NewCase() {
     }
   }, [clearSgdeOriginState]);
 
+  const fetchArchiveFromParseSession = async (sid: string, linkUrl?: string | null) => {
+    setArchiveLinkStatus('loading');
+    setArchiveLinkError(null);
+    try {
+      const auth = await apiAuthHeaders({ json: true });
+      const res = await fetch(`/api/parse-session/${encodeURIComponent(sid)}/fetch-archive`, {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify(linkUrl ? { url: linkUrl } : {}),
+      });
+      const payload = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        attachments?: unknown[];
+      };
+      if (!res.ok) {
+        throw new Error(payload.error || `No se pudo descargar el enlace (${res.status})`);
+      }
+      const raw = Array.isArray(payload.attachments) ? payload.attachments : [];
+      setAttachments((prev) => {
+        const emailAtt = prev.find((a) => a?.type === 'email_body') ?? null;
+        return emailAtt ? [emailAtt, ...raw] : [...raw];
+      });
+      setArchiveLinkStatus('ok');
+    } catch (err) {
+      setArchiveLinkStatus('error');
+      setArchiveLinkError(err instanceof Error ? err.message : 'Error al descargar el enlace Archivo');
+    }
+  };
+
   const parseEmail = async () => {
     if (!file) return;
 
@@ -695,14 +883,18 @@ export default function NewCase() {
     setError(null);
     setRadicationResult(null);
     setParseSessionId(null);
+    setArchiveLinkStatus('idle');
+    setArchiveLinkError(null);
     clearSgdeOriginState();
 
     const formData = new FormData();
     formData.append('email', file);
 
     try {
+      const auth = await apiAuthHeaders({ json: false });
       const response = await fetch('/api/parse-email', {
         method: 'POST',
+        headers: auth,
         body: formData,
       });
 
@@ -711,47 +903,79 @@ export default function NewCase() {
         [key: string]: unknown;
       };
       if (!response.ok) {
-        throw new Error(data.error || `Error al parsear el archivo (${response.status})`);
+        const base = data.error || `Error al parsear el archivo (${response.status})`;
+        if (response.status === 401) {
+          throw new Error(
+            `${base} Cierre sesión e ingrese de nuevo para renovar el token.`,
+          );
+        }
+        throw new Error(base);
       }
       setParsedData(data);
       const sid = typeof data.parseSessionId === 'string' ? data.parseSessionId : null;
       setParseSessionId(sid);
       const rawAttachments = Array.isArray(data.attachments) ? data.attachments : [];
-      let hydrated: typeof rawAttachments = [buildEmailAsAttachment(data, file?.name), ...rawAttachments];
-      if (sid && rawAttachments.some((a) => !String(a.content || '').trim() && typeof a.sessionIndex === 'number')) {
-        const hydratedRest = await Promise.all(
-          rawAttachments.map(async (att) => {
-            if (String(att.content || '').trim()) return att;
-            if (typeof att.sessionIndex !== 'number' || att.sessionIndex < 0) return att;
-            try {
-              const u8 = await fetchParseSessionAttachment(sid, att.sessionIndex);
-              return u8.length ? { ...att, content: uint8ArrayToBase64(u8) } : att;
-            } catch {
-              return att;
-            }
-          })
-        );
-        hydrated = [buildEmailAsAttachment(data, file?.name), ...hydratedRest];
-      }
-      setAttachments(hydrated);
+      // El visor y la radicación cargan bytes bajo demanda (sessionIndex); no bloquear el spinner
+      // descargando todos los PDF a base64 aquí (congelaba “Procesando…” varios minutos).
+      setAttachments([buildEmailAsAttachment(data, file?.name), ...rawAttachments]);
       setSelectedDocIndex(0);
+      const linkUrl = typeof data.linkUrl === 'string' ? data.linkUrl : null;
+      const linkPending = data.linkPending === true || (data.linkFound === true && !!linkUrl);
+      if (sid && linkPending) {
+        // No await: el parseo termina; la demanda del portal (~50 MB / ~30 s) sigue en segundo plano.
+        void fetchArchiveFromParseSession(sid, linkUrl);
+      }
       const parsedEmail = data as {
         subject?: unknown;
+        from?: unknown;
+        to?: unknown;
         text?: unknown;
         html?: unknown;
         segundaInstancia?: unknown;
       };
       const si = extractSegundaInstanciaFromParsedEmail(parsedEmail);
-      if (shouldTriggerSgdeAfterEmailParse(si)) {
+      if (shouldTriggerSgdeAfterEmailParse(si) || shouldUseSegundaInstanciaFlow(si)) {
         applySegundaInstanciaPrefill(parsedEmail, { forceFlowType: true });
-      } else if (!caseFlowType) {
-        setError('Seleccione el tipo de expediente (el correo no trajo un CUI de 23 dígitos reconocible).');
-        setParsedData(null);
-        setParseSessionId(null);
-        setAttachments([]);
-        return;
       } else if (caseFlowType === 'tutela_segunda') {
         applySegundaInstanciaPrefill(parsedEmail, { forceFlowType: true });
+      } else if (!caseFlowType) {
+        const inferred = inferCaseTypeFromParsedEmail({
+          subject: typeof parsedEmail.subject === 'string' ? parsedEmail.subject : null,
+          from: typeof parsedEmail.from === 'string' ? parsedEmail.from : null,
+          to: typeof parsedEmail.to === 'string' ? parsedEmail.to : null,
+          text: typeof parsedEmail.text === 'string' ? parsedEmail.text : null,
+          html: typeof parsedEmail.html === 'string' ? parsedEmail.html : null,
+        });
+        if (inferred) {
+          if (inferred.startsWith('civil_')) {
+            const corpus = [
+              typeof parsedEmail.subject === 'string' ? parsedEmail.subject : '',
+              typeof parsedEmail.text === 'string' ? parsedEmail.text : '',
+              typeof parsedEmail.html === 'string' ? parsedEmail.html : '',
+            ].join('\n');
+            const sierjuHit =
+              matchSierjuTipoFromText(corpus) || findSierjuTipoByCode('otros_procesos');
+            void applySierjuTipoSelection(sierjuHit?.code || 'otros_procesos', {
+              caseType: inferred,
+              note: sierjuHit
+                ? `Correo de radicación civil. Tipo SIERJU Civil-Oral provisional: ${sierjuHit.label}. Confirme con la demanda o la IA.`
+                : `Tipo detectado: proceso civil. Seleccione la fila SIERJU Civil-Oral antes de radicar.`,
+            });
+          } else {
+            setCaseFlowType(inferred);
+            setSierjuTipoCode(undefined);
+            setSegundaPrefillNote(
+              `Tipo detectado por el correo: ${inferred}. Puede corregirlo manualmente si aplica.`,
+            );
+          }
+        } else {
+          // Canal único: fallback tutela solo si el correo no tipifica (civil, desacato, etc.).
+          setCaseFlowType('tutela_primera');
+          setSierjuTipoCode(undefined);
+          setSegundaPrefillNote(
+            'Tipo provisional: tutela de primera instancia. Se ajustará con el análisis IA o si corrige el tipo.',
+          );
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error desconocido');
@@ -1427,24 +1651,65 @@ export default function NewCase() {
       if (rawCache) {
         const parsedCache = JSON.parse(rawCache) as Record<string, LegalAnalysis>;
         if (parsedCache[cacheKey]) {
-          setAiAnalysis(normalizeLegalAnalysis(parsedCache[cacheKey]));
+          const normalized = normalizeLegalAnalysis(parsedCache[cacheKey]);
+          setAiAnalysis(normalized);
+          const subject =
+            parsedData && typeof (parsedData as { subject?: unknown }).subject === 'string'
+              ? String((parsedData as { subject: string }).subject)
+              : '';
+          const inferred = inferCaseTypeFromAnalysisCorpus(
+            [subject, normalized.derechoTutelado, normalized.hechos, normalized.pretensiones].join(
+              '\n',
+            ),
+            caseFlowType,
+          );
+          if (
+            inferred &&
+            inferred !== caseFlowType &&
+            caseFlowType !== 'tutela_segunda' &&
+            caseFlowType !== 'consulta_desacato'
+          ) {
+            setCaseFlowType(inferred);
+            setSegundaPrefillNote(
+              `Tipo ajustado por análisis IA: ${inferred}. Puede corregirlo manualmente si aplica.`,
+            );
+          }
           setIsAnalyzing(false);
           return;
         }
       }
 
-      const rightsListText = RIGHTS_LIST.map(r => `Art. ${r.art} — ${r.title}`).join('\n');
+      const isCivil = isCivilCaseType(caseFlowType);
+      const derechoSection = sierjuDerechoSectionForCaseType(caseFlowType);
+      const derechoSheetHint =
+        derechoSection === 'impugnaciones'
+          ? 'Movimiento de Impugnaciones (hoja 13)'
+          : derechoSection === 'consultas_desacato'
+            ? 'Consultas Incidentes de Desacato (hoja 15)'
+            : 'Movimiento de Tutelas (hoja 8)';
 
-      const prompt = `
-        Analiza este documento de tutela y extrae la siguiente información de manera precisa:
+      const prompt = isCivil
+        ? `
+        Analiza este escrito de demanda / proceso civil (CGP) y extrae datos del INICIO del proceso (cabecera, partes, hechos y pretensiones del libelo). Puede venir un PDF largo; prioriza lo esencial del encabezado.
+        - Accionantes: lista de TODOS los demandantes / parte actora (nombre, C.C. o NIT, correo si consta).
+        - Accionados: lista de TODOS los demandados / parte pasiva (igual formato).
+        - Incluye a todos los litisconsortes; no omitas co-demandantes ni co-demandados.
+        - derechoTutelado: DEBE ser exactamente UNA de las etiquetas SIERJU «TIPOS PROCESOS» de Primera y única instancia Civil-Oral (vigente). Copie el texto tal cual; no use filas de Civil-Escrito (legislación anterior).
+${sierjuCivilTipoLabelsForPrompt('oral')}
+        - Hechos: síntesis narrativa (mín. 10 frases si el documento alcanza; ~900–1400 caracteres), tercera persona, con partes, objeto del litigio, cuantía si consta y hechos relevantes del libelo.
+        - Pretensiones: síntesis en tercera persona (4–6 frases) de lo pedido al juez (declaraciones, condenas, medidas cautelares). Sin copiar el escrito ni primera persona.
+
+        Responde estrictamente en formato JSON según el esquema proporcionado.
+      `
+        : `
+        Analiza este documento de tutela / impugnación / consulta de desacato y extrae la siguiente información de manera precisa:
         - Accionantes: lista de TODOS los demandantes que figuren como tales (párrafo introductorio, encabezado «DE:», «accionantes», etc.). Cada uno con nombre completo, identificación (C.C. o NIT con número) y correo si consta; si no consta correo, deja email vacío.
         - Accionados: lista de TODAS las entidades o personas demandadas (EPS, aseguradora, FOMAT, hospital, etc.). Una entrada por cada accionado distinto. Misma regla de identificación y email.
         - Si hay varios accionantes o varios accionados, inclúyelos todos; no omitas coprocuradores ni codemandados.
         - Si solo consta un demandante o un demandado, el arreglo tendrá un solo elemento.
-        - Derecho fundamental tutelado: DEBE ser estrictamente uno de los siguientes de la Constitución Colombiana:
-        ${rightsListText}
-        
-        IMPORTANTE: Si el derecho mencionado no está exactamente en esa lista, identifícalo bajo el artículo más relacionado de esa lista específica (Arts 11 al 41).
+        - derechoTutelado: DEBE ser exactamente UNA de las etiquetas SIERJU «TIPOS PROCESOS» de ${derechoSheetHint}. Copie el texto tal cual. NO use filas de Acciones constitucionales (hojas 7/14: cumplimiento, grupo, populares, hábeas corpus).
+${sierjuDerechoTipoLabelsForPrompt(derechoSection)}
+        - Si el derecho alegado no encaja claramente, use OTROS (no invente etiquetas distintas a la lista).
         
         - Hechos: Redacta un resumen narrativo y completo de los hechos relevantes (mínimo 10 frases; apunta a entre 900 y 1.400 caracteres en un solo párrafo corrido). Debe servir como síntesis procesal para el despacho, no como lista telegráfica. Incluye, si constan en el PDF: quién actúa y contra quién; cronología con fechas aproximadas; actuación u omisión que motiva la tutela; perjuicio o afectación alegada; trámites previos o agotamiento cuando aplique. No inventes datos ajenos al documento.
         - Pretensiones: SÍNTESIS en tercera persona para el despacho (4 a 6 frases, 400-700 caracteres). Resume qué se pide al juez y a cada accionado (órdenes, plazos, trámites) sin transcribir citas ni fórmulas de la demanda. PROHIBIDO copiar párrafos del escrito, usar comillas, ni redactar en primera persona («solicito», «ordene», «me amparen»). Ejemplo de tono: «La parte actora pide que se ordene a [entidad] resolver las medidas cautelares en 48 horas y que se profiera sentencia anticipada en el radicado indicado».
@@ -1463,7 +1728,7 @@ export default function NewCase() {
 
       const response = await fetch('/api/ai/legal-analysis', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await apiAuthHeaders({ json: true }),
         body: JSON.stringify({
           prompt,
           pdfBase64,
@@ -1480,6 +1745,51 @@ export default function NewCase() {
       const payload = await response.json();
       const normalized = normalizeLegalAnalysis(JSON.parse(payload.text || '{}'));
       setAiAnalysis(normalized);
+      if (payload.pdfTruncated && payload.pdfPagesTotal && payload.pdfPagesUsed) {
+        setSegundaPrefillNote(
+          `IA leyó las primeras ${payload.pdfPagesUsed} de ${payload.pdfPagesTotal} páginas (inicio del escrito: partes, hechos y pretensiones). Revise anexos si hacen falta.`,
+        );
+      }
+      const subject =
+        parsedData && typeof (parsedData as { subject?: unknown }).subject === 'string'
+          ? String((parsedData as { subject: string }).subject)
+          : '';
+      const sierjuFromAi = matchSierjuTipoFromText(normalized.derechoTutelado);
+      if (sierjuFromAi && isCivilCaseType(caseFlowType ?? sierjuFromAi.caseType)) {
+        void applySierjuTipoSelection(sierjuFromAi.code, {
+          caseType: sierjuFromAi.caseType,
+          note: `Tipo SIERJU por IA: ${sierjuFromAi.label}.`,
+        });
+      } else {
+        const inferred = inferCaseTypeFromAnalysisCorpus(
+          [subject, normalized.derechoTutelado, normalized.hechos, normalized.pretensiones].join('\n'),
+          caseFlowType,
+        );
+        if (inferred && inferred !== caseFlowType) {
+          const locked =
+            caseFlowType === 'tutela_segunda' || caseFlowType === 'consulta_desacato';
+          if (!locked) {
+            if (inferred.startsWith('civil_')) {
+              const hit =
+                matchSierjuTipoFromText(
+                  [normalized.derechoTutelado, normalized.hechos, normalized.pretensiones].join('\n'),
+                ) || findSierjuTipoByCode('otros_procesos');
+              void applySierjuTipoSelection(hit?.code || 'otros_procesos', {
+                caseType: inferred,
+                note: hit
+                  ? `Tipo SIERJU Civil-Oral ajustado por IA: ${hit.label}.`
+                  : `Tipo ajustado por análisis IA: ${inferred}.`,
+              });
+            } else {
+              setCaseFlowType(inferred);
+              setSierjuTipoCode(undefined);
+              setSegundaPrefillNote(
+                `Tipo ajustado por análisis IA: ${inferred}. Puede corregirlo manualmente si aplica.`,
+              );
+            }
+          }
+        }
+      }
       const raw = localStorage.getItem(AI_ANALYSIS_CACHE_KEY);
       const cache = raw ? JSON.parse(raw) : {};
       cache[cacheKey] = normalized;
@@ -1497,54 +1807,17 @@ export default function NewCase() {
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-slate-900">Radicación de Expediente</h1>
-          <p className="text-sm font-medium text-slate-500 mt-1">Ingesta automática y normalización de documentos judicial electrónicos</p>
+          <p className="text-sm font-medium text-slate-500 mt-1">
+            Un solo canal: cargue el correo y la IA identifica el tipo de proceso y los datos del expediente
+          </p>
         </div>
         <div className="px-4 py-2 bg-blue-50 text-accent rounded-lg border border-blue-100 text-xs font-bold uppercase tracking-widest">
            Canal Digital
         </div>
       </header>
 
-      {!caseFlowType ? (
-        <CaseTypeSelector
-          error={error}
-          onSelectCaseType={setCaseFlowType}
-          onClearError={() => setError(null)}
-        />
-      ) : !parsedData ? (
+      {!parsedData ? (
         <CaseEmailParser
-          caseFlowType={caseFlowType}
-          onChangeCaseFlowType={() => {
-            setCaseFlowType(null);
-            setFile(null);
-            setError(null);
-          }}
-          originFields={
-            <>
-              <NewCaseOriginFlowFields
-                caseFlowType={caseFlowType}
-                originCourt={originCourt}
-                setOriginCourt={setOriginCourt}
-                originRadicado={originRadicado}
-                setOriginRadicado={setOriginRadicado}
-                appellantSel={appellantSel}
-                setAppellantSel={setAppellantSel}
-                originRulingSel={originRulingSel}
-                setOriginRulingSel={setOriginRulingSel}
-                conductDescription={conductDescription}
-                setConductDescription={setConductDescription}
-              />
-              {caseFlowType === 'tutela_segunda' ? (
-                <CaseSgdeSegundaPreflightPanel
-                  key={`sgde-pf-${originRadicado.replace(/\D/g, '') || 'none'}`}
-                  originRadicado={originRadicado}
-                  sgdeNodeIdHint={sgdeNodeIdHint}
-                  emailDigest={segundaEmailDigest}
-                  onPreflightChange={setSgdePreflight}
-                  onSegundaExtract={applySegundaFieldsExtract}
-                />
-              ) : null}
-            </>
-          }
           file={file}
           onFileInputChange={handleFileChange}
           onDrop={onDrop}
@@ -1599,16 +1872,33 @@ export default function NewCase() {
               </button>
             </div>
 
-            <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-xs font-semibold text-slate-700">
-              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">
-                Tipo de expediente
-              </span>
-              <span aria-hidden className="mr-1.5">
-                {CASE_TYPE_CARD_COPY[caseFlowType ?? 'tutela_primera'].emoji}
-              </span>
-              {CASE_TYPE_CARD_COPY[caseFlowType ?? 'tutela_primera'].title} —{' '}
-              {CASE_TYPE_CARD_COPY[caseFlowType ?? 'tutela_primera'].subtitle}
-            </div>
+            <CaseTypeInferredBanner
+              caseFlowType={caseFlowType ?? 'tutela_primera'}
+              sierjuCode={sierjuTipoCode}
+              disabled={isRadicating}
+              sourceNote={segundaPrefillNote}
+              onChange={(next, meta) => {
+                setError(null);
+                if (meta?.sierjuCode) {
+                  void applySierjuTipoSelection(meta.sierjuCode, {
+                    caseType: next,
+                    note: meta.sierjuLabel
+                      ? `Tipo SIERJU Civil-Oral: ${meta.sierjuLabel}.`
+                      : undefined,
+                  });
+                  return;
+                }
+                setCaseFlowType(next);
+                setSierjuTipoCode(undefined);
+                if (next !== 'tutela_segunda' && next !== 'consulta_desacato') {
+                  setSegundaPrefillNote(
+                    isCivilCaseType(next)
+                      ? 'Seleccione la fila SIERJU TIPOS PROCESOS Civil-Oral en el selector.'
+                      : 'Tipo actualizado. Revise consecutivo y datos antes de radicar.',
+                  );
+                }
+              }}
+            />
 
             <NewCaseOriginFlowFields
               caseFlowType={caseFlowType ?? 'tutela_primera'}
@@ -1623,12 +1913,6 @@ export default function NewCase() {
               conductDescription={conductDescription}
               setConductDescription={setConductDescription}
             />
-
-            {segundaPrefillNote ? (
-              <p className="rounded-xl border border-violet-100 bg-violet-50/60 px-4 py-2.5 text-xs font-medium text-violet-900">
-                {segundaPrefillNote}
-              </p>
-            ) : null}
 
             {caseFlowType === 'tutela_segunda' ? (
               <CaseSgdeSegundaPreflightPanel
@@ -1681,11 +1965,32 @@ export default function NewCase() {
                 valueDerechoCode={sierjuDerechoSel}
                 valueClassId={sierjuClassIdSel}
                 disabled={isRadicating}
-                label="Clasificación SIERJU antes de radicar"
-                hint="Revise la fila del formulario estadístico. Se infiere del análisis IA si está disponible."
-                onChange={({ derechoCode, classId }) => {
+                label={
+                  isCivilCaseType(caseFlowType)
+                    ? 'Clasificación SIERJU Civil-Oral antes de radicar'
+                    : caseFlowType === 'tutela_segunda'
+                      ? 'Clasificación SIERJU Impugnaciones (hoja 13) antes de radicar'
+                      : caseFlowType === 'consulta_desacato'
+                        ? 'Clasificación SIERJU Consultas desacato (hoja 15) antes de radicar'
+                        : 'Clasificación SIERJU Tutelas (hoja 8) antes de radicar'
+                }
+                hint={
+                  isCivilCaseType(caseFlowType)
+                    ? 'Solo filas TIPOS PROCESOS de Primera y única instancia Civil-Oral (vigente). Civil-Escrito ya no aplica.'
+                    : caseFlowType === 'tutela_segunda'
+                      ? 'Solo filas TIPOS PROCESOS de Movimiento de Impugnaciones (hoja 13). Mismos 12 derechos que tutelas.'
+                      : caseFlowType === 'consulta_desacato'
+                        ? 'Solo filas TIPOS PROCESOS de Consultas Incidentes de Desacato (hoja 15). Mismos 12 derechos.'
+                        : 'Solo filas TIPOS PROCESOS de Movimiento de Tutelas (hoja 8). No use Acciones constitucionales (hoja 7).'
+                }
+                onChange={({ derechoCode, classId, option }) => {
                   setSierjuDerechoSel(derechoCode);
                   setSierjuClassIdSel(classId);
+                  if (option?.code && isCivilCaseType(caseFlowType)) {
+                    setSierjuTipoCode(option.code);
+                    const hit = findSierjuTipoByCode(option.code);
+                    if (hit) setCaseFlowType(hit.caseType);
+                  }
                 }}
               />
             </div>
@@ -1720,6 +2025,17 @@ export default function NewCase() {
                 setEditingName={setEditingName}
                 handleRename={handleRename}
                 handleMove={handleMove}
+                archiveLinkStatus={archiveLinkStatus}
+                archiveLinkError={archiveLinkError}
+                onRetryArchiveLink={
+                  parseSessionId
+                    ? () =>
+                        void fetchArchiveFromParseSession(
+                          parseSessionId,
+                          typeof parsedData?.linkUrl === 'string' ? parsedData.linkUrl : null,
+                        )
+                    : undefined
+                }
                 onAddAttachments={handleAddAttachments}
                 onRemoveAttachment={handleRemoveAttachment}
                 isAddingAttachments={isAddingAttachments}

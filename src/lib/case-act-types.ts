@@ -155,6 +155,16 @@ export function inferActCodeFromDocument(doc: Document): string | null {
   if (/^AutoEmbargo/i.test(doc.name)) return 'auto_embargo';
   if (/^Apelacion/i.test(doc.name)) return 'apelacion_escrito';
   if (/^EscritoDemanda/i.test(doc.name) || /^Demanda/i.test(doc.name)) return 'escrito_demanda';
+  // Nombres SGDE / juzgado (p. ej. 001001demandaanexos01): no vienen en TitleCase Tutelia.
+  const raw = `${doc.name || ''} ${doc.originalName || ''}`.toLowerCase();
+  if (/demanda|escrito.?inicial|escrito.?demanda/.test(raw) && !/contestaci[oó]n/.test(raw)) {
+    // Tutela suele mapear escrito a demanda tutelar vía otros codes; para civil usa escrito_demanda.
+    if (/tutela/.test(raw)) return 'escrito_tutela';
+    return 'escrito_demanda';
+  }
+  if (/anexo|prueba|evidencia/.test(raw) && !/auto|sentencia|fallo/.test(raw)) {
+    return /tutela|accion/.test(raw) ? 'anexos_pruebas' : 'prueba_documental';
+  }
   if (/^Respuesta/i.test(doc.name)) return 'respuesta_accionado';
   return null;
 }

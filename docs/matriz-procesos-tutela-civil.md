@@ -99,10 +99,11 @@ Definición: `SECRETARIA_STAGES` / `DESPACHO_STAGES` en `case-workflow-stages.ts
 
 | Capa | Estado |
 |------|--------|
-| Catálogo fino | `sierju_process_classes` (26+ clases civiles circuito) |
-| Runtime app | 5 `case_type` civiles (colapsado) |
-| Campo expediente | `cases.sierju_process_class_id` (opcional hoy; obligatorio en F3) |
-| Tutela | `sierju-tutela-informe.ts` |
+| Catálogo fino | `sierju_process_classes` + `sierju-process-tipos.ts` (Civil-Oral) + derechos hojas 8/12/13/15 |
+| Runtime app | 5 `case_type` civiles (colapsado, pipeline CGP) derivados de la clase SIERJU Oral |
+| UI / IA radicación | Civil = hoja 2 Oral; Tutela 1ª = hoja 8; Tutela 2ª/impugnación = hoja 13; Consulta desacato = hoja 15 |
+| Campo expediente | `cases.sierju_process_class_id` + `derecho_tutelado_code` |
+| Tutela / constitucional | Mismos 12 TIPOS PROCESOS (derechos); no hojas 7/14 Acciones constitucionales |
 
 ---
 
@@ -118,8 +119,10 @@ Definición: `SECRETARIA_STAGES` / `DESPACHO_STAGES` en `case-workflow-stages.ts
 
 ## Incidente de desacato
 
-- **No** es `case_type` independiente ni expediente hijo.
+- **No** es `case_type` independiente ni expediente hijo (SIERJU hoja 12 `incidentes_desacato`).
+- Tipificación SIERJU: mismos 12 derechos que tutelas.
 - Tabla `incident_desacato` + panel en `CaseDetail`.
+- **Consulta** de incidente de desacato (hoja 15) sí es `case_type = consulta_desacato`.
 - Ver `docs/incidente-desacato-modelo-expediente.md`.
 
 ---

@@ -1,0 +1,1135 @@
+{
+  "file": "c:\\Users\\cmarroqh\\Downloads\\Formulario_20260714_152834.xls",
+  "sheets": [
+    {
+      "index": 1,
+      "name": "Primera y única instancia Ci 1",
+      "nrows": 47,
+      "ncols": 59,
+      "header_row": 18,
+      "tipo_col": 0,
+      "labels": [
+        "DECLARATIVOS - ORDINARIOS",
+        "DECLARATIVOS - ABREVIADOS",
+        "DECLARATIVOS - VERBALES",
+        "DECLARATIVOS - VERBAL SUMARIO",
+        "DECLARATIVOS - DIVISORIOS",
+        "DECLARATIVOS - OTROS",
+        "EJECUTIVOS",
+        "EJECUTIVOS - HIPOTECARIO",
+        "INSOLVENCIA DE PERSONA NATURAL",
+        "INSOLVENCIA DE SOCIEDADES",
+        "PROCESOS DE LIQUIDACIÓN - LIQUIDACIÓN DE SOCIEDADES POR INCUMPLIMIENTO DE ACUERDO DE REORGANIZACIÓN",
+        "PROCESOS DE LIQUIDACIÓN - DISOLUCIÓN, NULIDAD Y LIQUIDACIÓN DE SOCIEDADES",
+        "PROCESOS DE LIQUIDACIÓN - OTROS",
+        "PROCESOS DE JURISDICCIÓN VOLUNTARIA",
+        "PROCESOS DE PERTENENCIA",
+        "SERVIDUMBRES",
+        "TITULACIÓN DE PREDIOS",
+        "LIQUIDACIÓN DE SOCIEDADES PATRIMONIALES DE HECHO",
+        "EXPROPIACIÓN",
+        "DESLINDE Y AMOJONAMIENTO",
+        "IMPUGNACIÓN DE ACTAS DE ASAMBLEAS, JUNTAS DIRECTIVAS O DE SOCIOS.",
+        "COMPETENCIA DESLEAL",
+        "RESPONSABILIDAD CIVIL EXTRACONTRACTUAL",
+        "RESPONSABILIDAD CIVIL CONTRACTUAL",
+        "CONCILIACIÓN EXTRAJUDICIAL",
+        "OTROS PROCESOS"
+      ],
+      "method": "header_TIPOS_PROCESOS",
+      "preview": [
+        {
+          "r": 1,
+          "cells": [
+            "",
+            "Consejo Superior de la Judicatura",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 2,
+          "cells": [
+            "",
+            "Sala Administrativa",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 3,
+          "cells": [
+            "",
+            "Unidad de Desarrollo y Análisis Estadístico",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 4,
+          "cells": [
+            "",
+            "Reporte Gestión en el Sistema Estadístico de la Rama Judicial SIERJU",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 5,
+          "cells": [
+            "",
+            "Este reporte fue generado en Excel y es solo para trabajo.",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 6,
+          "cells": [
+            "Formulario: SIERJU_Juzgado Civil Circuito 2023 V.4",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 7,
+          "cells": [
+            "Período Desde: 2026-04-01 Hasta 30/06/2026",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 8,
+          "cells": [
+            "Despacho: 110013103051 - JUZGADO 051 CIVIL DEL CIRCUITO DE BOGOTÁ",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 9,
+          "cells": [
+            "Distrito Judicial: BOGOTÁ",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 10,
+          "cells": [
+            "Consejo Seccional: BOGOTÁ",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 11,
+          "cells": [
+            "Circuito: BOGOTÁ",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 12,
+          "cells": [
+            "Municipio: BOGOTÁ",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 13,
+          "cells": [
+            "Funcionario: GLORIA PATRICIA MONTERO CABAS  Cédula: 39046947",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 16,
+          "cells": [
+            "Primera y única instancia Civil-Escrito",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 18,
+          "cells": [
+            "TIPOS PROCESOS",
+            "INVENTARIO DE PROCESOS SIN SENTENCIA O DECISIÓN QUE PONGA FIN A LA INSTANCIA",
+            "INVENTARIO DE PROCESOS SIN SENTENCIA O DECISIÓN QUE PONGA FIN A LA INSTANCIA",
+            "ENTRADAS",
+            "ENTRADAS",
+            "ENTRADAS",
+            "ENTRADAS",
+            "ENTRADAS",
+            "ENTRADAS",
+            "PROCESOS REACTIVADOS",
+            "SALIDAS ESPECIALIDAD CIVIL",
+            "SALIDAS ESPECIALIDAD CIVIL"
+          ]
+        },
+        {
+          "r": 19,
+          "cells": [
+            "",
+            "INVENTARIO AL INICIAR EL PERIODO - CON TRÁMITE",
+            "INVENTARIO AL INICIAR EL PERIODO - SIN TRÁMITE",
+            "POR REPARTO",
+            "DESCONGESTIÓN",
+            "REINGRESO",
+            "INGRESO PARA RENOVAR ACTUACIÓN",
+            "RECIBIDO DE OTROS DESPACHOS SIN FALLO O DECISIÓN DEFINITIVA",
+            "OTRAS ENTRADAS NO EFECTIVAS",
+            "PROCESOS REACTIVADOS",
+            "PARA DESCONGESTIÓN",
+            "REMITIDOS A OTROS DESPACHOS"
+          ]
+        },
+        {
+          "r": 20,
+          "cells": [
+            "DECLARATIVOS - ORDINARIOS",
+            "10",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 21,
+          "cells": [
+            "DECLARATIVOS - ABREVIADOS",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 22,
+          "cells": [
+            "DECLARATIVOS - VERBALES",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 23,
+          "cells": [
+            "DECLARATIVOS - VERBAL SUMARIO",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 24,
+          "cells": [
+            "DECLARATIVOS - DIVISORIOS",
+            "25",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 25,
+          "cells": [
+            "DECLARATIVOS - OTROS",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 26,
+          "cells": [
+            "EJECUTIVOS",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 27,
+          "cells": [
+            "EJECUTIVOS - HIPOTECARIO",
+            "2",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 28,
+          "cells": [
+            "INSOLVENCIA DE PERSONA NATURAL",
+            "15",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 29,
+          "cells": [
+            "INSOLVENCIA DE SOCIEDADES",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 30,
+          "cells": [
+            "PROCESOS DE LIQUIDACIÓN - LIQUIDACIÓN DE SOCIEDADES POR INCUMPLIMIENTO DE ACUERDO DE REORGANIZACIÓN",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 31,
+          "cells": [
+            "PROCESOS DE LIQUIDACIÓN - DISOLUCIÓN, NULIDAD Y LIQUIDACIÓN DE SOCIEDADES",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 32,
+          "cells": [
+            "PROCESOS DE LIQUIDACIÓN - OTROS",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 33,
+          "cells": [
+            "PROCESOS DE JURISDICCIÓN VOLUNTARIA",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 34,
+          "cells": [
+            "PROCESOS DE PERTENENCIA",
+            "12",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "name": "Primera y única instancia Ci 2",
+      "nrows": 45,
+      "ncols": 64,
+      "header_row": 18,
+      "tipo_col": 0,
+      "labels": [
+        "DECLARATIVOS VERBAL PERTENENCIA",
+        "DECLARATIVOS VERBAL SERVIDUMBRES",
+        "DECLARATIVOS - VERBAL-IMPUGNACIÓN DE ACTAS DE ASAMBLEAS, JUNTAS DIRECTIVAS O DE SOCIOS.",
+        "DECLARATIVOS VERBAL DECLARACIÓN DE BIENES VACANTES O MOSTRENCOS",
+        "DECLARATIVOS ESPECIALES DIVISORIO",
+        "DECLARATIVOS ESPECIALES EXPROPIACIÓN",
+        "DECLARATIVOS ESPECIALES DESLINDE Y AMOJONAMIENTO",
+        "EJECUTIVOS",
+        "EJECUTIVOS CON GARANTÍA REAL",
+        "RESPONSABILIDAD MEDICA",
+        "RESPONSABILIDAD CIVIL EXTRACONTRACTUAL",
+        "RESPONSABILIDAD CIVIL CONTRACTUAL",
+        "INSOLVENCIA DE LA PERSONA NATURAL",
+        "INSOLVENCIA DE SOCIEDADES",
+        "PROCESOS DE LIQUIDACIÓN - LIQUIDACIÓN DE SOCIEDADES POR INCUMPLIMIENTO DE ACUERDO DE REORGANIZACIÓN",
+        "PROCESOS DE LIQUIDACIÓN - DISOLUCIÓN, NULIDAD Y LIQUIDACIÓN DE SOCIEDADES",
+        "PROCESOS DE LIQUIDACIÓN - OTROS",
+        "PROCESOS DE JURISDICCIÓN VOLUNTARIA",
+        "COMPETENCIA DESLEAL",
+        "PROPIEDAD INTELECTUAL",
+        "PROCESOS DE PROTECCIÓN DE DERECHO AL CONSUMIDOR",
+        "DECLARATORIA DE AUSENCIA POR DESAPARICIÓN FORZADA",
+        "CONCILIACIÓN EXTRAJUDICIAL",
+        "OTROS PROCESOS"
+      ],
+      "method": "header_TIPOS_PROCESOS",
+      "preview": [
+        {
+          "r": 1,
+          "cells": [
+            "",
+            "Consejo Superior de la Judicatura",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 2,
+          "cells": [
+            "",
+            "Sala Administrativa",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 3,
+          "cells": [
+            "",
+            "Unidad de Desarrollo y Análisis Estadístico",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 4,
+          "cells": [
+            "",
+            "Reporte Gestión en el Sistema Estadístico de la Rama Judicial SIERJU",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 5,
+          "cells": [
+            "",
+            "Este reporte fue generado en Excel y es solo para trabajo.",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 6,
+          "cells": [
+            "Formulario: SIERJU_Juzgado Civil Circuito 2023 V.4",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 7,
+          "cells": [
+            "Período Desde: 2026-04-01 Hasta 30/06/2026",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 8,
+          "cells": [
+            "Despacho: 110013103051 - JUZGADO 051 CIVIL DEL CIRCUITO DE BOGOTÁ",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 9,
+          "cells": [
+            "Distrito Judicial: BOGOTÁ",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 10,
+          "cells": [
+            "Consejo Seccional: BOGOTÁ",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 11,
+          "cells": [
+            "Circuito: BOGOTÁ",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 12,
+          "cells": [
+            "Municipio: BOGOTÁ",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 13,
+          "cells": [
+            "Funcionario: GLORIA PATRICIA MONTERO CABAS  Cédula: 39046947",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 16,
+          "cells": [
+            "Primera y única instancia Civil-Oral",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "r": 18,
+          "cells": [
+            "TIPOS PROCESOS",
+            "INVENTARIO DE PROCESOS SIN SENTENCIA O DECISIÓN QUE PONGA FIN A LA INSTANCIA",
+            "INVENTARIO DE PROCESOS SIN SENTENCIA O DECISIÓN QUE PONGA FIN A LA INSTANCIA",
+            "ENTRADAS",
+            "ENTRADAS",
+            "ENTRADAS",
+            "ENTRADAS",
+            "ENTRADAS",
+            "ENTRADAS",
+            "ENTRADAS",
+            "ENTRADAS",
+            "PROCESOS REACTIVADOS"
+          ]
+        },
+        {
+          "r": 19,
+          "cells": [
+            "",
+            "INVENTARIO AL INICIAR EL PERIODO - CON TRÁMITE",
+            "INVENTARIO AL INICIAR EL PERIODO - SIN TRÁMITE",
+            "POR REPARTO",
+            "DESCONGESTIÓN",
+            "REINGRESO",
+            "INGRESO CAMBIO DE RADICACIÓN",
+            "INGRESO PÉRDIDA DE COMPETENCIA",
+            "INGRESO PARA RENOVAR ACTUACIÓN",
+            "RECIBIDO DE OTROS DESPACHOS SIN FALLO O DECISIÓN DEFINITIVA",
+            "OTRAS ENTRADAS NO EFECTIVAS",
+            "PROCESOS REACTIVADOS"
+          ]
+        },
+        {
+          "r": 20,
+          "cells": [
+            "DECLARATIVOS VERBAL PERTENENCIA",
+            "70",
+            "0",
+            "5",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 21,
+          "cells": [
+            "DECLARATIVOS VERBAL SERVIDUMBRES",
+            "10",
+            "0",
+            "1",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 22,
+          "cells": [
+            "DECLARATIVOS - VERBAL-IMPUGNACIÓN DE ACTAS DE ASAMBLEAS, JUNTAS DIRECTIVAS O DE SOCIOS.",
+            "9",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 23,
+          "cells": [
+            "DECLARATIVOS VERBAL DECLARACIÓN DE BIENES VACANTES O MOSTRENCOS",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 24,
+          "cells": [
+            "DECLARATIVOS ESPECIALES DIVISORIO",
+            "24",
+            "0",
+            "4",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 25,
+          "cells": [
+            "DECLARATIVOS ESPECIALES EXPROPIACIÓN",
+            "28",
+            "0",
+            "2",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 26,
+          "cells": [
+            "DECLARATIVOS ESPECIALES DESLINDE Y AMOJONAMIENTO",
+            "1",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 27,
+          "cells": [
+            "EJECUTIVOS",
+            "110",
+            "0",
+            "20",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 28,
+          "cells": [
+            "EJECUTIVOS CON GARANTÍA REAL",
+            "60",
+            "0",
+            "4",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 29,
+          "cells": [
+            "RESPONSABILIDAD MEDICA",
+            "1",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 30,
+          "cells": [
+            "RESPONSABILIDAD CIVIL EXTRACONTRACTUAL",
+            "16",
+            "0",
+            "1",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 31,
+          "cells": [
+            "RESPONSABILIDAD CIVIL CONTRACTUAL",
+            "4",
+            "0",
+            "1",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 32,
+          "cells": [
+            "INSOLVENCIA DE LA PERSONA NATURAL",
+            "32",
+            "0",
+            "7",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 33,
+          "cells": [
+            "INSOLVENCIA DE SOCIEDADES",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        },
+        {
+          "r": 34,
+          "cells": [
+            "PROCESOS DE LIQUIDACIÓN - LIQUIDACIÓN DE SOCIEDADES POR INCUMPLIMIENTO DE ACUERDO DE REORGANIZACIÓN",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        }
+      ]
+    }
+  ]
+}

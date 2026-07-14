@@ -117,6 +117,18 @@ export function TenantProvider({
     return DEFAULT_DEMO_COURT_ID;
   }, [memberships, profile?.courtId]);
 
+  // Platform admin sin viewAs: arrancar en el despacho del perfil (piloto) para no dejar el tablero vacío.
+  useEffect(() => {
+    if (loading) return;
+    if (!isPlatformAdmin && !isRegionalPlatformAdmin) return;
+    if (viewAsCourtId?.trim()) return;
+    const seed = activeCourtId?.trim() || DEFAULT_DEMO_COURT_ID;
+    if (!seed) return;
+    setViewAsCourtIdInStorage(seed);
+    setViewAsState(seed);
+    // Sin dispatchTenantScopeChanged: evita cascada de listeners + remounts en el primer paint.
+  }, [loading, isPlatformAdmin, isRegionalPlatformAdmin, viewAsCourtId, activeCourtId]);
+
   const scope = useMemo(
     () =>
       resolveTenantScope({

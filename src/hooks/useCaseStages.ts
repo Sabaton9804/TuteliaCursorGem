@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { removeRealtimeChannel, subscribePostgresChanges } from '../lib/supabase-realtime-channel';
 import { ensureSupabaseSessionForWrites } from '../lib/supabase-write-auth';
 import type { CaseType } from '../types';
 import {
@@ -88,19 +89,32 @@ export function useCaseStages(opts: UseOpts) {
     void refetch();
   }, [refetch]);
 
+  const refetchRef = useRef(refetch);
+  refetchRef.current = refetch;
+
   useEffect(() => {
-    const ch = supabase
-      .channel(`case-stages-${opts.caseId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'case_stages', filter: `case_id=eq.${opts.caseId}` },
-        () => void refetch(),
-      )
-      .subscribe();
+    if (!opts.caseId) return;
+    let ch: ReturnType<typeof subscribePostgresChanges> | null = null;
+    try {
+      ch = subscribePostgresChanges({
+        topicPrefix: `case-stages-${opts.caseId}`,
+        bindings: [
+          {
+            table: 'case_stages',
+            filter: `case_id=eq.${opts.caseId}`,
+            onEvent: () => {
+              void refetchRef.current();
+            },
+          },
+        ],
+      });
+    } catch (e) {
+      console.warn('[useCaseStages] realtime no disponible:', e);
+    }
     return () => {
-      void supabase.removeChannel(ch);
+      removeRealtimeChannel(ch);
     };
-  }, [opts.caseId, refetch]);
+  }, [opts.caseId]);
 
   const bootstrap = useCallback(async () => {
     if (rows.length > 0) return;

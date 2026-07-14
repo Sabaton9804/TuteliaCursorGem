@@ -52,12 +52,12 @@ export function CaseSierjuClassification({
 
     void (async () => {
       try {
-        const rows =
-          processDefinitionId && processDefinitionId.trim()
+        // Preferir filtro por caseType (p. ej. tutelas → solo hoja 8 movimiento_tutelas).
+        const rows = caseType
+          ? await fetchSierjuClassesForCaseType(courtId, caseType)
+          : processDefinitionId && processDefinitionId.trim()
             ? await fetchSierjuClassesForProcessDefinition(courtId, processDefinitionId)
-            : caseType
-              ? await fetchSierjuClassesForCaseType(courtId, caseType)
-              : [];
+            : [];
         if (cancelled) return;
         setClasses(rows);
         if (!rows.length) {

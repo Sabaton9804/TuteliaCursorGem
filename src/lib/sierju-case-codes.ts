@@ -1,10 +1,45 @@
 /**
- * Códigos alineados a la hoja SIERJU «Movimiento de Tutelas» y tipos de decisión para estadística.
+ * Códigos alineados a TIPOS PROCESOS = derechos fundamentales en hojas SIERJU:
+ * - 8 Movimiento de Tutelas
+ * - 12 Incidentes de Desacato
+ * - 13 Movimiento de Impugnaciones
+ * - 15 Consultas Incidentes de Desacato
  *
- * Alcance completo del Excel (inventarios, entradas/salidas detalladas, acumulados) queda para cuando el flujo
- * avance más allá de admisión; conservar `derecho_tutelado_code`, `decision_type` y eventos en `case_actions`
- * con fecha para poder construir ese informe después sin reingresar historia.
+ * Las 12 etiquetas son idénticas en esas hojas.
+ * No usar hoja 7 / 14 (Acciones constitucionales: cumplimiento, grupo, populares, hábeas corpus)
+ * para tipificar tutelas, impugnaciones, desacato o consulta.
  */
+
+/** Sección SIERJU por flujo Tutelia (formulario Civil Circuito 2023 V.4). */
+export const SIERJU_TUTELA_ACTIVE_SECTION = 'movimiento_tutelas' as const;
+export const SIERJU_DESACATO_ACTIVE_SECTION = 'incidentes_desacato' as const;
+export const SIERJU_IMPUGNACIONES_ACTIVE_SECTION = 'impugnaciones' as const;
+export const SIERJU_CONSULTAS_DESACATO_ACTIVE_SECTION = 'consultas_desacato' as const;
+
+export type SierjuDerechoSectionCode =
+  | typeof SIERJU_TUTELA_ACTIVE_SECTION
+  | typeof SIERJU_DESACATO_ACTIVE_SECTION
+  | typeof SIERJU_IMPUGNACIONES_ACTIVE_SECTION
+  | typeof SIERJU_CONSULTAS_DESACATO_ACTIVE_SECTION;
+
+const SIERJU_DERECHO_SECTION_META: Record<
+  SierjuDerechoSectionCode,
+  { sheet: number; title: string }
+> = {
+  movimiento_tutelas: { sheet: 8, title: 'Movimiento de Tutelas' },
+  incidentes_desacato: { sheet: 12, title: 'Incidentes de Desacato' },
+  impugnaciones: { sheet: 13, title: 'Movimiento de Impugnaciones' },
+  consultas_desacato: { sheet: 15, title: 'Consultas Incidentes de Desacato' },
+};
+
+/** Mapea case_type Tutelia → sección SIERJU de tipificación por derecho. */
+export function sierjuDerechoSectionForCaseType(
+  caseType: string | null | undefined,
+): SierjuDerechoSectionCode {
+  if (caseType === 'tutela_segunda') return SIERJU_IMPUGNACIONES_ACTIVE_SECTION;
+  if (caseType === 'consulta_desacato') return SIERJU_CONSULTAS_DESACATO_ACTIVE_SECTION;
+  return SIERJU_TUTELA_ACTIVE_SECTION;
+}
 
 export const DERECHO_TUTELADO_CODES = [
   'SALUD',
@@ -23,20 +58,65 @@ export const DERECHO_TUTELADO_CODES = [
 
 export type DerechoTuteladoCode = (typeof DERECHO_TUTELADO_CODES)[number];
 
+/** Labels exactas TIPOS PROCESOS (hojas 8 / 12 / 13 / 15). */
 export const DERECHO_TUTELADO_LABELS: Record<DerechoTuteladoCode, string> = {
-  SALUD: 'Salud',
-  SEGURIDAD_SOCIAL: 'Seguridad social',
-  VIDA: 'Vida',
-  MINIMO_VITAL: 'Mínimo vital',
-  IGUALDAD: 'Igualdad',
-  EDUCACION: 'Educación',
-  DEBIDO_PROCESO: 'Debido proceso',
-  DERECHO_DE_PETICION: 'Derecho de petición',
-  INFORMACION_PUBLICA: 'Información pública',
-  CONTRA_PROVIDENCIAS_JUDICIALES: 'Contra providencias judiciales',
-  MEDIO_AMBIENTE: 'Medio ambiente',
-  OTROS: 'Otros',
+  SALUD: 'SALUD',
+  SEGURIDAD_SOCIAL: 'SEGURIDAD SOCIAL',
+  VIDA: 'VIDA',
+  MINIMO_VITAL: 'MÍNIMO VITAL',
+  IGUALDAD: 'IGUALDAD',
+  EDUCACION: 'EDUCACIÓN',
+  DEBIDO_PROCESO: 'DEBIDO PROCESO',
+  DERECHO_DE_PETICION: 'DERECHO DE PETICIÓN',
+  INFORMACION_PUBLICA: 'DERECHO A LA INFORMACIÓN PÚBLICA',
+  CONTRA_PROVIDENCIAS_JUDICIALES: 'CONTRA PROVIDENCIAS JUDICIALES',
+  MEDIO_AMBIENTE: 'MEDIO AMBIENTE',
+  OTROS: 'OTROS',
 };
+
+function normDerechoLabel(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Empareja texto libre / IA con una fila de derechos SIERJU (hojas 8/12/13/15). */
+export function matchDerechoTuteladoFromSierjuLabel(
+  text: string | null | undefined,
+): DerechoTuteladoCode | undefined {
+  const raw = String(text || '').trim();
+  if (!raw) return undefined;
+  const n = normDerechoLabel(raw);
+  for (const code of DERECHO_TUTELADO_CODES) {
+    if (code === raw || normDerechoLabel(DERECHO_TUTELADO_LABELS[code]) === n) return code;
+  }
+  for (const code of DERECHO_TUTELADO_CODES) {
+    const labelN = normDerechoLabel(DERECHO_TUTELADO_LABELS[code]);
+    if (labelN.length >= 5 && (n.includes(labelN) || labelN.includes(n))) return code;
+  }
+  // OTROS solo por igualdad / etiqueta corta exacta (evita falsos positivos).
+  if (n === 'otros' || n === 'otro') return 'OTROS';
+  return undefined;
+}
+
+/** Lista para prompts IA según hoja SIERJU de derechos. */
+export function sierjuDerechoTipoLabelsForPrompt(
+  section: SierjuDerechoSectionCode = SIERJU_TUTELA_ACTIVE_SECTION,
+): string {
+  const meta = SIERJU_DERECHO_SECTION_META[section];
+  return (
+    `### ${meta.title} (vigente — hoja ${meta.sheet} FORMULARIO)\n` +
+    DERECHO_TUTELADO_CODES.map((c) => `- ${DERECHO_TUTELADO_LABELS[c]}`).join('\n')
+  );
+}
+
+/** @deprecated Preferir {@link sierjuDerechoTipoLabelsForPrompt} con la sección correcta. */
+export function sierjuTutelaTipoLabelsForPrompt(): string {
+  return sierjuDerechoTipoLabelsForPrompt(SIERJU_TUTELA_ACTIVE_SECTION);
+}
 
 export const DECISION_TYPES = [
   'CONCEDE',
@@ -78,6 +158,9 @@ export function parseDecisionType(raw: unknown): DecisionType | undefined {
 
 /** Heurística al radicar desde texto IA o correo (sin garantía jurídica). */
 export function guessDerechoTuteladoCodeFromText(text: string): DerechoTuteladoCode | undefined {
+  const exact = matchDerechoTuteladoFromSierjuLabel(text);
+  if (exact) return exact;
+
   const t = text
     .toLowerCase()
     .normalize('NFD')

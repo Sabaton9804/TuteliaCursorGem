@@ -1,10 +1,14 @@
+import { apiAuthHeaders } from './supabase-write-auth';
+
 /** Descarga un adjunto binario de una sesión temporal creada por POST /api/parse-email. */
 export async function fetchParseSessionAttachment(
   parseSessionId: string,
   sessionIndex: number
 ): Promise<Uint8Array> {
+  const headers = await apiAuthHeaders({ json: false });
   const res = await fetch(
-    `/api/parse-session/${encodeURIComponent(parseSessionId)}/attachment/${sessionIndex}`
+    `/api/parse-session/${encodeURIComponent(parseSessionId)}/attachment/${sessionIndex}`,
+    { headers },
   );
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;

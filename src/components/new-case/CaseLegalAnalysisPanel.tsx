@@ -23,7 +23,10 @@ export type CaseLegalAnalysisParsedSnapshot = {
   from?: string;
   linkFound?: boolean;
   linkUrl?: string | null;
+  linkPending?: boolean;
 };
+
+export type ArchiveLinkFetchStatus = 'idle' | 'loading' | 'ok' | 'error';
 
 export type CaseLegalAnalysisAttachmentRow = {
   filename: string;
@@ -58,6 +61,9 @@ type MetadataSectionProps = {
   onAddAttachments: (files: FileList) => void;
   onRemoveAttachment: (index: number) => void;
   isAddingAttachments?: boolean;
+  archiveLinkStatus?: ArchiveLinkFetchStatus;
+  archiveLinkError?: string | null;
+  onRetryArchiveLink?: () => void;
 };
 
 const NEW_CASE_ATTACHMENT_ACCEPT =
@@ -205,6 +211,9 @@ export function CaseLegalAnalysisPanel(props: CaseLegalAnalysisPanelProps) {
     onAddAttachments,
     onRemoveAttachment,
     isAddingAttachments = false,
+    archiveLinkStatus = 'idle',
+    archiveLinkError = null,
+    onRetryArchiveLink,
   } = props;
 
   const addFilesInputRef = useRef<HTMLInputElement>(null);
@@ -241,10 +250,33 @@ export function CaseLegalAnalysisPanel(props: CaseLegalAnalysisPanelProps) {
               <ExternalLink className="w-3 h-3" /> Link &quot;Archivo&quot; Detectado
             </label>
             <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl text-blue-700 text-[11px] font-medium break-all flex flex-col gap-2">
-              <span className="opacity-70">
-                Se detectó y procesó automáticamente el link de descarga mencionado en el cuerpo del correo.
+              <span className="opacity-90">
+                {archiveLinkStatus === 'loading' ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                    Descargando expediente del portal Demanda en línea (puede tardar ~30–90 s; archivos grandes)…
+                  </span>
+                ) : archiveLinkStatus === 'ok' ? (
+                  'Expediente del enlace descargado y añadido a la lista de documentos.'
+                ) : archiveLinkStatus === 'error' ? (
+                  archiveLinkError ||
+                  'No se pudo descargar el expediente del enlace. Puede reintentar o añadir el PDF manualmente.'
+                ) : attachments.some((a) => a.isFromLink) ? (
+                  'Expediente del enlace disponible en la lista de documentos.'
+                ) : (
+                  'Enlace detectado. La descarga del portal se hace en segundo plano (no bloquea el parseo del correo).'
+                )}
               </span>
               <div className="bg-white/80 p-2 rounded-lg border border-blue-200/50 truncate">{parsedData.linkUrl}</div>
+              {archiveLinkStatus === 'error' && onRetryArchiveLink ? (
+                <button
+                  type="button"
+                  onClick={onRetryArchiveLink}
+                  className="self-start text-[10px] font-bold uppercase tracking-wide text-blue-800 underline underline-offset-2"
+                >
+                  Reintentar descarga
+                </button>
+              ) : null}
             </div>
           </div>
         )}

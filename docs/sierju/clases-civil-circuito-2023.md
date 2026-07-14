@@ -7,7 +7,9 @@ Listado de filas **TIPOS PROCESOS** extraído del formulario exportado del Juzga
 
 ---
 
-## civil_1a_escrito (26 clases)
+## civil_1a_escrito (26 clases) — **LEGACY / no usar**
+
+Legislación anterior. No oferta en radicación ni IA Tutelia.
 
 | code | label SIERJU |
 |------|--------------|
@@ -40,7 +42,9 @@ Listado de filas **TIPOS PROCESOS** extraído del formulario exportado del Juzga
 
 ---
 
-## civil_1a_oral (24 clases)
+## civil_1a_oral (24 clases) — **VIGENTE**
+
+Única sección civil de 1ª usada en Tutelia (oralidad CGP). Civil-Escrito queda como referencia histórica.
 
 | code | label SIERJU |
 |------|--------------|
@@ -162,9 +166,40 @@ Igual que escrito más:
 
 ---
 
-## movimiento_tutelas / desacato / impugnaciones / consultas (12 filas c/u)
+## movimiento_tutelas (hoja 8) — **VIGENTE para tutelas**
 
-Filas = **derecho fundamental** (no tipo de proceso). Ver `fundamental_rights_rows` en `docs/sierju/movimientos-comunes.json`.
+Filas TIPOS PROCESOS = **derecho fundamental** (12). Única fuente de tipificación de tutelas en Tutelia.
+
+| code | label SIERJU |
+|------|--------------|
+| `salud` | SALUD |
+| `seguridad_social` | SEGURIDAD SOCIAL |
+| `vida` | VIDA |
+| `minimo_vital` | MÍNIMO VITAL |
+| `igualdad` | IGUALDAD |
+| `educacion` | EDUCACIÓN |
+| `debido_proceso` | DEBIDO PROCESO |
+| `derecho_peticion` | DERECHO DE PETICIÓN |
+| `informacion_publica` | DERECHO A LA INFORMACIÓN PÚBLICA |
+| `contra_providencias_judiciales` | CONTRA PROVIDENCIAS JUDICIALES |
+| `medio_ambiente` | MEDIO AMBIENTE |
+| `otros` | OTROS |
+
+No usar hoja 7 (Acciones constitucionales) para tipificar tutelas.
+
+---
+
+## incidentes_desacato (hoja 12) / impugnaciones (hoja 13) / consultas_desacato (hoja 15)
+
+Mismas **12 filas** TIPOS PROCESOS (derechos) que hoja 8.
+
+| Sección | Hoja | `case_type` Tutelia |
+|---------|------|---------------------|
+| `incidentes_desacato` | 12 | Incidente sobre tutela (no radicación independiente) |
+| `impugnaciones` | 13 | `tutela_segunda` |
+| `consultas_desacato` | 15 | `consulta_desacato` |
+
+Hoja 14 (`acciones_const_2a`, hábeas corpus) **no** tipifica impugnación de tutela.
 
 ---
 

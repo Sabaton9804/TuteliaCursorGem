@@ -87,10 +87,13 @@ export async function detectActaRepartoInPdfBuffer(buf: Buffer | null | undefine
 }
 
 export function filenameSuggestsActaReparto(filenameLower: string): boolean {
+  const n = filenameLower.toLowerCase();
   return (
-    filenameLower.includes('acta') ||
-    filenameLower.includes('reparto') ||
-    filenameLower.includes('secuencia')
+    n.includes('acta') ||
+    n.includes('reparto') ||
+    n.includes('secuencia') ||
+    // Actas de circuito: "SEC 27021 JUZ 51 CC.pdf"
+    /\bsec[\s._-]?\d{2,}/.test(n)
   );
 }
 

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Users } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { rowToUserProfile } from '../lib/supabase-mappers';
+import { fetchCourtTeamProfiles } from '../lib/court-staff-service';
 import { userRoleLabelEs } from '../lib/user-roles';
 import type { UserProfile, UserRole } from '../types';
 import { useSessionCourt } from '../contexts/SessionCourtContext';
@@ -85,24 +86,7 @@ export default function Team() {
           );
         }
 
-        const { data: rpcRows, error: rpcErr } = await supabase.rpc('court_team_members');
-        if (!rpcErr && Array.isArray(rpcRows)) {
-          members = (rpcRows as Record<string, unknown>[]).map((r) => rowToUserProfile(r));
-        } else {
-          const fb = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('court_id', courtId)
-            .order('name', { ascending: true });
-          if (fb.error) {
-            console.warn('[Equipo] Lista desde Supabase limitada por RLS o error:', fb.error);
-          } else {
-            members = ((fb.data as Record<string, unknown>[]) ?? []).map((r) => rowToUserProfile(r));
-          }
-          if (rpcErr) {
-            console.warn('[Equipo] RPC court_team_members:', rpcErr);
-          }
-        }
+        members = await fetchCourtTeamProfiles(courtId);
       }
 
       const { data: courtRow } = await supabase.from('courts').select('name').eq('id', courtId).maybeSingle();

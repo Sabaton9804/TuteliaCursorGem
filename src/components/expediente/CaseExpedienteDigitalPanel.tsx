@@ -135,7 +135,22 @@ function PdfViewer({
     setSignLoading(true);
     setSignError(null);
     void (async () => {
+      const tryStorage = async (): Promise<boolean> => {
+        if (!pathTrim) return false;
+        const { data, error } = await supabase.storage
+          .from(CASE_DOCUMENTS_BUCKET)
+          .createSignedUrl(pathTrim, CASE_DOCUMENT_SIGNED_URL_TTL_SEC);
+        if (cancelled) return true;
+        if (error || !data?.signedUrl) return false;
+        setSignedUrl(data.signedUrl);
+        setSignError(null);
+        return true;
+      };
+
       try {
+        // Preferir Storage local: no bloquear el visor si SGDE está lento o sin credenciales.
+        if (await tryStorage()) return;
+
         if (caseId && documentId) {
           const view = await sgdeDocumentViewUrl({ caseId, documentId });
           if (cancelled) return;
@@ -147,22 +162,14 @@ function PdfViewer({
           return;
         }
 
-        const { data, error } = await supabase.storage
-          .from(CASE_DOCUMENTS_BUCKET)
-          .createSignedUrl(pathTrim, CASE_DOCUMENT_SIGNED_URL_TTL_SEC);
-        if (cancelled) return;
-        if (error || !data?.signedUrl) {
-          setSignError(
-            error?.message ||
-              'No se pudo firmar la URL. Compruebe el bucket case-documents y storage_path.'
-          );
-          setSignedUrl(null);
-          return;
-        }
-        setSignedUrl(data.signedUrl);
-        setSignError(null);
+        setSignError(
+          'No se pudo firmar la URL. Compruebe el bucket case-documents y storage_path.'
+        );
+        setSignedUrl(null);
       } catch (e) {
         if (cancelled) return;
+        // Si SGDE falló pero hay path, reintentar Storage una vez más.
+        if (pathTrim && (await tryStorage())) return;
         setSignError(e instanceof Error ? e.message : String(e));
         setSignedUrl(null);
       } finally {

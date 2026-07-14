@@ -20,10 +20,21 @@ import { PRECEDENT_SEARCH_CONFIG } from './src/config/precedentSearch.ts';
 import { detectActaRepartoInPdfBuffer } from './pdf-acta-detect';
 import { createPrecedentsFileRouter } from './precedents-routes';
 import { SgdeClient, getDefaultSgdeBaseUrl } from './server/sgde-client';
-import { getParseSession, sweepParseSessions, touchParseSession } from './server/parse-email-sessions';
-import { parseJudicialEmailFromBuffer } from './server/parse-judicial-email';
+import {
+  appendParseSessionAttachments,
+  getParseSession,
+  markParseSessionLinkError,
+  sweepParseSessions,
+  touchParseSession,
+} from './server/parse-email-sessions';
+import {
+  fetchJudicialArchiveFromUrl,
+  parseJudicialEmailFromBuffer,
+  unwrapJudicialArchiveUrl,
+} from './server/parse-judicial-email';
 import {
   digestPdfAttachmentsForSegundaInstancia,
+  shouldDigestPdfsForSegundaInstancia,
   parseSegundaInstanciaFromEmail,
 } from './server/sgde-segunda-instancia-parse';
 import { registerOutlookRoutes } from './server/outlook-routes';
@@ -1265,6 +1276,105 @@ async function startServer() {
     res.send(row.buffer);
   });
 
+  /** Descarga el PDF/ZIP del portal (Demanda en línea) y lo agrega a la sesión (~30–90 s para ~50 MB). */
+  app.post('/api/parse-session/:sessionId/fetch-archive', async (req, res) => {
+    sweepParseSessions();
+    const authHdr = await requireAuthenticatedCaller(req, getSupabaseAdmin);
+    if (authHdr.ok === false) {
+      return res.status(authHdr.status).json({ error: authHdr.message });
+    }
+    const sessionId = String(req.params.sessionId || '');
+    const session = getParseSession(sessionId);
+    if (!session) {
+      return res.status(404).json({
+        error:
+          'Sesión de parseo expirada o inexistente (p. ej. reinicio del servidor). Vuelva a cargar el archivo .eml.',
+      });
+    }
+    if (session.ownerUserId && session.ownerUserId !== authHdr.userId) {
+      return res.status(403).json({ error: 'No autorizado para esta sesión de parseo.' });
+    }
+    const bodyUrl =
+      req.body && typeof req.body.url === 'string' ? String(req.body.url).trim() : '';
+    const rawUrl = bodyUrl || session.linkUrl || '';
+    const url = unwrapJudicialArchiveUrl(rawUrl);
+    if (!url) {
+      return res.status(400).json({ error: 'No hay URL de Archivo / Demanda en línea para descargar.' });
+    }
+    const alreadyFromLink = session.attachments.some((a) => a.isFromLink);
+    if (alreadyFromLink) {
+      const publicAttachments = session.attachments.map(({ buffer, ...meta }) => ({
+        ...meta,
+        ...(buffer.length > 0 && buffer.length <= 14 * 1024 * 1024
+          ? { content: buffer.toString('base64') }
+          : {}),
+      }));
+      return res.json({
+        ok: true,
+        alreadyFetched: true,
+        attachments: publicAttachments,
+        linkUrl: url,
+      });
+    }
+    try {
+      console.log('[parse-session/fetch-archive] Descargando', url.slice(0, 140));
+      const t0 = Date.now();
+      const beforeCount = session.attachments.length;
+      const rows = await fetchJudicialArchiveFromUrl(url);
+      if (!rows.length) {
+        markParseSessionLinkError(
+          sessionId,
+          'El portal no devolvió PDF/ZIP (HTML o vacío). Revise el enlace o agregue el archivo manualmente.',
+        );
+        return res.status(502).json({
+          error:
+            'No se pudo obtener el expediente del enlace. El portal no devolvió un PDF/ZIP descargable.',
+          linkUrl: url,
+        });
+      }
+      const merged = appendParseSessionAttachments(
+        sessionId,
+        rows.map(({ sessionIndex: _i, order: _o, ...rest }) => rest),
+      );
+      if (!merged) {
+        return res.status(404).json({ error: 'Sesión de parseo no encontrada al guardar adjuntos.' });
+      }
+      console.log(
+        `[parse-session/fetch-archive] OK ${rows.length} pieza(s) en ${Date.now() - t0}ms, ${(rows[0]?.size || 0)} bytes`
+      );
+      const MAX_INLINE = 14 * 1024 * 1024;
+      const publicAttachments = merged.map(({ buffer, ...meta }) => ({
+        ...meta,
+        ...(buffer.length > 0 && buffer.length <= MAX_INLINE
+          ? { content: buffer.toString('base64') }
+          : {}),
+      }));
+      const added = merged.slice(beforeCount).map((r) => ({
+        filename: r.filename,
+        size: r.size,
+        contentType: r.contentType,
+        sessionIndex: r.sessionIndex,
+        isFromLink: r.isFromLink,
+      }));
+      return res.json({
+        ok: true,
+        alreadyFetched: false,
+        attachments: publicAttachments,
+        added,
+        linkUrl: url,
+        elapsedMs: Date.now() - t0,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error('[parse-session/fetch-archive]', error);
+      markParseSessionLinkError(sessionId, msg);
+      return res.status(502).json({
+        error: `Error al descargar el enlace Archivo: ${msg}`,
+        linkUrl: url,
+      });
+    }
+  });
+
   // Handle EML/MSG upload and parsing
   app.post('/api/parse-email', upload.single('email'), async (req, res) => {
     console.log('Received request for /api/parse-email');
@@ -1287,22 +1397,10 @@ async function startServer() {
       const result = await parseJudicialEmailFromBuffer(multerReq.file.buffer, authHdr.userId);
       const text = typeof result.text === 'string' ? result.text : '';
       const html = typeof result.html === 'string' ? result.html : '';
-      let pdfDigest = '';
-      const session = getParseSession(result.parseSessionId);
-      if (session?.attachments?.length) {
-        try {
-          pdfDigest = await digestPdfAttachmentsForSegundaInstancia(session.attachments);
-        } catch (pdfDigErr) {
-          console.warn('digest PDF segunda instancia:', pdfDigErr);
-        }
-      }
+      const subject = String(result.subject || '');
       let segundaInstancia;
       try {
-        segundaInstancia = parseSegundaInstanciaFromEmail(
-          String(result.subject || ''),
-          `${text}\n${pdfDigest}`,
-          html
-        );
+        segundaInstancia = parseSegundaInstanciaFromEmail(subject, text, html);
       } catch (siErr) {
         console.error('segundaInstancia parse (no bloquea correo):', siErr);
         segundaInstancia = {
@@ -1316,6 +1414,30 @@ async function startServer() {
           appellant: null,
           originRuling: null,
         };
+      }
+      const session = getParseSession(result.parseSessionId);
+      if (
+        session?.attachments?.length &&
+        shouldDigestPdfsForSegundaInstancia(subject, text, html, segundaInstancia)
+      ) {
+        try {
+          const digestPromise = digestPdfAttachmentsForSegundaInstancia(session.attachments, {
+            maxPdfs: 3,
+          });
+          const timeoutPromise = new Promise<string>((resolve) => {
+            setTimeout(() => resolve(''), 12_000);
+          });
+          const pdfDigest = await Promise.race([digestPromise, timeoutPromise]);
+          if (pdfDigest.trim()) {
+            segundaInstancia = parseSegundaInstanciaFromEmail(
+              subject,
+              `${text}\n${pdfDigest}`,
+              html
+            );
+          }
+        } catch (pdfDigErr) {
+          console.warn('digest PDF segunda instancia:', pdfDigErr);
+        }
       }
       res.json({ ...result, segundaInstancia });
     } catch (error) {
@@ -1504,6 +1626,27 @@ async function startServer() {
         return res.status(400).json({ error: 'prompt y pdfBase64 son requeridos' });
       }
 
+      const { slicePdfBase64FirstPages, LEGAL_ANALYSIS_MAX_PAGES } = await import(
+        './server/pdf-first-pages'
+      );
+      let sliced;
+      try {
+        sliced = await slicePdfBase64FirstPages(String(pdfBase64), LEGAL_ANALYSIS_MAX_PAGES);
+      } catch (sliceErr) {
+        console.warn('legal-analysis: no se pudo recortar PDF, se envía completo:', sliceErr);
+        sliced = {
+          base64: String(pdfBase64).replace(/^data:application\/pdf;base64,/i, ''),
+          totalPages: 0,
+          usedPages: 0,
+          truncated: false,
+        };
+      }
+      if (sliced.truncated) {
+        console.log(
+          `[legal-analysis] PDF recortado a primeras ${sliced.usedPages}/${sliced.totalPages} páginas para caber en contexto IA`
+        );
+      }
+
       const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
       const openai = getOpenAiClient();
       const parteTutela = {
@@ -1533,6 +1676,11 @@ async function startServer() {
 Instrucciones obligatorias para los campos de texto:
 - "hechos": párrafo narrativo extenso (mínimo 900 caracteres si el documento lo permite), con cronología y contexto procesal; no menos de 10 frases; tercera persona; no transcribir.
 - "pretensiones": síntesis en tercera persona (4 a 6 frases); resume órdenes y plazos sin copiar el escrito ni usar primera persona ni comillas.
+${
+  sliced.truncated
+    ? `- IMPORTANTE: Solo se adjuntan las primeras ${sliced.usedPages} páginas de un PDF de ${sliced.totalPages}. Priorice cabecera, partes, tipo de proceso, hechos iniciales y pretensiones del libelo. No invente anexos posteriores.`
+    : ''
+}
 `;
       const result = await openai.responses.create({
         model,
@@ -1544,7 +1692,7 @@ Instrucciones obligatorias para los campos de texto:
               {
                 type: 'input_file',
                 filename: 'documento.pdf',
-                file_data: `data:application/pdf;base64,${pdfBase64}`
+                file_data: `data:application/pdf;base64,${sliced.base64}`
               }
             ]
           }
@@ -1560,7 +1708,12 @@ Instrucciones obligatorias para los campos de texto:
       });
 
       const content = result.output_text || '{}';
-      return res.json({ text: content });
+      return res.json({
+        text: content,
+        pdfPagesTotal: sliced.totalPages || null,
+        pdfPagesUsed: sliced.usedPages || null,
+        pdfTruncated: sliced.truncated,
+      });
     } catch (error: any) {
       console.error('OpenAI legal-analysis error:', error);
       const mapped = mapAiError(error);

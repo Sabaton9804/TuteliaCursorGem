@@ -1,0 +1,69 @@
+{
+  "source_file": "c:\\Users\\cmarroqh\\Downloads\\Formulario_20260714_152834.xls",
+  "exported_at": "2026-07-14",
+  "nota": "Vigente Tutelia tipificación: Civil-Oral (2); Tutelas (8); Impugnaciones (13); Consultas desacato (15). Incidentes desacato (12) = mismas 12 filas (incidente sobre tutela). No tipificar con Acciones constitucionales (7/14).",
+  "section_activa_civil": {
+    "sheet_index": 2,
+    "section_code": "civil_1a_oral",
+    "section_label": "Primera y única instancia Civil-Oral",
+    "case_types": ["civil_ordinario", "civil_ejecutivo", "civil_jurisdiccion_voluntaria", "civil_insolvencia", "civil_otros"]
+  },
+  "section_activa_tutelas": {
+    "sheet_index": 8,
+    "section_code": "movimiento_tutelas",
+    "section_label": "Movimiento de Tutelas",
+    "case_types": ["tutela_primera"],
+    "tipos": [
+      "SALUD",
+      "SEGURIDAD SOCIAL",
+      "VIDA",
+      "MÍNIMO VITAL",
+      "IGUALDAD",
+      "EDUCACIÓN",
+      "DEBIDO PROCESO",
+      "DERECHO DE PETICIÓN",
+      "DERECHO A LA INFORMACIÓN PÚBLICA",
+      "CONTRA PROVIDENCIAS JUDICIALES",
+      "MEDIO AMBIENTE",
+      "OTROS"
+    ]
+  },
+  "section_activa_impugnaciones": {
+    "sheet_index": 13,
+    "section_code": "impugnaciones",
+    "section_label": "Movimiento de Impugnaciones",
+    "case_types": ["tutela_segunda"],
+    "nota": "Mismas 12 filas TIPOS PROCESOS que hoja 8"
+  },
+  "section_activa_consultas_desacato": {
+    "sheet_index": 15,
+    "section_code": "consultas_desacato",
+    "section_label": "Consultas Incidentes de Desacato",
+    "case_types": ["consulta_desacato"],
+    "nota": "Mismas 12 filas TIPOS PROCESOS que hoja 8"
+  },
+  "section_incidentes_desacato": {
+    "sheet_index": 12,
+    "section_code": "incidentes_desacato",
+    "section_label": "Incidentes de Desacato",
+    "case_types": [],
+    "nota": "Incidente sobre tutela en el mismo despacho; tipificación = mismos 12 derechos. No es case_type de radicación independiente en Tutelia."
+  },
+  "section_legacy_no_usar_para_tipificar": [
+    {
+      "sheet_index": 1,
+      "section_code": "civil_1a_escrito",
+      "motivo": "Legislación anterior"
+    },
+    {
+      "sheet_index": 7,
+      "section_code": "acciones_const_1a",
+      "motivo": "No tipifica tutelas"
+    },
+    {
+      "sheet_index": 14,
+      "section_code": "acciones_const_2a",
+      "motivo": "Hábeas corpus / acciones const. 2ª; no es tutela_segunda"
+    }
+  ]
+}

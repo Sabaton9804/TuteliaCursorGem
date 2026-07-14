@@ -30,6 +30,16 @@ const JUDICIAL_VACATION_PERIODS: readonly { readonly from: string; readonly to: 
   { from: '2026-12-20', to: '2027-01-10' },
 ];
 
+/** Caché por día local: evita llamar date-holidays miles de veces al pintar listados. */
+const nonBusinessDayCache = new Map<string, boolean>();
+const easterCache = new Map<number, { startMs: number; endMs: number }>();
+
+export function startOfLocalDay(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
 function ymdLocal(d: Date): string {
   const x = startOfLocalDay(d);
   const y = x.getFullYear();
@@ -38,15 +48,12 @@ function ymdLocal(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function isJudicialVacation(d: Date): boolean {
-  const s = ymdLocal(d);
+function isJudicialVacationYmd(s: string): boolean {
   return JUDICIAL_VACATION_PERIODS.some(({ from, to }) => s >= from && s <= to);
 }
 
-/** 17 de diciembre — Día de la Rama (Rama Judicial), tratado como inhábil para el cómputo. */
-function isDiaDeLaRama(d: Date): boolean {
-  const x = startOfLocalDay(d);
-  return x.getMonth() === 11 && x.getDate() === 17;
+function isDiaDeLaRamaYmd(s: string): boolean {
+  return s.slice(5) === '12-17';
 }
 
 /** Domingo de Pascua (calendario gregoriano occidental). */
@@ -68,26 +75,26 @@ function easterSundayGregorian(year: number): Date {
   return new Date(year, month - 1, day);
 }
 
-/** Semana Santa completa: Domingo de Ramos (easter − 7) hasta Domingo de Pascua (easter), inclusive. */
-function isSemanaSantaCompleta(d: Date): boolean {
-  const y = startOfLocalDay(d).getFullYear();
-  const easter = startOfLocalDay(easterSundayGregorian(y));
+function semanaSantaBounds(year: number): { startMs: number; endMs: number } {
+  let hit = easterCache.get(year);
+  if (hit) return hit;
+  const easter = startOfLocalDay(easterSundayGregorian(year));
   const start = new Date(easter);
   start.setDate(start.getDate() - 7);
-  const t = startOfLocalDay(d).getTime();
-  return t >= start.getTime() && t <= easter.getTime();
+  hit = { startMs: start.getTime(), endMs: easter.getTime() };
+  easterCache.set(year, hit);
+  return hit;
+}
+
+function isSemanaSantaCompletaMs(t: number, year: number): boolean {
+  const { startMs, endMs } = semanaSantaBounds(year);
+  return t >= startMs && t <= endMs;
 }
 
 function isColombianPublicOrBankHoliday(d: Date): boolean {
   const hits = colombiaHolidays.isHoliday(startOfLocalDay(d));
   if (!hits) return false;
   return hits.some((h) => h.type === 'public' || h.type === 'bank');
-}
-
-export function startOfLocalDay(d: Date): Date {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
 }
 
 export function isWeekend(d: Date): boolean {
@@ -97,28 +104,52 @@ export function isWeekend(d: Date): boolean {
 
 /** Inhábil para cómputo de días hábiles (fin de semana, festivo CO, Semana Santa ampliada, 17-dic, vacancia). */
 export function isNonBusinessDayColombia(d: Date): boolean {
-  if (isWeekend(d)) return true;
-  if (isJudicialVacation(d)) return true;
-  if (isDiaDeLaRama(d)) return true;
-  if (isSemanaSantaCompleta(d)) return true;
-  if (isColombianPublicOrBankHoliday(d)) return true;
-  return false;
+  const day = startOfLocalDay(d);
+  const key = ymdLocal(day);
+  const cached = nonBusinessDayCache.get(key);
+  if (cached !== undefined) return cached;
+
+  let nonBusiness = false;
+  const dow = day.getDay();
+  if (dow === 0 || dow === 6) {
+    nonBusiness = true;
+  } else if (isJudicialVacationYmd(key) || isDiaDeLaRamaYmd(key)) {
+    nonBusiness = true;
+  } else if (isSemanaSantaCompletaMs(day.getTime(), day.getFullYear())) {
+    nonBusiness = true;
+  } else if (isColombianPublicOrBankHoliday(day)) {
+    nonBusiness = true;
+  }
+
+  nonBusinessDayCache.set(key, nonBusiness);
+  return nonBusiness;
 }
 
 export function isBusinessDayColombia(d: Date): boolean {
   return !isNonBusinessDayColombia(d);
 }
 
+/** Tope de recorrido (~5 años) — listados no deben recorrer décadas. */
+const MAX_INCLUSIVE_DAY_SPAN = 365 * 5;
+
 /** Cuenta días hábiles entre dos fechas (inclusive en ambos extremos). */
 export function inclusiveBusinessDaysBetween(from: Date, to: Date): number {
   const a = startOfLocalDay(from).getTime();
   const b = startOfLocalDay(to).getTime();
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
   if (a > b) return inclusiveBusinessDaysBetween(to, from);
+  const dayMs = 24 * 60 * 60 * 1000;
+  if ((b - a) / dayMs > MAX_INCLUSIVE_DAY_SPAN) {
+    console.warn('[business-days] rango excesivo; se omite cómputo inclusive');
+    return 0;
+  }
   let n = 0;
   const cur = new Date(a);
+  let guard = 0;
   while (cur.getTime() <= b) {
     if (isBusinessDayColombia(cur)) n += 1;
     cur.setDate(cur.getDate() + 1);
+    if (++guard > MAX_INCLUSIVE_DAY_SPAN) break;
   }
   return n;
 }
@@ -126,14 +157,18 @@ export function inclusiveBusinessDaysBetween(from: Date, to: Date): number {
 /**
  * Ventana de N días hábiles desde radicación (día de radicación = día 1).
  * Días restantes = (N + 1) − días hábiles transcurridos (inclusive radicación y hoy).
+ *
+ * Implementación: calcula fin de término y cuenta solo el tramo [hoy, fin]
+ * (O(plazo), no O(años desde radicación)). Evita congelar el UI con ~800 expedientes.
  */
 export function businessDaysRemainingInTermWindow(
   filingDate: Date,
   termBusinessDays: number,
   today = new Date(),
 ): number {
-  const used = inclusiveBusinessDaysBetween(filingDate, today);
-  return termBusinessDays + 1 - used;
+  if (!Number.isFinite(termBusinessDays) || termBusinessDays <= 0) return 0;
+  const end = businessDayTermEnd(filingDate, termBusinessDays);
+  return businessDaysRemainingWithStoredTermDeadline(filingDate, end, termBusinessDays, today);
 }
 
 /**
@@ -146,25 +181,19 @@ export function businessDaysRemainingInTenDayWindow(filingDate: Date, today = ne
 
 /**
  * Misma semántica que `businessDaysRemainingInTermWindow` cuando el fin del término ya está en BD.
- * Evita recorrer años entre radicación y hoy mientras el expediente sigue dentro del término.
+ * Cuenta solo desde hoy hasta el deadline (barato), no desde la radicación.
  */
 export function businessDaysRemainingWithStoredTermDeadline(
-  filingDate: Date,
+  _filingDate: Date,
   termEndDeadline: Date,
-  termBusinessDays: number,
+  _termBusinessDays: number,
   today = new Date(),
 ): number {
-  const f = startOfLocalDay(filingDate);
   const end = startOfLocalDay(termEndDeadline);
   const t = startOfLocalDay(today);
-  const dayAfterEnd = new Date(end);
-  dayAfterEnd.setDate(dayAfterEnd.getDate() + 1);
-
-  if (t.getTime() <= end.getTime()) {
-    const used = inclusiveBusinessDaysBetween(f, t);
-    return Math.max(0, termBusinessDays + 1 - used);
-  }
-  return 0;
+  if (!Number.isFinite(end.getTime()) || !Number.isFinite(t.getTime())) return 0;
+  if (t.getTime() > end.getTime()) return 0;
+  return inclusiveBusinessDaysBetween(t, end);
 }
 
 /**
@@ -180,8 +209,13 @@ export function businessDaysRemainingWithStoredDeadline(
 
 export function addBusinessDays(start: Date, businessDays: number): Date {
   const d = startOfLocalDay(start);
+  if (!Number.isFinite(d.getTime()) || !Number.isFinite(businessDays) || businessDays <= 0) {
+    return d;
+  }
   let added = 0;
-  while (added < businessDays) {
+  let guard = 0;
+  const maxSteps = Math.max(businessDays * 4, 1) + 40;
+  while (added < businessDays && guard++ < maxSteps) {
     d.setDate(d.getDate() + 1);
     if (isBusinessDayColombia(d)) added += 1;
   }
@@ -196,8 +230,13 @@ export function tenthBusinessDayDeadline(filingDate: Date): Date {
 /** Último día de un término de N días hábiles (fecha de inicio = día 1). */
 export function businessDayTermEnd(startDate: Date, termBusinessDays: number): Date {
   const d = startOfLocalDay(startDate);
+  if (!Number.isFinite(d.getTime()) || !Number.isFinite(termBusinessDays) || termBusinessDays <= 1) {
+    return d;
+  }
   let counted = 1;
-  while (counted < termBusinessDays) {
+  let guard = 0;
+  const maxSteps = Math.max(termBusinessDays * 4, 1) + 40;
+  while (counted < termBusinessDays && guard++ < maxSteps) {
     d.setDate(d.getDate() + 1);
     if (isBusinessDayColombia(d)) counted += 1;
   }

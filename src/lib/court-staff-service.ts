@@ -58,10 +58,31 @@ export function filterSustanciadoresFromStaff(staff: readonly ExpedienteAssignee
   return staff.filter((p) => p.courtRole === 'sustanciador');
 }
 
+/** Si el RPC aún no existe en el proyecto remoto, no reintentar en cada carga de pantalla. */
+let courtTeamMembersRpcMissing = false;
+
 export async function fetchCourtTeamProfiles(courtId: string): Promise<UserProfile[]> {
-  const { data: rpcRows, error: rpcErr } = await supabase.rpc('court_team_members');
-  if (!rpcErr && Array.isArray(rpcRows) && rpcRows.length > 0) {
-    return (rpcRows as Record<string, unknown>[]).map((r) => rowToUserProfile(r));
+  if (!courtTeamMembersRpcMissing) {
+    const { data: rpcRows, error: rpcErr } = await supabase.rpc('court_team_members');
+    if (!rpcErr && Array.isArray(rpcRows) && rpcRows.length > 0) {
+      return (rpcRows as Record<string, unknown>[]).map((r) => rowToUserProfile(r));
+    }
+    if (rpcErr) {
+      const msg = rpcErr.message || '';
+      const code = (rpcErr as { code?: string }).code || '';
+      // PGRST202 / 404: función ausente en el schema cache de PostgREST
+      if (
+        code === 'PGRST202' ||
+        /404|could not find.*function|does not exist/i.test(msg)
+      ) {
+        courtTeamMembersRpcMissing = true;
+        console.warn(
+          '[court-staff-service] RPC court_team_members no disponible; usando profiles.court_id',
+        );
+      } else {
+        console.warn('[court-staff-service] RPC court_team_members:', msg);
+      }
+    }
   }
 
   const { data, error } = await supabase

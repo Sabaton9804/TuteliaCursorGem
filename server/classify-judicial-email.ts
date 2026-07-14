@@ -114,6 +114,7 @@ export function extractReferencesHeuristic(subject: string, bodyText: string): s
     /\b\d{23}\b/g,
     /\b20\d{2}[-/.]\d{2,8}(?:[-/.]\d{2,4})?\b/gi,
     /\btutela\s+20\d{2}[-\s]?\d{2,6}\b/gi,
+    /\bdemanda\s+en\s+l[ií]nea\s*(?:no\.?|n[úu]m\.?|nro\.?)?\s*[:#]?\s*\d{5,12}\b/gi,
     /\brad\.?\s*20\d{2}[-\s]?\d{2,6}/gi,
     /(?:no\.?|n[úu]m\.?|nro\.?)\s*(?:de\s+)?proceso\s*[:#]?\s*20\d{2}[-\s/.\d]*/gi,
     /\bproceso\s+20\d{2}[-\s]?\d{2,6}/gi,
@@ -237,15 +238,20 @@ function needsPdfPass(
 }
 
 function buildClassifyPrompt(subject: string, bodySlice: string, attachmentNames: string[]): string {
-  return `Eres asistente de un juzgado de tutela en Colombia. Clasifica el correo judicial entrante.
+  return `Eres asistente de un Juzgado Civil del Circuito en Colombia (tramita tutelas y procesos civiles orales CGP). Clasifica el correo judicial entrante.
 
 Ejemplos de tipo:
-- respuesta_tramite: "RV: RESPUESTA", "adjunta respuesta al auto", entidad (EPS, CNSC, etc.) contestando un requerimiento o trámite.
-- impugnacion: "impugna el fallo", "recurso de reposición", "inconforme con la decisión".
-- reparto_nuevo: acta de reparto, demanda inicial, reparto judicial, tutela nueva.
+- respuesta_tramite: "RV: RESPUESTA", "adjunta respuesta al auto", entidad (EPS, banco, parte, apoderado) contestando un requerimiento o trámite.
+- impugnacion: "impugna el fallo", "recurso de reposición/apelación", "inconforme con la decisión" (tutela o civil).
+- reparto_nuevo: acta de reparto, demanda inicial civil o tutela, "Generación de la Demanda en línea", remisión Cendoj/oficina de apoyo, proceso nuevo sin radicado del despacho aún.
 - otro: administrativo, spam, sin trámite judicial claro.
 
-Extrae TODAS las referencias numéricas visibles: radicado nacional (23 dígitos), referencias internas del despacho (ej. 2026-00255, 2026-255, RAD. 2026-00255-00) y menciones en asunto tipo "tutela 2026-255".
+Partes:
+- accionante = demandante / accionante / actor (según el correo).
+- accionado = demandado / accionado / convocado.
+No asumas que todo es tutela: si el correo habla de demanda civil, ejecutivo, verbal, pertenencia, etc., clasifícalo igual (reparto_nuevo o respuesta_tramite según el caso).
+
+Extrae TODAS las referencias numéricas visibles: radicado nacional (23 dígitos), referencias internas del despacho (ej. 2026-00255, 2026-255, RAD. 2026-00255-00), números de Demanda en línea / Cendoj, y menciones en asunto tipo "tutela 2026-255" o "proceso 2026-255".
 No exijas 23 dígitos: con año + consecutivo interno basta para radicado_referencia.
 En radicado_referencia pon la referencia principal más relevante para vincular expediente, o cadena vacía si no hay.
 

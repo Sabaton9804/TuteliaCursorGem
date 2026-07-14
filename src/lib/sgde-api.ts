@@ -266,30 +266,51 @@ export type SgdeDocumentViewUrlResult = {
 export async function sgdeDocumentViewUrl(opts: {
   caseId: string;
   documentId: string;
+  /** Timeout de red hacia Tutelia→SGDE (ms). */
+  timeoutMs?: number;
 }): Promise<SgdeDocumentViewUrlResult> {
-  const res = await fetch('/api/sgde/document-view-url', {
-    method: 'POST',
-    headers: await authHeaders(),
-    body: JSON.stringify({
-      caseId: opts.caseId,
-      documentId: opts.documentId,
-    }),
-  });
-  const body = (await res.json().catch(() => ({}))) as SgdeDocumentViewUrlResult & {
-    error?: string;
-    code?: string;
-  };
-  if (!res.ok) {
-    throw new Error(body.error || `No se pudo abrir el PDF (${res.status})`);
+  const timeoutMs = opts.timeoutMs ?? 45_000;
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch('/api/sgde/document-view-url', {
+      method: 'POST',
+      headers: await authHeaders(),
+      body: JSON.stringify({
+        caseId: opts.caseId,
+        documentId: opts.documentId,
+      }),
+      signal: controller.signal,
+    });
+    const body = (await res.json().catch(() => ({}))) as SgdeDocumentViewUrlResult & {
+      error?: string;
+      code?: string;
+    };
+    if (!res.ok) {
+      const msg =
+        body.code === 'USER_NOT_CONFIGURED'
+          ? 'Configure su usuario y contraseña SGDE en Ajustes, o abra una pieza ya en Storage.'
+          : body.error || `No se pudo abrir el PDF (${res.status})`;
+      throw new Error(msg);
+    }
+    if (!body.signedUrl) {
+      throw new Error('Respuesta sin URL firmada.');
+    }
+    return {
+      signedUrl: body.signedUrl,
+      storagePath: body.storagePath,
+      repaired: body.repaired === true,
+    };
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error(
+        'Tiempo de espera al descargar desde SGDE (45 s). Revise credenciales en Ajustes o que el PDF esté en Storage.',
+      );
+    }
+    throw e;
+  } finally {
+    window.clearTimeout(timer);
   }
-  if (!body.signedUrl) {
-    throw new Error('Respuesta sin URL firmada.');
-  }
-  return {
-    signedUrl: body.signedUrl,
-    storagePath: body.storagePath,
-    repaired: body.repaired === true,
-  };
 }
 
 export async function sgdeCreateExpediente(opts: {

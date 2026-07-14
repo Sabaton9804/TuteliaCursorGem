@@ -115,8 +115,28 @@ export async function fetchSierjuClassesForProcessDefinition(
   }
 
   options.sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label, 'es'));
+
+  // Civil-Escrito = legislación anterior: si hay filas Civil-Oral, no exponer Escrito en UI.
+  const hasCivilOral = options.some((o) => o.sectionCode === 'civil_1a_oral');
+  const filtered = hasCivilOral
+    ? options.filter((o) => o.sectionCode !== 'civil_1a_escrito')
+    : options;
+
   cachedKey = cacheKey;
-  cachedClasses = options;
+  cachedClasses = filtered;
+  return filtered;
+}
+
+function filterClassesForCaseType(caseType: CaseType, options: SierjuClassOption[]): SierjuClassOption[] {
+  const prefer = (section: string) => {
+    const hit = options.filter((o) => o.sectionCode === section);
+    return hit.length ? hit : options.filter((o) => !o.sectionCode.startsWith('acciones_const'));
+  };
+
+  // Tutela 1ª → hoja 8; tutela 2ª / impugnación → hoja 13; consulta desacato → hoja 15.
+  if (caseType === 'tutela_primera') return prefer('movimiento_tutelas');
+  if (caseType === 'tutela_segunda') return prefer('impugnaciones');
+  if (caseType === 'consulta_desacato') return prefer('consultas_desacato');
   return options;
 }
 
@@ -126,7 +146,8 @@ export async function fetchSierjuClassesForCaseType(
 ): Promise<SierjuClassOption[]> {
   const processDefinitionId = await resolveProcessDefinitionId(caseType, courtId);
   if (!processDefinitionId) return [];
-  return fetchSierjuClassesForProcessDefinition(courtId, processDefinitionId);
+  const rows = await fetchSierjuClassesForProcessDefinition(courtId, processDefinitionId);
+  return filterClassesForCaseType(caseType, rows);
 }
 
 export function findSierjuClassByDerecho(

@@ -18,6 +18,202 @@ export function judicialAttachmentPriority(name: string): number {
   return 5;
 }
 
+/** Desenvuelve SafeLinks/AMP y deja la URL real de Demanda en línea / archivo. */
+export function unwrapJudicialArchiveUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  let url = String(raw).replace(/&amp;/g, '&').trim();
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    if (u.hostname.toLowerCase().includes('safelinks.protection.outlook.com')) {
+      const inner = u.searchParams.get('url');
+      if (inner) url = inner.trim();
+    }
+  } catch {
+    /* conservar url parcialmente limpia */
+  }
+  return url || null;
+}
+
+type ProcAtt = {
+  filename: string;
+  originalName?: string;
+  size?: number;
+  contentType?: string;
+  content?: string;
+  /** Preferir buffer para PDFs grandes (Demanda en línea ~50–100 MB). */
+  buffer?: Buffer;
+  isFromLink?: boolean;
+  tempOrder?: number;
+  order?: number;
+};
+
+const ARCHIVE_LINK_TIMEOUT_MS = 120_000;
+const ARCHIVE_LINK_MAX_BYTES = 120 * 1024 * 1024;
+
+async function attachmentsFromZipBuffer(
+  fileBuffer: Buffer,
+  opts: { isFromLink: boolean; nextOrder: () => number }
+): Promise<ProcAtt[]> {
+  const zip = new JSZip();
+  await zip.loadAsync(fileBuffer);
+  const filePromises: Promise<ProcAtt>[] = [];
+  zip.forEach((relativePath, file) => {
+    if (file.dir) return;
+    filePromises.push(
+      (async () => {
+        const filename = relativePath;
+        const lowerName = filename.toLowerCase();
+        let innerContentType = 'application/octet-stream';
+        if (lowerName.endsWith('.pdf')) innerContentType = 'application/pdf';
+        else if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) innerContentType = 'image/jpeg';
+        else if (lowerName.endsWith('.png')) innerContentType = 'image/png';
+
+        let baseName = filename;
+        if (lowerName.includes('demanda')) baseName = 'EscritoDemanda';
+        else if (lowerName.includes('prueba') || lowerName.includes('anexo')) baseName = 'DocumentosPruebasAnexos';
+        else if (lowerName.includes('poder')) baseName = 'Poder';
+        else if (filenameSuggestsActaReparto(lowerName)) baseName = 'ActaReparto';
+
+        let originalNameOut = filename;
+        let contentB64: string;
+        if (innerContentType === 'application/pdf') {
+          const pdfBuf = Buffer.from(await file.async('nodebuffer'));
+          if (baseName === filename && (await detectActaRepartoInPdfBuffer(pdfBuf))) {
+            baseName = 'ActaReparto';
+            originalNameOut = ACTA_REPARTO_DISPLAY_NAME;
+          }
+          contentB64 = pdfBuf.toString('base64');
+        } else {
+          contentB64 = await file.async('base64');
+        }
+
+        return {
+          filename: baseName,
+          originalName: baseName === 'ActaReparto' ? ACTA_REPARTO_DISPLAY_NAME : originalNameOut,
+          size: (file as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize || 0,
+          contentType: innerContentType,
+          content: contentB64,
+          isFromLink: opts.isFromLink,
+          tempOrder: opts.nextOrder(),
+        };
+      })()
+    );
+  });
+  return Promise.all(filePromises);
+}
+
+async function downloadArchiveLinkAttachments(
+  downloadUrl: string,
+  nextOrder: () => number
+): Promise<ProcAtt[]> {
+  const response = await axios.get(downloadUrl, {
+    responseType: 'arraybuffer',
+    timeout: ARCHIVE_LINK_TIMEOUT_MS,
+    maxRedirects: 15,
+    maxContentLength: ARCHIVE_LINK_MAX_BYTES,
+    maxBodyLength: ARCHIVE_LINK_MAX_BYTES,
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      Accept: 'application/pdf,application/zip,*/*;q=0.8',
+    },
+    validateStatus: (status) => status < 500,
+  });
+
+  if (response.status >= 400) return [];
+
+  const fileBuffer = Buffer.from(response.data);
+  let contentType = String(response.headers['content-type'] || 'application/octet-stream')
+    .split(';')[0]
+    .trim();
+
+  const isPdfMagic =
+    fileBuffer.length >= 5 &&
+    fileBuffer[0] === 0x25 &&
+    fileBuffer[1] === 0x50 &&
+    fileBuffer[2] === 0x44 &&
+    fileBuffer[3] === 0x46 &&
+    fileBuffer[4] === 0x2d;
+
+  const isZip =
+    contentType === 'application/zip' ||
+    downloadUrl.toLowerCase().split('?')[0].endsWith('.zip') ||
+    (fileBuffer.length > 4 && fileBuffer[0] === 0x50 && fileBuffer[1] === 0x4b);
+
+  if (isZip) {
+    return attachmentsFromZipBuffer(fileBuffer, { isFromLink: true, nextOrder });
+  }
+
+  let baseName = 'DocumentosPruebasAnexos';
+  const lowerUrl = downloadUrl.toLowerCase();
+  if (filenameSuggestsActaReparto(lowerUrl)) baseName = 'ActaReparto';
+  else if (lowerUrl.includes('demanda')) baseName = 'EscritoDemanda';
+
+  if (!isPdfMagic) {
+    const probe = fileBuffer
+      .subarray(0, Math.min(800, fileBuffer.length))
+      .toString('utf8')
+      .trimStart()
+      .toLowerCase();
+    if (probe.startsWith('<!doctype') || probe.startsWith('<html') || probe.startsWith('<?xml')) {
+      // Portal devolvió HTML (sesión/expirado) — no es el expediente.
+      return [];
+    } else if (contentType === 'application/pdf' || contentType === 'application/octet-stream') {
+      contentType = 'application/octet-stream';
+    }
+  } else {
+    contentType = 'application/pdf';
+  }
+
+  let originalLinkName = baseName === 'ActaReparto' ? ACTA_REPARTO_DISPLAY_NAME : 'archivo_descargado';
+  // No escanear PDF enormes del portal (p. ej. 50+ MB): detectActa es costoso y suele ser la demanda completa.
+  if (
+    isPdfMagic &&
+    baseName !== 'ActaReparto' &&
+    fileBuffer.length < 8 * 1024 * 1024 &&
+    (await detectActaRepartoInPdfBuffer(fileBuffer))
+  ) {
+    baseName = 'ActaReparto';
+    originalLinkName = ACTA_REPARTO_DISPLAY_NAME;
+  }
+
+  return [
+    {
+      filename: baseName,
+      originalName: originalLinkName,
+      size: fileBuffer.length,
+      contentType,
+      buffer: fileBuffer,
+      isFromLink: true,
+      tempOrder: nextOrder(),
+    },
+  ];
+}
+
+/** Descarga el archivo del portal (Demanda en línea etc.) y lo deja listo para sesión de parseo. */
+export async function fetchJudicialArchiveFromUrl(downloadUrl: string): Promise<ParseSessionRow[]> {
+  const url = unwrapJudicialArchiveUrl(downloadUrl);
+  if (!url) return [];
+  let order = 0;
+  const atts = await downloadArchiveLinkAttachments(url, () => order++);
+  return atts.map((att, idx) => {
+    const buf =
+      att.buffer ||
+      (att.content ? Buffer.from(String(att.content), 'base64') : Buffer.alloc(0));
+    return {
+      sessionIndex: idx,
+      filename: String(att.filename),
+      originalName: String(att.originalName || att.filename),
+      contentType: String(att.contentType || 'application/octet-stream'),
+      size: typeof att.size === 'number' ? att.size : buf.length,
+      isFromLink: true,
+      order: idx,
+      buffer: buf,
+    };
+  });
+}
+
 export type ParsedJudicialEmailResponse = {
   subject: string | undefined;
   from: string | undefined;
@@ -29,6 +225,7 @@ export type ParsedJudicialEmailResponse = {
   parseSessionId: string;
   linkFound: boolean;
   linkUrl: string | null;
+  linkPending: boolean;
 };
 
 export async function parseJudicialEmailFromBuffer(
@@ -37,18 +234,9 @@ export async function parseJudicialEmailFromBuffer(
 ): Promise<ParsedJudicialEmailResponse> {
   const parsed = await simpleParser(buffer);
 
-  type ProcAtt = {
-    filename: string;
-    originalName?: string;
-    size?: number;
-    contentType?: string;
-    content?: string;
-    isFromLink?: boolean;
-    tempOrder?: number;
-    order?: number;
-  };
   let processedAttachments: ProcAtt[] = [];
   let globalOrderIndex = 0;
+  const nextOrder = () => globalOrderIndex++;
   const nameCounters: Record<string, number> = {};
 
   const getUniqueName = (baseName: string) => {
@@ -62,142 +250,20 @@ export async function parseJudicialEmailFromBuffer(
     return finalName;
   };
 
-  const getPriority = judicialAttachmentPriority;
-
   const htmlBody = parsed.html || '';
   const textBody = parsed.text || '';
 
   let linkMatch = htmlBody.match(/<a\s+[^>]*?href=(["'])(.*?)\1[^>]*?>\s*(?:Descargar\s+)?Archivo\s*<\/a>/i);
-  let downloadUrl: string | null = linkMatch ? linkMatch[2] : null;
+  let rawDownloadUrl: string | null = linkMatch ? linkMatch[2] : null;
 
-  if (!downloadUrl) {
+  if (!rawDownloadUrl) {
     const textMatch = textBody.match(/Archivo:\s*(https?:\/\/[^\s]+)/i);
-    if (textMatch) downloadUrl = textMatch[1];
+    if (textMatch) rawDownloadUrl = textMatch[1];
   }
+  const downloadUrl = unwrapJudicialArchiveUrl(rawDownloadUrl);
+  const linkFound = Boolean(downloadUrl);
 
-  let linkFound = false;
-  if (downloadUrl) {
-    linkFound = true;
-    try {
-      const response = await axios.get(downloadUrl, {
-        responseType: 'arraybuffer',
-        timeout: 60000,
-        maxRedirects: 15,
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-          Accept: 'application/pdf,application/zip,*/*;q=0.8',
-        },
-        validateStatus: (status) => status < 500,
-      });
-
-      if (response.status < 400) {
-        const fileBuffer = Buffer.from(response.data);
-        let contentType = String(response.headers['content-type'] || 'application/octet-stream').split(';')[0].trim();
-
-        const isPdfMagic =
-          fileBuffer.length >= 5 &&
-          fileBuffer[0] === 0x25 &&
-          fileBuffer[1] === 0x50 &&
-          fileBuffer[2] === 0x44 &&
-          fileBuffer[3] === 0x46 &&
-          fileBuffer[4] === 0x2d;
-
-        const isZip =
-          contentType === 'application/zip' ||
-          downloadUrl.toLowerCase().split('?')[0].endsWith('.zip') ||
-          (fileBuffer.length > 4 && fileBuffer[0] === 0x50 && fileBuffer[1] === 0x4b);
-
-        if (isZip) {
-          const zip = new JSZip();
-          await zip.loadAsync(fileBuffer);
-          const filePromises: Promise<ProcAtt>[] = [];
-          zip.forEach((relativePath, file) => {
-            if (file.dir) return;
-            filePromises.push(
-              (async () => {
-                const filename = relativePath;
-                const lowerName = filename.toLowerCase();
-                let innerContentType = 'application/octet-stream';
-                if (lowerName.endsWith('.pdf')) innerContentType = 'application/pdf';
-                else if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) innerContentType = 'image/jpeg';
-                else if (lowerName.endsWith('.png')) innerContentType = 'image/png';
-
-                let baseName = filename;
-                if (lowerName.includes('demanda')) baseName = 'EscritoDemanda';
-                else if (lowerName.includes('prueba') || lowerName.includes('anexo')) baseName = 'DocumentosPruebasAnexos';
-                else if (lowerName.includes('poder')) baseName = 'Poder';
-                else if (filenameSuggestsActaReparto(lowerName)) baseName = 'ActaReparto';
-
-                let originalNameOut = filename;
-                let contentB64: string;
-                if (innerContentType === 'application/pdf') {
-                  const pdfBuf = Buffer.from(await file.async('nodebuffer'));
-                  if (baseName === filename && (await detectActaRepartoInPdfBuffer(pdfBuf))) {
-                    baseName = 'ActaReparto';
-                    originalNameOut = ACTA_REPARTO_DISPLAY_NAME;
-                  }
-                  contentB64 = pdfBuf.toString('base64');
-                } else {
-                  contentB64 = await file.async('base64');
-                }
-
-                return {
-                  filename: baseName,
-                  originalName: baseName === 'ActaReparto' ? ACTA_REPARTO_DISPLAY_NAME : originalNameOut,
-                  size: (file as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize || 0,
-                  contentType: innerContentType,
-                  content: contentB64,
-                  isFromLink: true,
-                  tempOrder: globalOrderIndex++,
-                };
-              })()
-            );
-          });
-          processedAttachments = [...processedAttachments, ...(await Promise.all(filePromises))];
-        } else {
-          let baseName = 'DocumentosPruebasAnexos';
-          const lowerUrl = downloadUrl.toLowerCase();
-          if (filenameSuggestsActaReparto(lowerUrl)) baseName = 'ActaReparto';
-          else if (lowerUrl.includes('demanda')) baseName = 'EscritoDemanda';
-
-          if (!isZip && !isPdfMagic) {
-            const probe = fileBuffer
-              .subarray(0, Math.min(800, fileBuffer.length))
-              .toString('utf8')
-              .trimStart()
-              .toLowerCase();
-            if (probe.startsWith('<!doctype') || probe.startsWith('<html') || probe.startsWith('<?xml')) {
-              contentType = 'text/html';
-            } else if (contentType === 'application/pdf' || contentType === 'application/octet-stream') {
-              contentType = 'application/octet-stream';
-            }
-          } else if (isPdfMagic) {
-            contentType = 'application/pdf';
-          }
-
-          let originalLinkName = baseName === 'ActaReparto' ? ACTA_REPARTO_DISPLAY_NAME : 'archivo_descargado';
-          if (isPdfMagic && baseName !== 'ActaReparto' && (await detectActaRepartoInPdfBuffer(fileBuffer))) {
-            baseName = 'ActaReparto';
-            originalLinkName = ACTA_REPARTO_DISPLAY_NAME;
-          }
-
-          processedAttachments.push({
-            filename: baseName,
-            originalName: originalLinkName,
-            size: fileBuffer.length,
-            contentType,
-            content: fileBuffer.toString('base64'),
-            isFromLink: true,
-            tempOrder: globalOrderIndex++,
-          });
-        }
-      }
-    } catch (downloadError) {
-      console.error('Error downloading file from Archivo link:', downloadError);
-    }
-  }
-
+  // 1) Primero MIME del .eml (acta SEC…, DEM…): no depender del enlace SafeLinks.
   const validAttachments = (parsed.attachments || []).filter((att) => !att.contentType?.startsWith('image/'));
 
   for (const att of validAttachments) {
@@ -206,49 +272,11 @@ export async function parseJudicialEmailFromBuffer(
     if (lowerOrig.endsWith('.pdf')) contentType = 'application/pdf';
 
     if (contentType === 'application/zip' || att.filename?.endsWith('.zip')) {
-      const zip = new JSZip();
-      await zip.loadAsync(att.content);
-      const filePromises: Promise<ProcAtt>[] = [];
-      zip.forEach((relativePath, file) => {
-        if (file.dir) return;
-        filePromises.push(
-          (async () => {
-            const filename = relativePath;
-            const lowerName = filename.toLowerCase();
-            let innerContentType = 'application/octet-stream';
-            if (lowerName.endsWith('.pdf')) innerContentType = 'application/pdf';
-
-            let baseName = filename;
-            if (lowerName.includes('demanda')) baseName = 'EscritoDemanda';
-            else if (lowerName.includes('prueba') || lowerName.includes('anexo')) baseName = 'DocumentosPruebasAnexos';
-            else if (lowerName.includes('poder')) baseName = 'Poder';
-            else if (filenameSuggestsActaReparto(lowerName)) baseName = 'ActaReparto';
-
-            let originalNameZip = filename;
-            let contentB64Zip: string;
-            if (innerContentType === 'application/pdf') {
-              const pdfBuf = Buffer.from(await file.async('nodebuffer'));
-              if (baseName === filename && (await detectActaRepartoInPdfBuffer(pdfBuf))) {
-                baseName = 'ActaReparto';
-                originalNameZip = ACTA_REPARTO_DISPLAY_NAME;
-              }
-              contentB64Zip = pdfBuf.toString('base64');
-            } else {
-              contentB64Zip = await file.async('base64');
-            }
-
-            return {
-              filename: baseName,
-              originalName: baseName === 'ActaReparto' ? ACTA_REPARTO_DISPLAY_NAME : originalNameZip,
-              size: (file as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize || 0,
-              contentType: innerContentType,
-              content: contentB64Zip,
-              tempOrder: globalOrderIndex++,
-            };
-          })()
-        );
-      });
-      processedAttachments = [...processedAttachments, ...(await Promise.all(filePromises))];
+      const zipAtts = await attachmentsFromZipBuffer(
+        Buffer.isBuffer(att.content) ? att.content : Buffer.from(att.content || []),
+        { isFromLink: false, nextOrder }
+      );
+      processedAttachments = [...processedAttachments, ...zipAtts];
     } else {
       let baseName = att.filename || 'Documento';
       let originalNameOut = att.filename || 'Documento';
@@ -272,14 +300,17 @@ export async function parseJudicialEmailFromBuffer(
         size: att.size,
         contentType,
         content: att.content ? att.content.toString('base64') : '',
-        tempOrder: globalOrderIndex++,
+        tempOrder: nextOrder(),
       });
     }
   }
 
+  // El enlace «Archivo» (PDF/ZIP Demanda en línea, a menudo 30–60+ MB y ~30 s) se descarga
+  // en POST /api/parse-session/:id/fetch-archive para no dejar «Procesando…» eterno.
+
   processedAttachments.sort((a, b) => {
-    const pA = getPriority(String(a.filename || ''));
-    const pB = getPriority(String(b.filename || ''));
+    const pA = judicialAttachmentPriority(String(a.filename || ''));
+    const pB = judicialAttachmentPriority(String(b.filename || ''));
     if (pA !== pB) return pA - pB;
     return Number(a.tempOrder || 0) - Number(b.tempOrder || 0);
   });
@@ -290,7 +321,9 @@ export async function parseJudicialEmailFromBuffer(
   });
 
   const sessionAttachments: ParseSessionRow[] = finalProcessed.map((att, idx) => {
-    const buf = Buffer.from(String(att.content || ''), 'base64');
+    const buf =
+      att.buffer ||
+      (att.content ? Buffer.from(String(att.content), 'base64') : Buffer.alloc(0));
     return {
       sessionIndex: idx,
       filename: String(att.filename),
@@ -303,7 +336,9 @@ export async function parseJudicialEmailFromBuffer(
     };
   });
 
-  const parseSessionId = createParseSession(sessionAttachments, ownerUserId);
+  const parseSessionId = createParseSession(sessionAttachments, ownerUserId, {
+    linkUrl: downloadUrl,
+  });
   /** Límite por adjunto en JSON (el cliente usa esto para el visor sin depender solo de la sesión en RAM). */
   const MAX_INLINE_ATTACHMENT_BYTES = 14 * 1024 * 1024;
   const publicAttachments = sessionAttachments.map(({ buffer, ...meta }) => ({
@@ -328,5 +363,7 @@ export async function parseJudicialEmailFromBuffer(
     parseSessionId,
     linkFound,
     linkUrl: downloadUrl,
+    /** El cliente debe llamar a fetch-archive si es true. */
+    linkPending: Boolean(downloadUrl),
   };
 }
