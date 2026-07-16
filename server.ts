@@ -68,6 +68,7 @@ import {
 import { createOpenAiTlsInsecureFetch } from './server/openai-insecure-fetch.js';
 import { analyzeCaseDocumentPiece } from './server/analyze-piece-service.js';
 import { generateCaseSynthesis } from './server/synthesize-case-service.js';
+import { runLegalAnalysisWithOpenAi } from './server/legal-analysis-service.js';
 import { reviewJudicialText } from './server/ai-review-text-service.js';
 import {
   inferLegalSpecialtyFromRadicado,
@@ -1621,101 +1622,73 @@ async function startServer() {
       if (authHdr.ok === false) {
         return res.status(authHdr.status).json({ error: authHdr.message });
       }
-      const { prompt, pdfBase64 } = req.body || {};
-      if (!prompt || !pdfBase64) {
-        return res.status(400).json({ error: 'prompt y pdfBase64 son requeridos' });
+      const body = req.body || {};
+      // Compat: rechazar prompt inyectado desde cliente (prompt vive en servidor).
+      if (body.prompt != null && String(body.prompt).trim()) {
+        console.warn('[legal-analysis] se ignoró prompt enviado por el cliente');
+      }
+      const caseType = String(body.caseType || '').trim();
+      const pdfBase64Raw = body.pdfBase64 != null ? String(body.pdfBase64) : '';
+      const pdfText = body.pdfText != null ? String(body.pdfText) : '';
+      if (!caseType) {
+        return res.status(400).json({ error: 'caseType es requerido (civil|tutela|impugnacion|consulta)' });
+      }
+      if (!pdfBase64Raw.trim() && !pdfText.trim()) {
+        return res.status(400).json({ error: 'pdfBase64 o pdfText es requerido' });
       }
 
       const { slicePdfBase64FirstPages, LEGAL_ANALYSIS_MAX_PAGES } = await import(
         './server/pdf-first-pages'
       );
-      let sliced;
-      try {
-        sliced = await slicePdfBase64FirstPages(String(pdfBase64), LEGAL_ANALYSIS_MAX_PAGES);
-      } catch (sliceErr) {
-        console.warn('legal-analysis: no se pudo recortar PDF, se envía completo:', sliceErr);
-        sliced = {
-          base64: String(pdfBase64).replace(/^data:application\/pdf;base64,/i, ''),
-          totalPages: 0,
-          usedPages: 0,
-          truncated: false,
-        };
-      }
-      if (sliced.truncated) {
-        console.log(
-          `[legal-analysis] PDF recortado a primeras ${sliced.usedPages}/${sliced.totalPages} páginas para caber en contexto IA`
-        );
-      }
-
-      const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
-      const openai = getOpenAiClient();
-      const parteTutela = {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          nombre: { type: 'string' },
-          identificacion: { type: 'string' },
-          email: { type: 'string' },
-        },
-        required: ['nombre', 'identificacion', 'email'],
-      } as const;
-      const schema = {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          accionantes: { type: 'array', items: parteTutela, minItems: 1 },
-          accionados: { type: 'array', items: parteTutela, minItems: 1 },
-          derechoTutelado: { type: 'string' },
-          hechos: { type: 'string' },
-          pretensiones: { type: 'string' },
-        },
-        required: ['accionantes', 'accionados', 'derechoTutelado', 'hechos', 'pretensiones'],
+      let sliced = {
+        base64: '',
+        totalPages: 0,
+        usedPages: 0,
+        truncated: false,
       };
-
-      const lengthHint = `
-Instrucciones obligatorias para los campos de texto:
-- "hechos": párrafo narrativo extenso (mínimo 900 caracteres si el documento lo permite), con cronología y contexto procesal; no menos de 10 frases; tercera persona; no transcribir.
-- "pretensiones": síntesis en tercera persona (4 a 6 frases); resume órdenes y plazos sin copiar el escrito ni usar primera persona ni comillas.
-${
-  sliced.truncated
-    ? `- IMPORTANTE: Solo se adjuntan las primeras ${sliced.usedPages} páginas de un PDF de ${sliced.totalPages}. Priorice cabecera, partes, tipo de proceso, hechos iniciales y pretensiones del libelo. No invente anexos posteriores.`
-    : ''
-}
-`;
-      const result = await openai.responses.create({
-        model,
-        input: [
-          {
-            role: 'user',
-            content: [
-              { type: 'input_text', text: `${String(prompt).trim()}\n${lengthHint}` },
-              {
-                type: 'input_file',
-                filename: 'documento.pdf',
-                file_data: `data:application/pdf;base64,${sliced.base64}`
-              }
-            ]
-          }
-        ],
-        text: {
-          format: {
-            type: 'json_schema',
-            name: 'analisis_tutela',
-            schema,
-            strict: true
-          }
+      if (pdfBase64Raw.trim()) {
+        try {
+          sliced = await slicePdfBase64FirstPages(pdfBase64Raw, LEGAL_ANALYSIS_MAX_PAGES);
+        } catch (sliceErr) {
+          console.warn('legal-analysis: no se pudo recortar PDF, se envía completo:', sliceErr);
+          sliced = {
+            base64: pdfBase64Raw.replace(/^data:application\/pdf;base64,/i, ''),
+            totalPages: 0,
+            usedPages: 0,
+            truncated: false,
+          };
         }
+        if (sliced.truncated) {
+          console.log(
+            `[legal-analysis] PDF recortado a primeras ${sliced.usedPages}/${sliced.totalPages} páginas`,
+          );
+        }
+      }
+
+      const openai = getOpenAiClient();
+      const { analysis, lengthOk, promptVersion } = await runLegalAnalysisWithOpenAi(openai, {
+        caseType,
+        pdfBase64: sliced.base64 || undefined,
+        pdfText: pdfText.trim() || undefined,
+        pdfWasTruncated: sliced.truncated,
+        truncatedToPages: sliced.truncated ? sliced.usedPages : undefined,
+        totalPages: sliced.totalPages || undefined,
       });
 
-      const content = result.output_text || '{}';
       return res.json({
-        text: content,
+        text: JSON.stringify(analysis),
+        analysis,
+        lengthOk,
+        promptVersion,
         pdfPagesTotal: sliced.totalPages || null,
         pdfPagesUsed: sliced.usedPages || null,
         pdfTruncated: sliced.truncated,
       });
     } catch (error: any) {
       console.error('OpenAI legal-analysis error:', error);
+      if (error?.name === 'ZodError') {
+        return res.status(400).json({ error: error.message || 'Solicitud inválida' });
+      }
       const mapped = mapAiError(error);
       return res.status(mapped.status).json({ error: mapped.message });
     }

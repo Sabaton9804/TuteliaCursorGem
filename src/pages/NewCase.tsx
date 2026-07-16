@@ -52,10 +52,9 @@ import {
 import { NEW_CASE_FRESH_EVENT, NEW_CASE_FRESH_NAV_FLAG } from '../lib/new-case-nav';
 import {
   guessDerechoTuteladoCodeFromText,
-  sierjuDerechoSectionForCaseType,
-  sierjuDerechoTipoLabelsForPrompt,
 } from '../lib/sierju-case-codes';
 import type { DerechoTuteladoCode } from '../lib/sierju-case-codes';
+import { mapTuteliaCaseTypeToLegalAnalysisKind } from '../lib/legal-analysis-case-kind';
 import {
   buildSierjuClassificationPatch,
   fetchSierjuClassesForCaseType,
@@ -99,7 +98,6 @@ import {
   findSierjuTipoByCode,
   matchSierjuTipoFromText,
   SIERJU_CIVIL_ACTIVE_SECTION,
-  sierjuCivilTipoLabelsForPrompt,
 } from '../lib/sierju-process-tipos';
 import { CaseFormSegundaInstancia } from '../components/new-case/CaseFormSegundaInstancia';
 import { CaseFormConsultaDesacato } from '../components/new-case/CaseFormConsultaDesacato';
@@ -1679,43 +1677,8 @@ export default function NewCase() {
         }
       }
 
-      const isCivil = isCivilCaseType(caseFlowType);
-      const derechoSection = sierjuDerechoSectionForCaseType(caseFlowType);
-      const derechoSheetHint =
-        derechoSection === 'impugnaciones'
-          ? 'Movimiento de Impugnaciones (hoja 13)'
-          : derechoSection === 'consultas_desacato'
-            ? 'Consultas Incidentes de Desacato (hoja 15)'
-            : 'Movimiento de Tutelas (hoja 8)';
-
-      const prompt = isCivil
-        ? `
-        Analiza este escrito de demanda / proceso civil (CGP) y extrae datos del INICIO del proceso (cabecera, partes, hechos y pretensiones del libelo). Puede venir un PDF largo; prioriza lo esencial del encabezado.
-        - Accionantes: lista de TODOS los demandantes / parte actora (nombre, C.C. o NIT, correo si consta).
-        - Accionados: lista de TODOS los demandados / parte pasiva (igual formato).
-        - Incluye a todos los litisconsortes; no omitas co-demandantes ni co-demandados.
-        - derechoTutelado: DEBE ser exactamente UNA de las etiquetas SIERJU «TIPOS PROCESOS» de Primera y única instancia Civil-Oral (vigente). Copie el texto tal cual; no use filas de Civil-Escrito (legislación anterior).
-${sierjuCivilTipoLabelsForPrompt('oral')}
-        - Hechos: síntesis narrativa (mín. 10 frases si el documento alcanza; ~900–1400 caracteres), tercera persona, con partes, objeto del litigio, cuantía si consta y hechos relevantes del libelo.
-        - Pretensiones: síntesis en tercera persona (4–6 frases) de lo pedido al juez (declaraciones, condenas, medidas cautelares). Sin copiar el escrito ni primera persona.
-
-        Responde estrictamente en formato JSON según el esquema proporcionado.
-      `
-        : `
-        Analiza este documento de tutela / impugnación / consulta de desacato y extrae la siguiente información de manera precisa:
-        - Accionantes: lista de TODOS los demandantes que figuren como tales (párrafo introductorio, encabezado «DE:», «accionantes», etc.). Cada uno con nombre completo, identificación (C.C. o NIT con número) y correo si consta; si no consta correo, deja email vacío.
-        - Accionados: lista de TODAS las entidades o personas demandadas (EPS, aseguradora, FOMAT, hospital, etc.). Una entrada por cada accionado distinto. Misma regla de identificación y email.
-        - Si hay varios accionantes o varios accionados, inclúyelos todos; no omitas coprocuradores ni codemandados.
-        - Si solo consta un demandante o un demandado, el arreglo tendrá un solo elemento.
-        - derechoTutelado: DEBE ser exactamente UNA de las etiquetas SIERJU «TIPOS PROCESOS» de ${derechoSheetHint}. Copie el texto tal cual. NO use filas de Acciones constitucionales (hojas 7/14: cumplimiento, grupo, populares, hábeas corpus).
-${sierjuDerechoTipoLabelsForPrompt(derechoSection)}
-        - Si el derecho alegado no encaja claramente, use OTROS (no invente etiquetas distintas a la lista).
-        
-        - Hechos: Redacta un resumen narrativo y completo de los hechos relevantes (mínimo 10 frases; apunta a entre 900 y 1.400 caracteres en un solo párrafo corrido). Debe servir como síntesis procesal para el despacho, no como lista telegráfica. Incluye, si constan en el PDF: quién actúa y contra quién; cronología con fechas aproximadas; actuación u omisión que motiva la tutela; perjuicio o afectación alegada; trámites previos o agotamiento cuando aplique. No inventes datos ajenos al documento.
-        - Pretensiones: SÍNTESIS en tercera persona para el despacho (4 a 6 frases, 400-700 caracteres). Resume qué se pide al juez y a cada accionado (órdenes, plazos, trámites) sin transcribir citas ni fórmulas de la demanda. PROHIBIDO copiar párrafos del escrito, usar comillas, ni redactar en primera persona («solicito», «ordene», «me amparen»). Ejemplo de tono: «La parte actora pide que se ordene a [entidad] resolver las medidas cautelares en 48 horas y que se profiera sentencia anticipada en el radicado indicado».
-
-        Responde estrictamente en formato JSON según el esquema proporcionado.
-      `;
+      // Prompt se construye en servidor (legal-analysis-service). Cliente solo manda datos.
+      const legalKind = mapTuteliaCaseTypeToLegalAnalysisKind(caseFlowType);
 
       let pdfBase64 = hasInline ? currentDoc.content : '';
       if (!pdfBase64 && parseSessionId && typeof currentDoc.sessionIndex === 'number') {
@@ -1730,7 +1693,7 @@ ${sierjuDerechoTipoLabelsForPrompt(derechoSection)}
         method: 'POST',
         headers: await apiAuthHeaders({ json: true }),
         body: JSON.stringify({
-          prompt,
+          caseType: legalKind,
           pdfBase64,
         }),
       });
@@ -1743,7 +1706,9 @@ ${sierjuDerechoTipoLabelsForPrompt(derechoSection)}
       }
 
       const payload = await response.json();
-      const normalized = normalizeLegalAnalysis(JSON.parse(payload.text || '{}'));
+      const normalized = normalizeLegalAnalysis(
+        payload.analysis ?? JSON.parse(payload.text || '{}'),
+      );
       setAiAnalysis(normalized);
       if (payload.pdfTruncated && payload.pdfPagesTotal && payload.pdfPagesUsed) {
         setSegundaPrefillNote(
