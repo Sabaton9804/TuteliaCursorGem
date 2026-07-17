@@ -829,6 +829,10 @@ export class SgdeClient {
     };
 
     try {
+      // En nodos vía Mis compartidos el API Alfresco público suele dar 401; usar ticket desde el primer intento.
+      if (this.ticket) {
+        return await this.withTicketAlfrescoAuth(runSearch);
+      }
       return await runSearch();
     } catch (e) {
       if ((e as { status?: number })?.status === 401 && this.ticket) {
