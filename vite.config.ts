@@ -11,8 +11,13 @@ export default defineConfig(() => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
+        /**
+         * html2pdf.js importa `html2canvas`, que no entiende `oklch()` (Tailwind v4).
+         * html2canvas-pro sí; sin esto el PDF maquetado falla y el overlay puede dejar la UI sin clics.
+         */
+        html2canvas: path.resolve(__dirname, 'node_modules/html2canvas-pro'),
       },
-      dedupe: ['pdfjs-dist'],
+      dedupe: ['pdfjs-dist', 'html2canvas'],
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.

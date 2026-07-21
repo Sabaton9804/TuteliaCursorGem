@@ -1,10 +1,11 @@
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { JSONContent } from '@tiptap/core';
-import type { Case, DocumentTemplateTipo, DocumentTemplateToggleDef } from '../types';
+import type { Case, CaseAppellant, CaseOriginRuling, DocumentTemplateTipo, DocumentTemplateToggleDef } from '../types';
 import { oficioSecretariaDef, type OficioSecretariaTipoId, isOficioSecretariaTipo } from './oficio-secretaria-catalog';
 import { buildActiveToggleIds } from './tiptap-template-toggle-filter';
-import { formatRadicado } from './formatters';
+import { formatPartesCompact, formatRadicado } from './formatters';
+import { radicadosCompartenMismoCui } from './radicado-cui';
 import { anioEnLetras2000, diaDelMesEnLetras } from './fecha-letras-es';
 import type { PlantillasStateV2 } from './plantillas-store';
 import {
@@ -26,7 +27,7 @@ import { getCachedNameByRole } from './court-staff-cache';
 import { DEMO_DESPACHO_STAFF } from './court-staff-demo-seed';
 import { userRoleLabelEs } from './user-roles';
 import type { UserRole } from '../types';
-import { CIVIL_PROCESS_CARD_COPY, isCivilCaseType } from './process-product-scope';
+import { CIVIL_PROCESS_CARD_COPY, isCivilCaseType, partyRoleLabels } from './process-product-scope';
 
 /** Firma: informe → secretario del equipo; auto/sentencia → juez del equipo (`DESPACHO_STAFF`). */
 export type MapaVariablesPlantillaContext =
@@ -50,6 +51,115 @@ function tipoProcesoDesdeCase(caseItem: Case): string {
     return meta?.title?.toLowerCase() ?? 'proceso civil';
   }
   return 'proceso judicial';
+}
+
+function originRulingInformeLabel(r?: CaseOriginRuling | null): string {
+  if (r === 'concedio') return 'concedió la tutela';
+  if (r === 'nego') return 'negó la tutela';
+  return '';
+}
+
+function appellantInformeLabel(a?: CaseAppellant | null): string {
+  if (a === 'accionante') return 'el accionante';
+  if (a === 'accionado') return 'el accionado';
+  return '';
+}
+
+/** Variables de origen (2ª instancia) para plantillas del informe de ingreso. */
+export function informeIngresoVariablesOrigenSegunda(caseItem: Case): {
+  juzgadoOrigen: string;
+  radicadoOrigen: string;
+  falloOrigenSentido: string;
+  impugnante: string;
+  clausulaOrigen: string;
+} {
+  const juzgadoOrigen = (caseItem.originCourt || '').trim();
+  const radicadoOrigen = caseItem.originRadicado
+    ? formatRadicado(caseItem.originRadicado) || caseItem.originRadicado.trim()
+    : '';
+  const falloOrigenSentido = originRulingInformeLabel(caseItem.originRuling);
+  const impugnante = appellantInformeLabel(caseItem.appellant);
+
+  if (caseItem.caseType !== 'tutela_segunda') {
+    return {
+      juzgadoOrigen: juzgadoOrigen || '—',
+      radicadoOrigen: radicadoOrigen || '—',
+      falloOrigenSentido: falloOrigenSentido || '—',
+      impugnante: impugnante || '—',
+      clausulaOrigen: '',
+    };
+  }
+
+  const courtPart = juzgadoOrigen || 'el juzgado de primera instancia';
+  const mismoCui =
+    Boolean(radicadoOrigen) &&
+    Boolean(caseItem.radicado) &&
+    radicadosCompartenMismoCui(caseItem.radicado, caseItem.originRadicado || '');
+  const radPart =
+    radicadoOrigen && !mismoCui
+      ? ` en el proceso radicado bajo el número ${radicadoOrigen}`
+      : '';
+  const falloPart = falloOrigenSentido ? `, que ${falloOrigenSentido}` : '';
+  const clausulaOrigen =
+    juzgadoOrigen || radicadoOrigen || falloOrigenSentido
+      ? `, en impugnación del fallo de primera instancia proferido por ${courtPart}${radPart}${falloPart}`
+      : '';
+
+  return {
+    juzgadoOrigen: juzgadoOrigen || '—',
+    radicadoOrigen: mismoCui ? '—' : radicadoOrigen || '—',
+    falloOrigenSentido: falloOrigenSentido || '—',
+    impugnante: impugnante || '—',
+    clausulaOrigen,
+  };
+}
+
+/** Fragmentos del párrafo del informe de ingreso según tutela vs proceso civil. */
+function informeIngresoRelatoDesdeCase(caseItem: Case): {
+  naturaleza: string;
+  verboPresentada: string;
+  clausulaObjeto: string;
+  recepcion: string;
+} {
+  const medio =
+    caseItem.sourceChannel === 'email'
+      ? 'correo electrónico institucional en la fecha'
+      : 'los medios registrados en el expediente';
+  const claseODerecho = (caseItem.legalDerechoTutelado || '').trim();
+  const tipo = tipoProcesoDesdeCase(caseItem);
+
+  if (isCivilCaseType(caseItem.caseType)) {
+    const naturaleza = claseODerecho
+      ? `demanda de ${claseODerecho}`
+      : `demanda en proceso ${tipo}`;
+    return {
+      naturaleza,
+      verboPresentada: 'presentada',
+      clausulaObjeto: '',
+      recepcion: `La demanda fue recibida por ${medio}.`,
+    };
+  }
+
+  const naturaleza =
+    caseItem.caseType === 'tutela_segunda'
+      ? 'acción de tutela de segunda instancia'
+      : caseItem.caseType === 'consulta_desacato'
+        ? 'consulta de incidente de desacato'
+        : 'acción de tutela de primera instancia';
+  const origenSegunda = informeIngresoVariablesOrigenSegunda(caseItem);
+  const clausulaDerecho = claseODerecho
+    ? `, en la que se invoca la protección del derecho fundamental a ${claseODerecho}`
+    : '';
+  const clausulaObjeto =
+    caseItem.caseType === 'tutela_segunda'
+      ? `${origenSegunda.clausulaOrigen}${clausulaDerecho}`
+      : clausulaDerecho;
+  return {
+    naturaleza,
+    verboPresentada: 'promovida',
+    clausulaObjeto,
+    recepcion: `La acción fue recibida por ${medio}.`,
+  };
 }
 
 function contextoFirmaJuez(context: MapaVariablesPlantillaContext | null | undefined): boolean {
@@ -144,6 +254,9 @@ export function mapaVariablesDesdeCaso(
   /** Formato tipo acto judicial: «Veintinueve (29) de abril de dos mil veintiséis». */
   const fechaCompletaLetras = `${diaTitulado} (${diaNum}) de ${mesNombre} de ${anioEnLetras2000(now.getFullYear())}`;
   const fechaLetras = `Bogotá D.C., ${fechaCorta}`;
+  const informeRelato = informeIngresoRelatoDesdeCase(caseItem);
+  const origenSegunda = informeIngresoVariablesOrigenSegunda(caseItem);
+  const roles = partyRoleLabels(caseItem.caseType);
 
   return {
     FECHA_LETRAS: fechaLetras,
@@ -171,6 +284,20 @@ export function mapaVariablesDesdeCaso(
     TIPO_PROCESO: tipoProcesoDesdeCase(caseItem),
     FINALIDAD_INGRESO: 'para admitir',
     MEDIO_RECEPCION: caseItem.sourceChannel === 'email' ? 'correo electrónico de hoy' : 'medios registrados en expediente',
+    /** Informe de ingreso: redacción tutela vs civil (no mezclar «derecho fundamental» en CGP). */
+    INFORME_NATURALEZA: informeRelato.naturaleza,
+    INFORME_VERB_PRESENTADA: informeRelato.verboPresentada,
+    INFORME_CLAUSULA_OBJETO: informeRelato.clausulaObjeto,
+    INFORME_RECEPCION: informeRelato.recepcion,
+    INFORME_PARTE_ACTORA: formatPartesCompact(caseItem.claimant, caseItem.claimant || '—'),
+    INFORME_PARTE_PASIVA: formatPartesCompact(caseItem.defendant, caseItem.defendant || '—'),
+    INFORME_ETIQUETA_ACTORA: roles.claimantSingular.toLowerCase(),
+    INFORME_ETIQUETA_PASIVA: roles.defendantSingular.toLowerCase(),
+    JUZGADO_ORIGEN: origenSegunda.juzgadoOrigen,
+    RADICADO_ORIGEN: origenSegunda.radicadoOrigen,
+    FALLO_ORIGEN_SENTIDO: origenSegunda.falloOrigenSentido,
+    IMPUGNANTE: origenSegunda.impugnante,
+    INFORME_CLAUSULA_ORIGEN: origenSegunda.clausulaOrigen,
     /** Nombres del organigrama seed (`court-staff-assignees`); útiles en plantillas con {{NOMBRE_JUEZ}} / {{NOMBRE_SECRETARIO}}. */
     NOMBRE_JUEZ: nombreJuez || '—',
     NOMBRE_SECRETARIO: nombreSecretario || '—',
@@ -202,6 +329,16 @@ export function mapaVariablesDesdeCaso(
   };
 }
 
+/** Cuerpo editable por defecto del informe (marcadores duales tutela/civil). */
+export const CUERPO_INFORME_INGRESO_MARCADORES = [
+  'En la fecha ingresa al Despacho del señor juez, {{INFORME_NATURALEZA}} radicada bajo el número {{RADICACION}}, {{INFORME_VERB_PRESENTADA}} por {{INFORME_PARTE_ACTORA}} contra {{INFORME_PARTE_PASIVA}}{{INFORME_CLAUSULA_OBJETO}}, para que el Despacho resuelva sobre su admisión. {{INFORME_RECEPCION}}',
+  '',
+  'Cordialmente,',
+  '',
+  '{{FUNCIONARIO_FIRMA}}',
+  '{{CARGO_FIRMA}}',
+].join('\n');
+
 /** Plantilla interna por defecto (con {{}}). Puede reemplazarse con `contenido_base` en Supabase. */
 export function plantillaInformeIngresoInterna(m: PlantillasStateV2): string {
   if (hasMembreteRichContent(m.membrete)) {
@@ -210,12 +347,7 @@ export function plantillaInformeIngresoInterna(m: PlantillasStateV2): string {
       '',
       '{{CIUDAD}}, {{FECHA_LETRAS_COMPLETA}}',
       '',
-      'En la fecha ingresa al Despacho del señor juez, {{TIPO_PROCESO}} {{FINALIDAD_INGRESO}}, la cual fue recibida por {{MEDIO_RECEPCION}}.',
-      '',
-      'Cordialmente,',
-      '',
-      '{{FUNCIONARIO_FIRMA}}',
-      '{{CARGO_FIRMA}}',
+      CUERPO_INFORME_INGRESO_MARCADORES,
     ].join('\n');
   }
   return [
@@ -230,12 +362,7 @@ export function plantillaInformeIngresoInterna(m: PlantillasStateV2): string {
     '',
     '{{CIUDAD}}, {{FECHA_LETRAS_COMPLETA}}',
     '',
-    'En la fecha ingresa al Despacho del señor juez, {{TIPO_PROCESO}} {{FINALIDAD_INGRESO}}, la cual fue recibida por {{MEDIO_RECEPCION}}.',
-    '',
-    'Cordialmente,',
-    '',
-    '{{FUNCIONARIO_FIRMA}}',
-    '{{CARGO_FIRMA}}',
+    CUERPO_INFORME_INGRESO_MARCADORES,
   ].join('\n');
 }
 
@@ -473,14 +600,7 @@ export function prefijoInformeAntesDelCuerpo(m: PlantillasStateV2): string {
  */
 export function cuerpoEditablePredeterminadoPlantilla(tipo: DocumentTemplateTipo, _m: PlantillasStateV2): string {
   if (tipo === 'informe_ingreso') {
-    return [
-      'En la fecha ingresa al Despacho del señor juez, {{TIPO_PROCESO}} {{FINALIDAD_INGRESO}}, la cual fue recibida por {{MEDIO_RECEPCION}}.',
-      '',
-      'Cordialmente,',
-      '',
-      '{{FUNCIONARIO_FIRMA}}',
-      '{{CARGO_FIRMA}}',
-    ].join('\n');
+    return CUERPO_INFORME_INGRESO_MARCADORES;
   }
   if (tipo === 'auto_admisorio') {
     return [

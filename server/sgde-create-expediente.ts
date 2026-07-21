@@ -8,7 +8,24 @@ import {
 } from './sgde-tutela-metadata';
 import { CASE_DOCUMENTS_BUCKET, sanitizeCaseDocumentLogicalName } from './case-document-storage';
 import { isSgdeAutoCreateCaseType } from '../src/lib/sgde-case-scope.ts';
+import {
+  caseHasCautelarNotebook,
+  NOTEBOOK_PI_C01_PRINCIPAL,
+  NOTEBOOK_PI_C02_CAUTELAR,
+  normalizeNotebookCode,
+} from '../src/lib/expediente-notebook.ts';
+import type { ExpedienteCuadernoExtra } from '../src/lib/expediente-extra-cuadernos.ts';
 import type { CaseType } from '../src/types.ts';
+
+function parseCuadernosExtra(raw: unknown): ExpedienteCuadernoExtra[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((e) => ({
+      code: String((e as { code?: string }).code || '').trim(),
+      label: String((e as { label?: string }).label || '').trim(),
+    }))
+    .filter((e) => e.code);
+}
 
 export type CreateExpedienteInSgdeResult = {
   ok: boolean;
@@ -29,6 +46,7 @@ type CaseRow = {
   defendant: string;
   case_type: string | null;
   sgde_id: string | null;
+  expediente_cuadernos_extra?: unknown;
 };
 
 type CourtSgdeRow = {
@@ -48,6 +66,7 @@ type DocRow = {
   type: string;
   storage_path: string | null;
   content_type: string | null;
+  act_code?: string | null;
   notebook_code: string | null;
 };
 
@@ -63,7 +82,7 @@ export async function createExpedienteInSgde(opts: {
 
   const { data: caseRow, error: caseErr } = await admin
     .from('cases')
-    .select('id, court_id, radicado, claimant, defendant, case_type, sgde_id')
+    .select('id, court_id, radicado, claimant, defendant, case_type, sgde_id, expediente_cuadernos_extra')
     .eq('id', caseId)
     .maybeSingle();
   if (caseErr || !caseRow?.id) {
@@ -166,6 +185,26 @@ export async function createExpedienteInSgde(opts: {
     { onConflict: 'case_id,notebook_code' }
   );
 
+  const extras = parseCuadernosExtra(c.expediente_cuadernos_extra);
+  let cautelarFolderId = '';
+  if (caseHasCautelarNotebook(extras)) {
+    const cautelar = await client.ensurePrimeraInstanciaCautelar(sgdeRootId);
+    if (cautelar.ok === false) {
+      throw new Error(cautelar.error);
+    }
+    cautelarFolderId = cautelar.cautelarFolderId;
+    await admin.from('case_sgde_folder_map').upsert(
+      {
+        court_id: c.court_id,
+        case_id: caseId,
+        notebook_code: NOTEBOOK_PI_C02_CAUTELAR,
+        sgde_folder_node_id: cautelar.cautelarFolderId,
+        folder_path: 'Primera instancia / Medidas cautelares',
+      },
+      { onConflict: 'case_id,notebook_code' }
+    );
+  }
+
   let uploaded = 0;
   let uploadFailed = 0;
   const uploadErrors: string[] = [];
@@ -176,23 +215,25 @@ export async function createExpedienteInSgde(opts: {
   if (shouldUpload) {
     const { data: docs } = await admin
       .from('case_documents')
-      .select('id, name, type, storage_path, content_type, notebook_code')
+      .select('id, name, type, storage_path, content_type, notebook_code, act_code')
       .eq('case_id', caseId)
       .order('sort_order', { ascending: true });
 
     const candidates = ((docs || []) as DocRow[])
       .filter((d) => {
         if (!d.storage_path?.trim()) return false;
-        const nb = String(d.notebook_code || notebookCode);
-        if (nb !== notebookCode) return false;
         if (d.type === 'sgde_migrate') return false;
         const ct = String(d.content_type || '').toLowerCase();
         const nm = String(d.name || '').toLowerCase();
         return ct.includes('pdf') || nm.endsWith('.pdf');
       })
-      .sort((a, b) => uploadOrderPriority(a.name, a.type) - uploadOrderPriority(b.name, b.type));
+      .sort(
+        (a, b) =>
+          uploadOrderPriority(a.name, a.type, a.act_code) -
+          uploadOrderPriority(b.name, b.type, b.act_code),
+      );
 
-    let orden = 1;
+    const ordenByFolder = new Map<string, number>();
     for (const doc of candidates) {
       const path = String(doc.storage_path || '').trim();
       const { data: blob, error: dlErr } = await admin.storage.from(CASE_DOCUMENTS_BUCKET).download(path);
@@ -208,11 +249,19 @@ export async function createExpedienteInSgde(opts: {
         continue;
       }
 
-      const logicalName = sanitizeCaseDocumentLogicalName(`${doc.name}.pdf`, `${doc.name}.pdf`);
-      const tipo = tipoDocumentalSgdeFromFileName(doc.name, doc.type);
+      const logicalName = sanitizeCaseDocumentLogicalName(String(doc.name || ''), 'documento.pdf');
+      const tipo = tipoDocumentalSgdeFromFileName(doc.name, doc.type, doc.act_code);
+      const docNb = normalizeNotebookCode(doc.notebook_code || notebookCode);
+      const useCautelar = docNb === NOTEBOOK_PI_C02_CAUTELAR && Boolean(cautelarFolderId);
+      const folderNodeUuid = useCautelar ? cautelarFolderId : structure.principalFolderId;
+      const folderPath = useCautelar
+        ? 'Primera instancia / Medidas cautelares'
+        : 'Primera instancia / Principal';
+      const orden = (ordenByFolder.get(folderNodeUuid) || 0) + 1;
+      ordenByFolder.set(folderNodeUuid, orden);
 
       const up = await client.uploadDocumentToFolder({
-        folderNodeUuid: structure.principalFolderId,
+        folderNodeUuid,
         radicado23,
         buffer: buf,
         fileName: logicalName,
@@ -221,7 +270,6 @@ export async function createExpedienteInSgde(opts: {
         expedienteMetadata: props,
         orden,
       });
-      orden += 1;
 
       if (up.ok === false) {
         uploadFailed += 1;
@@ -231,8 +279,12 @@ export async function createExpedienteInSgde(opts: {
 
       uploaded += 1;
       const patch: Record<string, unknown> = {
-        sgde_folder_path: 'Primera instancia / Principal',
+        sgde_folder_path: folderPath,
         sgde_sync_status: 'linked',
+        notebook_code:
+          docNb === NOTEBOOK_PI_C02_CAUTELAR || docNb === NOTEBOOK_PI_C01_PRINCIPAL
+            ? docNb
+            : normalizeNotebookCode(doc.notebook_code || notebookCode),
       };
       if (up.sgdeDocId) patch.sgde_id = up.sgdeDocId;
       await admin.from('case_documents').update(patch).eq('id', doc.id);

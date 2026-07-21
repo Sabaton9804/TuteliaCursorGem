@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { FileText, ExternalLink, Loader2, ZoomIn, ZoomOut } from 'lucide-react';
 import { Document, Page } from 'react-pdf';
+import { ensurePdfJsWorker } from '../../lib/pdfjs-worker';
 import { supabase } from '../../lib/supabase';
 import { looksLikePdf } from '../../lib/pdf-sniff';
 import { logPdfViewerDebug } from '../../lib/pdf-payload-debug';
@@ -22,9 +23,11 @@ import {
   isCaseDocumentOpenableInViewer,
   primeraPiezaParaAbrir,
 } from '../../lib/expediente-viewer-doc';
-import { sgdeRepairStorage, sgdeDocumentViewUrl } from '../../lib/sgde-api';
+import { sgdeRepairStorage, sgdeDocumentViewUrl, repairCorreoReparto } from '../../lib/sgde-api';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
+
+ensurePdfJsWorker();
 
 
 function base64ToBytes(b64: string): Uint8Array | null {
@@ -646,6 +649,7 @@ export function CaseExpedienteDigitalPanel({
   const [repairingStorage, setRepairingStorage] = useState(false);
   const [repairNotice, setRepairNotice] = useState<string | null>(null);
   const [repairError, setRepairError] = useState<string | null>(null);
+  const correoRepairTriedRef = useRef(false);
 
   const onStoragePathUpdated = useCallback(
     (storagePath: string) => {
@@ -697,7 +701,34 @@ export function CaseExpedienteDigitalPanel({
   useEffect(() => {
     setRepairNotice(null);
     setRepairError(null);
+    correoRepairTriedRef.current = false;
   }, [caseId]);
+
+  useEffect(() => {
+    if (!docsLoaded || correoRepairTriedRef.current) return;
+    const broken = docs.find(
+      (d) =>
+        (d.type === 'email_body' ||
+          d.name === 'CorreoReparto' ||
+          d.actCode === 'correo_reparto' ||
+          /correo.*reparto/i.test(d.name)) &&
+        d.ingestError &&
+        !d.storagePath?.trim()
+    );
+    if (!broken) return;
+    correoRepairTriedRef.current = true;
+    void (async () => {
+      try {
+        const res = await repairCorreoReparto({ caseId, documentId: broken.id });
+        if (res.repaired > 0) {
+          setRepairNotice(res.message);
+          await onRefetchDocs();
+        }
+      } catch (e) {
+        console.error('repairCorreoReparto:', e);
+      }
+    })();
+  }, [caseId, docs, docsLoaded, onRefetchDocs]);
 
   useEffect(() => {
     autoAbrirVisorRef.current = false;
@@ -734,12 +765,29 @@ export function CaseExpedienteDigitalPanel({
   const splitHostRef = useRef<HTMLDivElement>(null);
   const dragSplitRef = useRef(false);
   const [listaRatio, setListaRatio] = useState(0.44);
+  const [splitRowLayout, setSplitRowLayout] = useState(false);
   const SPLIT_MIN_LISTA_PX = 280;
   const SPLIT_MIN_VISOR_PX = 320;
 
   useEffect(() => {
     setListaRatio(0.44);
   }, [caseId]);
+
+  useEffect(() => {
+    const host = splitHostRef.current;
+    if (!host || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(([entry]) => {
+      const w = entry?.contentRect.width ?? 0;
+      setSplitRowLayout(w >= 1280);
+    });
+    ro.observe(host);
+    return () => ro.disconnect();
+  }, [caseId]);
+
+  /** Si un PDF maquetado falló a medias, puede quedar un overlay a pantalla completa. */
+  useEffect(() => {
+    void import('../../lib/informe-docx-to-pdf').then((m) => m.cleanupTuteliaPdfGenerationOverlays());
+  }, [caseId, docsLoaded]);
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -801,10 +849,16 @@ export function CaseExpedienteDigitalPanel({
             <div
               className={`card-modern flex min-h-0 min-w-0 flex-col overflow-hidden p-4 md:p-5 xl:h-full ${
                 panelDerechoAbierto
-                  ? 'min-h-[min(70vh,40rem)] shrink-0 rounded-r-none border-r-0'
+                  ? splitRowLayout
+                    ? 'min-h-[min(70vh,40rem)] shrink-0 rounded-r-none border-r-0'
+                    : 'w-full min-h-[min(38vh,22rem)] max-h-[min(45vh,26rem)] shrink-0'
                   : 'mx-auto min-h-[min(70vh,40rem)] w-full xl:max-w-4xl'
               }`}
-              style={panelDerechoAbierto ? { width: `${Math.round(listaRatio * 1000) / 10}%` } : undefined}
+              style={
+                panelDerechoAbierto && splitRowLayout
+                  ? { width: `${Math.round(listaRatio * 1000) / 10}%` }
+                  : undefined
+              }
             >
             {!docsLoaded ? (
               <div className="flex flex-1 items-center justify-center gap-2 text-slate-400">
@@ -848,7 +902,7 @@ export function CaseExpedienteDigitalPanel({
                 <span className="block h-1 w-1 rounded-full bg-slate-400" />
               </div>
             </div>
-            <div className="card-modern flex h-[min(52vh,32rem)] min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-l-none xl:h-full">
+            <div className="card-modern flex min-h-[min(48vh,28rem)] min-w-0 w-full flex-1 flex-col overflow-hidden rounded-l-none xl:h-full xl:min-h-0">
             <div className="flex shrink-0 flex-col gap-1 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between md:px-5">
               <div className="min-w-0">
                 <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400">

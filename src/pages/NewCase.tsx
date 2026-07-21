@@ -5,7 +5,6 @@ import {
   AlertCircle, 
   Loader2, 
   ArrowRight, 
-  ChevronLeft,
   Search,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -14,6 +13,7 @@ import { getSupabaseAuthErrorMessage } from '../lib/supabase-auth-errors';
 import { handleDataPermissionError } from '../lib/error-handler';
 import { motion } from 'motion/react';
 import { PDFDocument } from 'pdf-lib';
+import { appendPdfBytesToDocument } from '../lib/merge-pdf-bytes';
 import { CUI_INSTANCE_PRIMERA } from '../lib/radicado-cui';
 import { formatRadicado } from '../lib/formatters';
 import {
@@ -27,7 +27,22 @@ import {
   removeCaseDocumentObjects,
   uploadCaseAttachment,
 } from '../lib/case-document-storage';
-import { notebookCodeForCaseType, NOTEBOOK_SI_C01_PRINCIPAL } from '../lib/expediente-notebook';
+import {
+  caseHasCautelarNotebook,
+  cautelarNotebookExtra,
+  notebookCodeForCaseType,
+  NOTEBOOK_META,
+  NOTEBOOK_PI_C02_CAUTELAR,
+  NOTEBOOK_SI_C01_PRINCIPAL,
+  NOTEBOOK_SI_IMPUGNACION,
+  SGDE_PATH_SEGUNDA_IMPUGNACION,
+  normalizeNotebookCode,
+  segundaImpugnacionNotebookExtra,
+} from '../lib/expediente-notebook';
+import {
+  mergeExtraCuadernos,
+  type ExpedienteCuadernoExtra,
+} from '../lib/expediente-extra-cuadernos';
 import {
   sgdeCreateExpediente,
   sgdeMigrateOriginToCase,
@@ -41,7 +56,13 @@ import {
   shouldUseSegundaInstanciaFlow,
 } from '../lib/segunda-instancia-email';
 import { CaseSgdeSegundaPreflightPanel } from '../components/new-case/CaseSgdeSegundaPreflightPanel';
-import { fetchParseSessionAttachment, uint8ArrayToBase64 } from '../lib/parse-session-attachment';
+import {
+  fetchParseSessionAttachment,
+  listParseSessionAttachments,
+  matchSessionIndexByFilename,
+  uint8ArrayToBase64,
+  uploadParseSessionAttachment,
+} from '../lib/parse-session-attachment';
 import { filesToNewCaseAttachments } from '../lib/new-case-attachment';
 import {
   buildEmailAsAttachment,
@@ -58,6 +79,7 @@ import { mapTuteliaCaseTypeToLegalAnalysisKind } from '../lib/legal-analysis-cas
 import {
   buildSierjuClassificationPatch,
   fetchSierjuClassesForCaseType,
+  invalidateSierjuCatalogCache,
 } from '../lib/sierju-catalog-service';
 import { CaseSierjuClassification } from '../components/expediente/CaseSierjuClassification';
 import { startOfLocalDay } from '../lib/business-days';
@@ -93,7 +115,8 @@ import { CaseEmailParser } from '../components/new-case/CaseEmailParser';
 import { CaseTypeInferredBanner } from '../components/new-case/CaseTypeInferredBanner';
 import { mapTipoProcesoToCivilCaseType } from '../lib/case-process-scope';
 import { inferCaseTypeFromParsedEmail } from '../lib/infer-case-type-from-email';
-import { isCivilCaseType } from '../lib/process-product-scope';
+import { isCivilCaseType, partyRoleLabels } from '../lib/process-product-scope';
+import { buildInitialCivilCatalogMetadata } from '../lib/case-catalog-metadata';
 import {
   findSierjuTipoByCode,
   matchSierjuTipoFromText,
@@ -186,7 +209,7 @@ function inferCaseTypeFromAnalysisCorpus(
   return null;
 }
 
-function buildLegalIdentificaciones(a: LegalAnalysis): string {
+function buildLegalIdentificaciones(a: LegalAnalysis, isCivil = false): string {
   const acc = a.accionantes
     .map((p) => {
       const n = (p.nombre || '').trim();
@@ -206,8 +229,9 @@ function buildLegalIdentificaciones(a: LegalAnalysis): string {
     .filter(Boolean)
     .join(' | ');
   const parts = [];
-  if (acc) parts.push(`Accionantes: ${acc}`);
-  if (def) parts.push(`Accionados: ${def}`);
+  const roles = partyRoleLabels(isCivil ? 'civil_ordinario' : 'tutela_primera');
+  if (acc) parts.push(`${roles.claimantPlural}: ${acc}`);
+  if (def) parts.push(`${roles.defendantPlural}: ${def}`);
   return parts.join(' — ');
 }
 
@@ -400,6 +424,7 @@ export default function NewCase() {
   const [originRulingSel, setOriginRulingSel] = useState<'' | CaseOriginRuling>('');
   const [conductDescription, setConductDescription] = useState('');
   const [sgdePreflight, setSgdePreflight] = useState<SgdePreflightResult | null>(null);
+  const [sgdePreflightLoading, setSgdePreflightLoading] = useState(false);
   const [sgdeNodeIdHint, setSgdeNodeIdHint] = useState<string | null>(null);
   const [segundaPrefillNote, setSegundaPrefillNote] = useState<string | null>(null);
   /** Radicados Tutelia con la misma base CUI (21 díg.) para calcular sufijo 01, 02… */
@@ -409,6 +434,19 @@ export default function NewCase() {
   const [sierjuClassIdSel, setSierjuClassIdSel] = useState<string | undefined>();
   /** Código fila SIERJU TIPOS PROCESOS Civil-Oral (p. ej. ejecutivos). */
   const [sierjuTipoCode, setSierjuTipoCode] = useState<string | undefined>();
+  /** Ejecutivo: abrir cuaderno C02 medidas cautelares al radicar (default on). */
+  const [abrirCuadernoCautelares, setAbrirCuadernoCautelares] = useState(true);
+  /** Cuadernos extra (cualquier tipo) a persistir en expediente_cuadernos_extra. */
+  const [extraCuadernosPreRadicate, setExtraCuadernosPreRadicate] = useState<
+    ExpedienteCuadernoExtra[]
+  >([]);
+  const [hasLocalDraft, setHasLocalDraft] = useState(() => {
+    try {
+      return Boolean(localStorage.getItem(NEW_CASE_DRAFT_KEY));
+    } catch {
+      return false;
+    }
+  });
 
   const applySierjuTipoSelection = useCallback(
     async (
@@ -427,6 +465,7 @@ export default function NewCase() {
           opts?.note ?? `Tipo SIERJU Civil-Oral: ${hit.label}.`,
         );
         try {
+          invalidateSierjuCatalogCache();
           const classes = await fetchSierjuClassesForCaseType(courtId, flow);
           const byCode =
             classes.find((c) => c.code === hit.code && c.sectionCode === SIERJU_CIVIL_ACTIVE_SECTION) ||
@@ -435,6 +474,10 @@ export default function NewCase() {
           if (byCode) {
             setSierjuClassIdSel(byCode.id);
             setSierjuDerechoSel(byCode.derechoTuteladoCode);
+          } else if (import.meta.env.DEV) {
+            console.warn('[sierju] no se halló clase remota para', hit.code, 'en', flow, {
+              available: classes.map((c) => `${c.sectionCode}:${c.code}`).slice(0, 12),
+            });
           }
         } catch {
           /* catálogo remoto opcional */
@@ -566,6 +609,7 @@ export default function NewCase() {
     setIsAnalyzing(false);
     setError(null);
     setIsRadicating(false);
+    setIsAddingAttachments(false);
     setConsecutive('');
     setConsecutiveLoading(false);
     setRadicadoConflict(null);
@@ -582,7 +626,18 @@ export default function NewCase() {
     setSierjuDerechoSel(undefined);
     setSierjuClassIdSel(undefined);
     setSierjuTipoCode(undefined);
+    setArchiveLinkStatus('idle');
+    setArchiveLinkError(null);
+    setHasLocalDraft(false);
   }, []);
+
+  const discardDraftAndRestart = useCallback(() => {
+    const ok = window.confirm(
+      '¿Descartar el borrador y empezar de cero?\n\nSe borrará el correo cargado, el análisis IA y los documentos de esta pantalla. Tendrá que volver a subir el .eml.',
+    );
+    if (!ok) return;
+    resetNewCaseWizard();
+  }, [resetNewCaseWizard]);
 
   useEffect(() => {
     if (sessionStorage.getItem(NEW_CASE_FRESH_NAV_FLAG) === '1') {
@@ -596,6 +651,7 @@ export default function NewCase() {
       // Borradores antiguos con PDFs en base64 congelan el hilo al parsear.
       if (raw.length > 1_500_000) {
         localStorage.removeItem(NEW_CASE_DRAFT_KEY);
+        setHasLocalDraft(false);
         return;
       }
       const draft = JSON.parse(raw);
@@ -631,6 +687,7 @@ export default function NewCase() {
       if (Array.isArray(draft.selectedForMerge)) setSelectedForMerge(draft.selectedForMerge);
       if (draft.aiAnalysis) setAiAnalysis(normalizeLegalAnalysis(draft.aiAnalysis));
       if (typeof draft.consecutive === 'string') setConsecutive(draft.consecutive);
+      setHasLocalDraft(true);
     } catch (e) {
       console.error('No se pudo restaurar borrador local de radicacion', e);
     }
@@ -777,6 +834,7 @@ export default function NewCase() {
         return;
       }
       localStorage.setItem(NEW_CASE_DRAFT_KEY, payload);
+      setHasLocalDraft(true);
     } catch (e) {
       console.error('No se pudo guardar borrador local de radicacion', e);
       try {
@@ -820,6 +878,62 @@ export default function NewCase() {
       }
     }
   }, [aiAnalysis?.derechoTutelado, applySierjuTipoSelection, caseFlowType]);
+
+  // Reintentar enlace al catálogo remoto si el tipo civil ya se conoce pero classId quedó vacío
+  // (p. ej. el catálogo aún no estaba listo cuando corrió la IA).
+  useEffect(() => {
+    if (!sierjuTipoCode || sierjuClassIdSel || !isCivilCaseType(caseFlowType)) return;
+    void applySierjuTipoSelection(sierjuTipoCode, {
+      caseType: caseFlowType,
+      note: `Tipo SIERJU Civil-Oral: ${findSierjuTipoByCode(sierjuTipoCode)?.label || sierjuTipoCode}.`,
+    });
+  }, [courtId, sierjuTipoCode, sierjuClassIdSel, caseFlowType, applySierjuTipoSelection]);
+
+  // Recupera sessionIndex perdido (borrador / unión) para que el visor pueda cargar PDFs grandes.
+  const attachmentsNeedingSession = useMemo(
+    () =>
+      attachments
+        .filter(
+          (a) =>
+            !isEmailBodyAttachment(a) &&
+            typeof a.sessionIndex !== 'number' &&
+            !(typeof a.content === 'string' && a.content.length > 0),
+        )
+        .map((a) => a.filename || a.originalName || '')
+        .join('|'),
+    [attachments],
+  );
+
+  useEffect(() => {
+    if (!parseSessionId || !attachmentsNeedingSession) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await listParseSessionAttachments(parseSessionId);
+        if (cancelled || !rows.length) return;
+        setAttachments((prev) => {
+          let changed = false;
+          const next = prev.map((a) => {
+            if (isEmailBodyAttachment(a)) return a;
+            if (typeof a.sessionIndex === 'number') return a;
+            if (typeof a.content === 'string' && a.content.length > 0) return a;
+            const idx = matchSessionIndexByFilename(a.filename || a.originalName || '', rows);
+            if (idx == null) return a;
+            changed = true;
+            return { ...a, sessionIndex: idx };
+          });
+          return changed ? next : prev;
+        });
+      } catch (e) {
+        if (import.meta.env.DEV) {
+          console.warn('[parse-session] no se pudo reconciliar sessionIndex', e);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [parseSessionId, attachmentsNeedingSession]);
 
   const clearSgdeOriginState = useCallback(() => {
     setOriginRadicado('');
@@ -1004,6 +1118,59 @@ export default function NewCase() {
     ? !segundaSuffixLoading && Boolean(derivedSegundaRadicado)
     : !consecutiveLoading && consecutive.length > 0 && !Number.isNaN(consecutiveNum) && consecutiveNum >= 1;
 
+  const defaultNotebookForFlow = notebookCodeForCaseType(caseFlowType);
+  const radicationNotebookOptions = useMemo(() => {
+    const opts: ExpedienteCuadernoExtra[] = [
+      {
+        code: defaultNotebookForFlow,
+        label: NOTEBOOK_META[defaultNotebookForFlow]?.label || 'C01 principal',
+      },
+    ];
+    if (
+      caseFlowType === 'civil_ejecutivo' &&
+      abrirCuadernoCautelares &&
+      !caseHasCautelarNotebook(extraCuadernosPreRadicate)
+    ) {
+      opts.push(cautelarNotebookExtra());
+    }
+    for (const e of extraCuadernosPreRadicate) {
+      opts.push({
+        code: normalizeNotebookCode(e.code),
+        label: e.label || NOTEBOOK_META[normalizeNotebookCode(e.code)]?.label || e.code,
+      });
+    }
+    return mergeExtraCuadernos([], opts);
+  }, [
+    defaultNotebookForFlow,
+    caseFlowType,
+    abrirCuadernoCautelares,
+    extraCuadernosPreRadicate,
+  ]);
+
+  const allowedNotebookCodes = useMemo(
+    () => new Set(radicationNotebookOptions.map((o) => normalizeNotebookCode(o.code))),
+    [radicationNotebookOptions]
+  );
+
+  useEffect(() => {
+    setAttachments((prev) => {
+      let changed = false;
+      const next = prev.map((att) => {
+        const code = normalizeNotebookCode(att.notebookCode || defaultNotebookForFlow);
+        if (allowedNotebookCodes.has(code)) {
+          if (!att.notebookCode) {
+            changed = true;
+            return { ...att, notebookCode: defaultNotebookForFlow };
+          }
+          return att;
+        }
+        changed = true;
+        return { ...att, notebookCode: defaultNotebookForFlow };
+      });
+      return changed ? next : prev;
+    });
+  }, [allowedNotebookCodes, defaultNotebookForFlow]);
+
   const handleRadicate = async () => {
     console.log("Iniciando radicación...");
     if (!parsedData) {
@@ -1031,6 +1198,21 @@ export default function NewCase() {
     );
     if (!originErr && flow === 'tutela_segunda') {
       const originDigits = originRadicado.replace(/\D/g, '');
+      if (originDigits.length === 23 && sgdePreflightLoading) {
+        setError('Consultando SGDE y permisos de edición… espere un momento antes de radicar.');
+        return;
+      }
+      if (originDigits.length === 23 && !sgdePreflight && !sgdePreflightLoading) {
+        setError('Pulse Actualizar en traslado digital (SGDE) para verificar el expediente de origen.');
+        return;
+      }
+      if (originDigits.length === 23 && sgdePreflight?.status === 'sin_permiso_escritura') {
+        setError(
+          sgdePreflight.message ||
+            'El expediente de origen está en SGDE sin permiso de edición. Solicite al juzgado de primera instancia compartirlo con edición antes de radicar.',
+        );
+        return;
+      }
       if (originDigits.length === 23 && sgdePreflight?.status === 'no_encontrado') {
         setError(
           sgdePreflight.message ||
@@ -1146,8 +1328,12 @@ export default function NewCase() {
         court_id: courtId,
         radicado: radicadoFormatted,
         ...(deadlineAtIso ? { deadline_at: deadlineAtIso } : {}),
-        claimant: claimantNames || parsedData.from || 'Anónimo',
-        defendant: defendantNames || 'DESPACHO JUDICIAL',
+        claimant:
+          flow === 'tutela_segunda'
+            ? claimantNames
+            : claimantNames || parsedData.from || 'Anónimo',
+        defendant:
+          flow === 'tutela_segunda' ? defendantNames : defendantNames || 'DESPACHO JUDICIAL',
         status: 'received',
         source_channel: 'email',
         subject: parsedData.subject || 'Sin Asunto',
@@ -1163,7 +1349,9 @@ export default function NewCase() {
         derecho_tutelado_code: sierjuPatch.derecho_tutelado_code,
         sierju_process_class_id: sierjuPatch.sierju_process_class_id,
         sierju_metadata: sierjuPatch.sierju_metadata,
-        legal_identificaciones: aiAnalysis ? buildLegalIdentificaciones(aiAnalysis) : '',
+        legal_identificaciones: aiAnalysis
+          ? buildLegalIdentificaciones(aiAnalysis, isCivilCaseType(flow))
+          : '',
         raw_html: parsedData.html || '',
         email_metadata: {
           from: parsedData.from || '',
@@ -1178,6 +1366,34 @@ export default function NewCase() {
 
       caseRow.case_type = flow;
       if (processDefinitionId) caseRow.process_definition_id = processDefinitionId;
+      if (isCivilCaseType(flow)) {
+        const sierjuTipo = sierjuTipoCode ? findSierjuTipoByCode(sierjuTipoCode) : null;
+        const tipoProcesoLabel =
+          sierjuTipo?.label?.trim() ||
+          (aiAnalysis?.derechoTutelado || '').trim() ||
+          (parsedData.subject || '').trim() ||
+          null;
+        caseRow.catalog_metadata = buildInitialCivilCatalogMetadata({
+          caseType: flow,
+          stageCode: 'RADICACION',
+          tipoProceso: tipoProcesoLabel,
+          encargadoNombre: assignedTo ?? null,
+          anio: new Date().getFullYear(),
+        });
+        caseRow.operational_status = 'Para ingresar al despacho';
+      }
+      {
+        const extras: ExpedienteCuadernoExtra[] = [...extraCuadernosPreRadicate];
+        if (flow === 'civil_ejecutivo' && abrirCuadernoCautelares && !caseHasCautelarNotebook(extras)) {
+          extras.push(cautelarNotebookExtra());
+        }
+        if (flow === 'tutela_segunda' && !extras.some((e) => normalizeNotebookCode(e.code) === NOTEBOOK_SI_IMPUGNACION)) {
+          extras.push(segundaImpugnacionNotebookExtra());
+        }
+        if (extras.length > 0) {
+          caseRow.expediente_cuadernos_extra = mergeExtraCuadernos([], extras);
+        }
+      }
       if (flow === 'tutela_primera') {
         caseRow.origin_court = null;
         caseRow.origin_radicado = null;
@@ -1226,13 +1442,29 @@ export default function NewCase() {
           const att = attachments[i];
           const isEmail = isEmailBodyAttachment(att);
           const hasInlineContent = typeof att.content === 'string' && att.content.length > 0;
-          const canFetchSession =
+          const hasSessionRef =
             !isEmail &&
-            parseSessionId &&
-            typeof att.sessionIndex === 'number' &&
-            !hasInlineContent;
+            Boolean(parseSessionId) &&
+            typeof att.sessionIndex === 'number';
+          const attNotebook =
+            flow === 'tutela_segunda'
+              ? NOTEBOOK_SI_IMPUGNACION
+              : (() => {
+                  const raw = normalizeNotebookCode(att.notebookCode || notebookCode);
+                  if (
+                    raw === NOTEBOOK_PI_C02_CAUTELAR &&
+                    flow === 'civil_ejecutivo' &&
+                    !abrirCuadernoCautelares &&
+                    !caseHasCautelarNotebook(extraCuadernosPreRadicate)
+                  ) {
+                    return notebookCode;
+                  }
+                  return raw || notebookCode;
+                })();
+          const segundaDocPath =
+            flow === 'tutela_segunda' ? { sgde_folder_path: SGDE_PATH_SEGUNDA_IMPUGNACION } : {};
 
-          if (!isEmail && !hasInlineContent && !canFetchSession) {
+          if (!isEmail && !hasInlineContent && !hasSessionRef) {
             docRows.push({
               case_id: caseId,
               name: att.filename,
@@ -1243,8 +1475,11 @@ export default function NewCase() {
               content: null,
               is_from_link: !!att.isFromLink,
               sort_order: i,
-              notebook_code: notebookCode,
-              error: 'Sin contenido binario para subir a Storage.',
+              notebook_code: attNotebook,
+              ...segundaDocPath,
+              error: att.isFromLink
+                ? 'El archivo del enlace no se descargó; reintente la descarga del archivo antes de radicar.'
+                : 'Sin contenido binario para subir a Storage.',
             });
             continue;
           }
@@ -1255,12 +1490,19 @@ export default function NewCase() {
                 String(parsedData.subject || 'Correo de reparto'),
                 String(parsedData.text || '')
               );
-            } else if (canFetchSession && parseSessionId) {
-              bytes = await fetchParseSessionAttachment(parseSessionId, att.sessionIndex);
+            } else if (hasSessionRef && parseSessionId) {
+              // Preferir sesión: el borrador local quita el base64 y los PDF grandes fallan al decodificar inline.
+              try {
+                bytes = await fetchParseSessionAttachment(parseSessionId, att.sessionIndex);
+              } catch (sessionErr) {
+                if (!hasInlineContent) throw sessionErr;
+                bytes = base64ToUint8Array(att.content);
+              }
             } else {
               bytes = base64ToUint8Array(att.content);
             }
-          } catch {
+          } catch (e) {
+            const detail = e instanceof Error && e.message ? e.message : '';
             docRows.push({
               case_id: caseId,
               name: att.filename,
@@ -1271,8 +1513,11 @@ export default function NewCase() {
               content: null,
               is_from_link: !!att.isFromLink,
               sort_order: i,
-              notebook_code: notebookCode,
-              error: 'Base64 del adjunto inválido.',
+              notebook_code: attNotebook,
+              ...segundaDocPath,
+              error: detail
+                ? `No se pudo obtener el archivo: ${detail}`
+                : 'No se pudo obtener el contenido del adjunto para subir a Storage.',
             });
             continue;
           }
@@ -1299,7 +1544,8 @@ export default function NewCase() {
             storage_path: up.path,
             is_from_link: !!att.isFromLink,
             sort_order: i,
-            notebook_code: notebookCode,
+            notebook_code: attNotebook,
+            ...segundaDocPath,
           });
         }
       }
@@ -1368,71 +1614,76 @@ export default function NewCase() {
 
       if (flow === 'tutela_segunda') {
         const originDigits = originRadicado.replace(/\D/g, '');
-        if (
+        const sgdeRoot = sgdePreflight?.sgdeRootId;
+        const canSgdePost =
           originDigits.length === 23 &&
-          sgdePreflight?.sgdeRootId &&
-          (sgdePreflight.status === 'listo' || sgdePreflight.status === 'incompleto')
-        ) {
-          try {
-            const pub = await sgdePublishSegundaImpugnacion({
-              caseId,
-              originRadicado: originDigits,
-              sgdeRootId: sgdePreflight.sgdeRootId,
-            });
-            const { data: u } = await supabase.auth.getUser();
-            const uname = u.user?.user_metadata?.full_name || u.user?.email || 'Sistema';
-            const actRow = deepSanitizeForPostgresInsert({
-              case_id: caseId,
-              type: 'sgde_publish_segunda',
-              description: pub.message,
-              user_id: u.user?.id ?? null,
-              user_name: String(uname),
-              metadata: {
-                origin_radicado: originDigits,
-                sgde_root_id: pub.sgdeRootId,
-                impugnacion_folder_id: pub.impugnacionFolderId,
-                uploaded: pub.uploaded,
-                upload_failed: pub.uploadFailed,
-              },
-            });
-            const { error: actErr } = await supabase.from('case_actions').insert(actRow);
-            if (actErr) console.error('Actuación publicación SGDE segunda:', actErr);
-            if (pub.uploadFailed > 0) {
-              console.warn('SGDE impugnación partial failures:', pub.uploadErrors);
-            }
-          } catch (pubErr) {
-            console.error('Publicación SGDE impugnación tras radicación:', pubErr);
-          }
+          sgdeRoot &&
+          sgdePreflight?.segundaWriteAccess === 'ok' &&
+          (sgdePreflight?.status === 'listo' || sgdePreflight?.status === 'incompleto');
 
-          try {
-            const mig = await sgdeMigrateOriginToCase({
-              caseId,
-              originRadicado: originDigits,
-              sgdeRootId: sgdePreflight.sgdeRootId,
-              sgdeNodeIdHint: sgdeNodeIdHint || sgdePreflight.sgdeRootId,
-              notebookCode: NOTEBOOK_SI_C01_PRINCIPAL,
-            });
-            if (mig.migrated > 0) {
+        if (canSgdePost) {
+          void (async () => {
+            try {
+              const pub = await sgdePublishSegundaImpugnacion({
+                caseId,
+                originRadicado: originDigits,
+                sgdeRootId: sgdeRoot,
+              });
               const { data: u } = await supabase.auth.getUser();
               const uname = u.user?.user_metadata?.full_name || u.user?.email || 'Sistema';
-              const migRow = deepSanitizeForPostgresInsert({
+              const actRow = deepSanitizeForPostgresInsert({
                 case_id: caseId,
-                type: 'sgde_migrate',
-                description: `Copiados ${mig.migrated} PDF de SGDE al expediente digital Tutelia.`,
+                type: 'sgde_publish_segunda',
+                description: pub.message,
                 user_id: u.user?.id ?? null,
                 user_name: String(uname),
                 metadata: {
                   origin_radicado: originDigits,
-                  sgde_root_id: mig.sgdeRootId,
-                  migrated: mig.migrated,
-                  failed: mig.failed,
+                  sgde_root_id: pub.sgdeRootId,
+                  impugnacion_folder_id: pub.impugnacionFolderId,
+                  uploaded: pub.uploaded,
+                  upload_failed: pub.uploadFailed,
                 },
               });
-              await supabase.from('case_actions').insert(migRow);
+              const { error: actErr } = await supabase.from('case_actions').insert(actRow);
+              if (actErr) console.error('Actuación publicación SGDE segunda:', actErr);
+              if (pub.uploadFailed > 0) {
+                console.warn('SGDE impugnación partial failures:', pub.uploadErrors);
+              }
+            } catch (pubErr) {
+              console.error('Publicación SGDE impugnación tras radicación:', pubErr);
             }
-          } catch (migErr) {
-            console.error('Copia SGDE → Tutelia tras radicación:', migErr);
-          }
+
+            try {
+              const mig = await sgdeMigrateOriginToCase({
+                caseId,
+                originRadicado: originDigits,
+                sgdeRootId: sgdeRoot,
+                sgdeNodeIdHint: sgdeNodeIdHint || sgdeRoot,
+                notebookCode: NOTEBOOK_SI_C01_PRINCIPAL,
+              });
+              if (mig.migrated > 0) {
+                const { data: u } = await supabase.auth.getUser();
+                const uname = u.user?.user_metadata?.full_name || u.user?.email || 'Sistema';
+                const migRow = deepSanitizeForPostgresInsert({
+                  case_id: caseId,
+                  type: 'sgde_migrate',
+                  description: `Copiados ${mig.migrated} PDF de SGDE al expediente digital Tutelia.`,
+                  user_id: u.user?.id ?? null,
+                  user_name: String(uname),
+                  metadata: {
+                    origin_radicado: originDigits,
+                    sgde_root_id: mig.sgdeRootId,
+                    migrated: mig.migrated,
+                    failed: mig.failed,
+                  },
+                });
+                await supabase.from('case_actions').insert(migRow);
+              }
+            } catch (migErr) {
+              console.error('Copia SGDE → Tutelia tras radicación:', migErr);
+            }
+          })();
         }
       }
 
@@ -1523,7 +1774,11 @@ export default function NewCase() {
       }
       if (!added.length) return;
       const startIdx = attachments.length;
-      setAttachments((prev) => [...prev, ...added]);
+      const withNotebook = added.map((a) => ({
+        ...a,
+        notebookCode: defaultNotebookForFlow,
+      }));
+      setAttachments((prev) => [...prev, ...withNotebook]);
       setSelectedDocIndex(startIdx);
       setSelectedForMerge([]);
       setEditingIndex(null);
@@ -1597,26 +1852,46 @@ export default function NewCase() {
               ? await fetchParseSessionAttachment(parseSessionId, att.sessionIndex)
               : base64ToUint8Array(att.content);
         }
-        const donorPdf = await PDFDocument.load(pdfBytes);
-        const copiedPages = await mergedPdf.copyPages(donorPdf, donorPdf.getPageIndices());
-        copiedPages.forEach((page) => mergedPdf.addPage(page));
+        await appendPdfBytesToDocument(mergedPdf, pdfBytes);
       }
 
-      const mergedPdfBase64 = await mergedPdf.saveAsBase64();
-      
-      // Determine new list: remove selected, insert merged at first selected position
-      const firstSelectedIdx = Math.min(...selectedForMerge);
-      const newAttachments = attachments.filter((_, idx) => !selectedForMerge.includes(idx));
-      
+      const mergedBytes = await mergedPdf.save();
+      const mergedName = 'DocumentosUnificados';
+      const fromLink = itemsToMerge.some((a) => a.isFromLink);
+
+      // Persistir en sesión de parseo: el borrador no guarda base64 y sin sessionIndex
+      // el visor queda en «Sin vista previa (adjunto no cargado)».
+      let sid = parseSessionId;
+      let sessionIndex: number | undefined;
+      try {
+        const uploaded = await uploadParseSessionAttachment({
+          parseSessionId: sid,
+          bytes: mergedBytes,
+          filename: mergedName,
+          contentType: 'application/pdf',
+          isFromLink: fromLink,
+        });
+        sid = uploaded.parseSessionId;
+        sessionIndex = uploaded.sessionIndex;
+        if (sid !== parseSessionId) setParseSessionId(sid);
+      } catch (uploadErr) {
+        console.warn('[merge] no se pudo subir a sesión; se usa base64 en memoria', uploadErr);
+      }
+
+      const INLINE_LIMIT = 14 * 1024 * 1024;
+      const keepInline = !sessionIndex && mergedBytes.length <= INLINE_LIMIT;
       const mergedDoc = {
-        filename: 'DocumentosUnificados.pdf',
-        originalName: 'DocumentosUnificados.pdf',
-        size: Math.round(mergedPdfBase64.length * 0.75),
+        filename: mergedName,
+        originalName: mergedName,
+        size: mergedBytes.length,
         contentType: 'application/pdf',
-        content: mergedPdfBase64,
-        isFromLink: itemsToMerge.some((a) => a.isFromLink),
+        content: keepInline ? uint8ArrayToBase64(mergedBytes) : '',
+        isFromLink: fromLink,
+        ...(typeof sessionIndex === 'number' ? { sessionIndex } : {}),
       };
 
+      const firstSelectedIdx = Math.min(...selectedForMerge);
+      const newAttachments = attachments.filter((_, idx) => !selectedForMerge.includes(idx));
       newAttachments.splice(firstSelectedIdx, 0, mergedDoc);
       setAttachments(newAttachments);
       setSelectedDocIndex(firstSelectedIdx);
@@ -1624,7 +1899,12 @@ export default function NewCase() {
       setError(null);
     } catch (err) {
       console.error(err);
-      setError('Error al unir los documentos. Asegúrese de que sean PDF válidos.');
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(
+        /encrypt|password|contraseña/i.test(msg)
+          ? 'Error al unir: al menos un PDF está protegido con contraseña y no se puede procesar.'
+          : 'Error al unir los documentos. Asegúrese de que sean PDF válidos.'
+      );
     } finally {
       setIsMerging(false);
     }
@@ -1777,19 +2057,32 @@ export default function NewCase() {
           </p>
         </div>
         <div className="px-4 py-2 bg-blue-50 text-accent rounded-lg border border-blue-100 text-xs font-bold uppercase tracking-widest">
-           Canal Digital
+          Canal Digital
         </div>
       </header>
 
       {!parsedData ? (
-        <CaseEmailParser
-          file={file}
-          onFileInputChange={handleFileChange}
-          onDrop={onDrop}
-          onParseEmail={parseEmail}
-          isParsing={isParsing}
-          error={error}
-        />
+        <div className="space-y-4">
+          <CaseEmailParser
+            file={file}
+            onFileInputChange={handleFileChange}
+            onDrop={onDrop}
+            onParseEmail={parseEmail}
+            isParsing={isParsing}
+            error={error}
+          />
+          {hasLocalDraft ? (
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                onClick={discardDraftAndRestart}
+                className="text-xs text-slate-400 hover:text-slate-600 underline-offset-2 hover:underline"
+              >
+                Descartar borrador
+              </button>
+            </div>
+          ) : null}
+        </div>
       ) : radicationResult ? (
         <motion.div
           initial={{ opacity: 0, y: 16 }}
@@ -1827,16 +2120,6 @@ export default function NewCase() {
         >
           {/* Top Bar & Radicado Section (Full Width) */}
           <div className="lg:col-span-12 space-y-6">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => resetNewCaseWizard()}
-                className="text-xs font-bold text-slate-400 hover:text-accent flex items-center gap-1"
-              >
-                <ChevronLeft className="w-3 h-3" /> VOLVER A CARGAR
-              </button>
-            </div>
-
             <CaseTypeInferredBanner
               caseFlowType={caseFlowType ?? 'tutela_primera'}
               sierjuCode={sierjuTipoCode}
@@ -1887,6 +2170,7 @@ export default function NewCase() {
                 emailDigest={segundaEmailDigest}
                 disabled={isRadicating}
                 onPreflightChange={setSgdePreflight}
+                onPreflightLoadingChange={setSgdePreflightLoading}
                 onSegundaExtract={applySegundaFieldsExtract}
               />
             ) : null}
@@ -1912,6 +2196,27 @@ export default function NewCase() {
                   : undefined
               }
             />
+
+            {caseFlowType === 'civil_ejecutivo' ? (
+              <label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50/50 px-4 py-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-accent focus:ring-accent/30"
+                  checked={abrirCuadernoCautelares}
+                  disabled={isRadicating}
+                  onChange={(e) => setAbrirCuadernoCautelares(e.target.checked)}
+                />
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-slate-800">
+                    Abrir cuaderno de medidas cautelares (C02)
+                  </span>
+                  <span className="mt-0.5 block text-[11px] leading-snug text-slate-600">
+                    Queda listo en el expediente digital; al crear o vincular SGDE se crea la carpeta
+                    bajo Primera instancia.
+                  </span>
+                </span>
+              </label>
+            ) : null}
           </div>
 
           {/* AI Analysis (Full Width) */}
@@ -1919,6 +2224,8 @@ export default function NewCase() {
             section="ai"
             aiAnalysis={aiAnalysis}
             onDismissAnalysis={() => setAiAnalysis(null)}
+            onChangeAnalysis={setAiAnalysis}
+            isCivilProcess={isCivilCaseType(caseFlowType)}
           />
 
           {caseFlowType ? (
@@ -1929,6 +2236,7 @@ export default function NewCase() {
                 processDefinitionId={processForCaseType(caseFlowType)?.id}
                 valueDerechoCode={sierjuDerechoSel}
                 valueClassId={sierjuClassIdSel}
+                valueCode={sierjuTipoCode}
                 disabled={isRadicating}
                 label={
                   isCivilCaseType(caseFlowType)
@@ -1972,8 +2280,8 @@ export default function NewCase() {
           </div>
 
           {/* Metadatos y visor alineados en la misma fila */}
-          <div className="lg:col-span-12 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            <div className="lg:col-span-5 min-w-0">
+          <div className="lg:col-span-12 grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            <div className="min-w-0">
               <CaseLegalAnalysisPanel
                 section="metadata"
                 parsedData={parsedData}
@@ -2004,10 +2312,58 @@ export default function NewCase() {
                 onAddAttachments={handleAddAttachments}
                 onRemoveAttachment={handleRemoveAttachment}
                 isAddingAttachments={isAddingAttachments}
+                isCivilProcess={isCivilCaseType(caseFlowType)}
+                showCautelarCuadernoOption={caseFlowType === 'civil_ejecutivo'}
+                abrirCuadernoCautelares={abrirCuadernoCautelares}
+                onAbrirCuadernoCautelaresChange={setAbrirCuadernoCautelares}
+                extraCuadernos={extraCuadernosPreRadicate}
+                onAddExtraCuaderno={(draft) => {
+                  const trimmed = draft.label.trim();
+                  if (!trimmed) return;
+                  const presetCode = draft.code
+                    ? normalizeNotebookCode(draft.code)
+                    : '';
+                  if (presetCode === NOTEBOOK_PI_C02_CAUTELAR) {
+                    setAbrirCuadernoCautelares(true);
+                    setExtraCuadernosPreRadicate((prev) =>
+                      caseHasCautelarNotebook(prev)
+                        ? prev
+                        : mergeExtraCuadernos(prev, [cautelarNotebookExtra()])
+                    );
+                    return;
+                  }
+                  const code = presetCode || `PI_INC_${Date.now()}`;
+                  const label =
+                    NOTEBOOK_META[code]?.label || trimmed;
+                  setExtraCuadernosPreRadicate((prev) =>
+                    mergeExtraCuadernos(prev, [{ code, label }])
+                  );
+                }}
+                onRemoveExtraCuaderno={(code) => {
+                  const normalized = normalizeNotebookCode(code);
+                  setExtraCuadernosPreRadicate((prev) =>
+                    prev.filter((e) => normalizeNotebookCode(e.code) !== normalized)
+                  );
+                  if (normalized === NOTEBOOK_PI_C02_CAUTELAR) {
+                    setAbrirCuadernoCautelares(false);
+                  }
+                }}
+                notebookOptions={radicationNotebookOptions}
+                defaultNotebookCode={defaultNotebookForFlow}
+                onChangeAttachmentNotebook={(index, notebookCodeSel) => {
+                  setAttachments((prev) =>
+                    prev.map((att, i) =>
+                      i === index
+                        ? { ...att, notebookCode: normalizeNotebookCode(notebookCodeSel) }
+                        : att
+                    )
+                  );
+                }}
+                cuadernosDisabled={isRadicating}
               />
             </div>
 
-            <div className="lg:col-span-7 card-modern overflow-hidden bg-white flex flex-col min-h-[min(78vh,820px)] max-h-[min(78vh,820px)] min-w-0">
+            <div className="card-modern overflow-hidden bg-white flex flex-col min-h-[min(78vh,820px)] max-h-[min(78vh,820px)] min-w-0">
              <div className="shrink-0 px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-4">
                   <h2 className="text-sm font-bold text-slate-900 uppercase tracking-widest">
@@ -2072,6 +2428,16 @@ export default function NewCase() {
                )}
              </div>
             </div>
+          </div>
+
+          <div className="lg:col-span-12 flex justify-end pt-2">
+            <button
+              type="button"
+              onClick={discardDraftAndRestart}
+              className="text-xs text-slate-400 hover:text-slate-600 underline-offset-2 hover:underline"
+            >
+              Descartar borrador
+            </button>
           </div>
         </motion.div>
       )}

@@ -1,4 +1,5 @@
 import type { CaseType } from '../types';
+import type { CaseNavScope } from './case-process-scope';
 
 export type TutelasListFilter =
   | { kind: 'tipo'; tipo: CaseType }
@@ -44,9 +45,12 @@ export function tutelasListPageTitle(filter: TutelasListFilter): string {
   return 'Tutelas';
 }
 
-export function isTutelasRouteActive(pathname: string, search = ''): boolean {
+export function isTutelasRouteActive(pathname: string, search = '', caseNavScope?: CaseNavScope | null): boolean {
   if (pathname === '/cases') return true;
   if (pathname.startsWith('/case/')) {
+    if (caseNavScope === 'procesos') return false;
+    if (caseNavScope === 'tutelas') return true;
+    if (caseNavScope == null) return false;
     const p = new URLSearchParams(search);
     return p.get('from') !== 'procesos';
   }

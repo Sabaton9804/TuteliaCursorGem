@@ -16,3 +16,20 @@ export const formatRadicado = (radicado: string): string => {
     radicado.slice(21, 23)  // Instancia (00)
   ].join('-');
 };
+
+/**
+ * Lista de partes separadas con `;` o `,`: muestra la primera y «y otros» si hay más.
+ * No parte por la palabra «y» (rompe razones sociales como «PROMOCIONES Y COBRANZAS … S.A.»).
+ * El listado completo conviene dejarlo en `title` del elemento.
+ */
+export function formatPartesCompact(raw: string | undefined | null, empty = '—'): string {
+  const text = (raw || '').trim();
+  if (!text) return empty;
+  const parts = text
+    .split(/\s*;\s*|\s*,\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return empty;
+  if (parts.length === 1) return parts[0]!;
+  return `${parts[0]} y otros`;
+}

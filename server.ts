@@ -22,6 +22,7 @@ import { createPrecedentsFileRouter } from './precedents-routes';
 import { SgdeClient, getDefaultSgdeBaseUrl } from './server/sgde-client';
 import {
   appendParseSessionAttachments,
+  createParseSession,
   getParseSession,
   markParseSessionLinkError,
   sweepParseSessions,
@@ -1113,6 +1114,11 @@ async function startServer() {
     storage: multer.memoryStorage(),
     limits: { fileSize: 32 * 1024 * 1024 },
   });
+  /** Portal / uniones pueden superar 32 MB (anexos ~50 MB). */
+  const uploadLarge = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 80 * 1024 * 1024 },
+  });
 
   app.use(express.json({ limit: BODY_LIMIT }));
   app.use(express.urlencoded({ extended: true, limit: BODY_LIMIT }));
@@ -1126,7 +1132,7 @@ async function startServer() {
   });
 
   registerOutlookRoutes(app, getSupabaseAdmin);
-  registerSgdeRoutes(app, getSupabaseAdmin);
+  registerSgdeRoutes(app, getSupabaseAdmin, getOpenAiClient);
   registerPlatformRoutes(app, getSupabaseAdmin);
 
   app.post('/api/sgde/case-tree', async (req, res) => {
@@ -1244,6 +1250,33 @@ async function startServer() {
     }
   });
 
+  app.get('/api/parse-session/:sessionId', async (req, res) => {
+    sweepParseSessions();
+    const authHdr = await requireAuthenticatedCaller(req, getSupabaseAdmin);
+    if (authHdr.ok === false) {
+      return res.status(authHdr.status).json({ error: authHdr.message });
+    }
+    const sessionId = String(req.params.sessionId || '');
+    const session = getParseSession(sessionId);
+    if (!session) {
+      return res.status(404).json({
+        error:
+          'Sesión de parseo expirada o inexistente (p. ej. reinicio del servidor). Vuelva a cargar el archivo .eml.',
+      });
+    }
+    if (session.ownerUserId && session.ownerUserId !== authHdr.userId) {
+      return res.status(403).json({ error: 'No autorizado para esta sesión de parseo.' });
+    }
+    touchParseSession(sessionId);
+    return res.json({
+      parseSessionId: sessionId,
+      attachments: session.attachments.map(({ buffer, ...meta }) => ({
+        ...meta,
+        hasBuffer: Boolean(buffer?.length),
+      })),
+    });
+  });
+
   app.get('/api/parse-session/:sessionId/attachment/:index', async (req, res) => {
     sweepParseSessions();
     const authHdr = await requireAuthenticatedCaller(req, getSupabaseAdmin);
@@ -1275,6 +1308,125 @@ async function startServer() {
     res.setHeader('Content-Length', String(row.buffer.length));
     res.setHeader('Cache-Control', 'private, max-age=300');
     res.send(row.buffer);
+  });
+
+  /** Sube un PDF (p. ej. unión local) a la sesión para poder previsualizarlo sin base64 en el cliente. */
+  app.post(
+    '/api/parse-session/:sessionId/upload',
+    uploadLarge.single('file'),
+    async (req, res) => {
+      sweepParseSessions();
+      const authHdr = await requireAuthenticatedCaller(req, getSupabaseAdmin);
+      if (authHdr.ok === false) {
+        return res.status(authHdr.status).json({ error: authHdr.message });
+      }
+      const sessionId = String(req.params.sessionId || '');
+      const session = getParseSession(sessionId);
+      if (!session) {
+        return res.status(404).json({
+          error:
+            'Sesión de parseo expirada o inexistente. Vuelva a cargar el archivo .eml antes de unir documentos.',
+        });
+      }
+      if (session.ownerUserId && session.ownerUserId !== authHdr.userId) {
+        return res.status(403).json({ error: 'No autorizado para esta sesión de parseo.' });
+      }
+      const multerReq = req as Express.Request & {
+        file?: { buffer: Buffer; originalname?: string; mimetype?: string; size: number };
+      };
+      const file = multerReq.file;
+      if (!file?.buffer?.length) {
+        return res.status(400).json({ error: 'No se recibió el archivo PDF.' });
+      }
+      const bodyName =
+        req.body && typeof req.body.filename === 'string' ? String(req.body.filename).trim() : '';
+      const filename =
+        bodyName ||
+        String(file.originalname || 'DocumentosUnificados').replace(/\.[^.]+$/, '') ||
+        'DocumentosUnificados';
+      const contentType =
+        (file.mimetype && String(file.mimetype)) ||
+        (typeof req.body?.contentType === 'string' ? req.body.contentType : '') ||
+        'application/pdf';
+      const isFromLink = String(req.body?.isFromLink || '') === 'true';
+      const merged = appendParseSessionAttachments(sessionId, [
+        {
+          filename,
+          originalName: filename,
+          contentType,
+          size: file.buffer.length,
+          isFromLink,
+          buffer: file.buffer,
+        },
+      ]);
+      if (!merged) {
+        return res.status(404).json({ error: 'No se pudo guardar el adjunto en la sesión.' });
+      }
+      const row = merged[merged.length - 1];
+      touchParseSession(sessionId);
+      return res.json({
+        ok: true,
+        parseSessionId: sessionId,
+        attachment: {
+          sessionIndex: row.sessionIndex,
+          filename: row.filename,
+          originalName: row.originalName,
+          contentType: row.contentType,
+          size: row.size,
+          isFromLink: row.isFromLink,
+        },
+      });
+    },
+  );
+
+  /** Crea sesión vacía o con un PDF (cuando aún no hay parseSessionId, p. ej. unión offline). */
+  app.post('/api/parse-session', uploadLarge.single('file'), async (req, res) => {
+    sweepParseSessions();
+    const authHdr = await requireAuthenticatedCaller(req, getSupabaseAdmin);
+    if (authHdr.ok === false) {
+      return res.status(authHdr.status).json({ error: authHdr.message });
+    }
+    const multerReq = req as Express.Request & {
+      file?: { buffer: Buffer; originalname?: string; mimetype?: string; size: number };
+    };
+    const file = multerReq.file;
+    if (!file?.buffer?.length) {
+      const id = createParseSession([], authHdr.userId);
+      return res.json({ parseSessionId: id, attachments: [] });
+    }
+    const bodyName =
+      req.body && typeof req.body.filename === 'string' ? String(req.body.filename).trim() : '';
+    const filename =
+      bodyName ||
+      String(file.originalname || 'Documento').replace(/\.[^.]+$/, '') ||
+      'Documento';
+    const contentType = (file.mimetype && String(file.mimetype)) || 'application/pdf';
+    const id = createParseSession(
+      [
+        {
+          sessionIndex: 0,
+          order: 0,
+          filename,
+          originalName: filename,
+          contentType,
+          size: file.buffer.length,
+          isFromLink: String(req.body?.isFromLink || '') === 'true',
+          buffer: file.buffer,
+        },
+      ],
+      authHdr.userId,
+    );
+    return res.json({
+      parseSessionId: id,
+      attachment: {
+        sessionIndex: 0,
+        filename,
+        originalName: filename,
+        contentType,
+        size: file.buffer.length,
+        isFromLink: String(req.body?.isFromLink || '') === 'true',
+      },
+    });
   });
 
   /** Descarga el PDF/ZIP del portal (Demanda en línea) y lo agrega a la sesión (~30–90 s para ~50 MB). */
@@ -1668,6 +1820,8 @@ async function startServer() {
       const openai = getOpenAiClient();
       const { analysis, lengthOk, promptVersion } = await runLegalAnalysisWithOpenAi(openai, {
         caseType,
+        documentKind:
+          body.documentKind === 'fallo_primera' ? 'fallo_primera' : 'radicacion',
         pdfBase64: sliced.base64 || undefined,
         pdfText: pdfText.trim() || undefined,
         pdfWasTruncated: sliced.truncated,

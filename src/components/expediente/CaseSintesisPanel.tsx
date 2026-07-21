@@ -8,8 +8,10 @@ import { useCaseDetail } from '../../contexts/CaseDetailContext';
 import { formatRadicado } from '../../lib/formatters';
 import { isTutelaFalloPlazoCaseType, plazoFallarAjusteManualHint, plazoFallarLabelForCase } from '../../lib/decreto-2591-plazos';
 import { plazoFallarSnapshotForCase } from '../../lib/plazo-fallar-tutela';
+import { isCivilCaseType, partyRoleLabels } from '../../lib/process-product-scope';
 import { CASE_STATUS_LABEL } from './case-detail-status-labels';
 import { PrecedentSourceBadge } from './PrecedentSourceBadge';
+import { apiAuthHeaders } from '../../lib/supabase-write-auth';
 
 export type CaseSintesisPanelProps = {
   isSummarizing: boolean;
@@ -43,6 +45,94 @@ type PrecedentMatch = {
 
 const PRECEDENTES_ACUERDO_FOOTNOTE =
   'Sugerencia informativa. Decisión exclusiva del juez. Uso registrado conforme al Acuerdo PCSJA24-12243';
+
+type SintesisPartyRow = {
+  nombre: string;
+  identificacion?: string;
+  email?: string;
+};
+
+/** Parte campos unidos con `;` (como al guardar desde el análisis IA) en filas nombre + CC. */
+function parseJoinedPartyRows(
+  names: string | undefined,
+  ids: string | undefined,
+  emails: string | undefined,
+): SintesisPartyRow[] {
+  const split = (s?: string) =>
+    (s || '')
+      .split(/\s*;\s*|\n+/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+
+  const ns = split(names);
+  const is = split(ids);
+  const es = split(emails);
+  const n = Math.max(ns.length, is.length, es.length);
+  if (n === 0) {
+    const fallback = (names || '').trim();
+    return fallback ? [{ nombre: fallback }] : [];
+  }
+
+  const rows: SintesisPartyRow[] = [];
+  for (let i = 0; i < n; i += 1) {
+    const nombre = ns[i] || (n === 1 ? (names || '').trim() : `Parte ${i + 1}`);
+    if (!nombre && !is[i] && !es[i]) continue;
+    rows.push({
+      nombre: nombre || '—',
+      ...(is[i] ? { identificacion: is[i] } : {}),
+      ...(es[i] ? { email: es[i] } : {}),
+    });
+  }
+  return rows;
+}
+
+function PartySideList({
+  title,
+  names,
+  ids,
+  emails,
+}: {
+  title: string;
+  names?: string;
+  ids?: string;
+  emails?: string;
+}) {
+  const rows = parseJoinedPartyRows(names, ids, emails);
+  return (
+    <div className="min-w-0 px-6 py-6 sm:px-8 sm:py-7 space-y-3">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">{title}</p>
+      {rows.length === 0 ? (
+        <p className="text-sm text-slate-400">Sin datos</p>
+      ) : (
+        <ul className="space-y-3">
+          {rows.map((p, i) => (
+            <li key={`${p.nombre}-${p.identificacion || i}`} className="min-w-0 space-y-1">
+              <p className="text-[15px] font-bold text-slate-800 leading-snug tracking-tight">{p.nombre}</p>
+              <div className="flex flex-wrap gap-2">
+                {p.identificacion ? (
+                  <span className="inline-flex rounded-md border border-slate-100 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-600">
+                    {/^\d[\d.\-]*\d$|^\d+$/.test(p.identificacion)
+                      ? `CC ${p.identificacion}`
+                      : p.identificacion}
+                  </span>
+                ) : (
+                  <span className="inline-flex rounded-md border border-slate-100 bg-slate-50/80 px-2.5 py-1 text-[10px] font-medium text-slate-400">
+                    Identificación no disponible
+                  </span>
+                )}
+              </div>
+              {p.email ? (
+                <p className="text-xs font-medium text-sky-700/90 truncate" title={p.email}>
+                  {p.email}
+                </p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 function rulingSenseVariant(sense: string): 'concede' | 'niega' | 'neutral' {
   const t = sense.trim().toLowerCase();
@@ -88,7 +178,7 @@ export function CaseSintesisPanel({
       try {
         const res = await fetch('/api/precedents/search', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await apiAuthHeaders({ json: true }),
           body: JSON.stringify({ courtId, queryText }),
         });
         const j = (await res.json().catch(() => ({}))) as { results?: PrecedentMatch[]; error?: string };
@@ -116,6 +206,11 @@ export function CaseSintesisPanel({
   const plazoFallarLabel = plazoFallarLabelForCase(caseItem.caseType);
   const plazoFallarAjusteHint = plazoFallarAjusteManualHint(caseItem.caseType);
   const plazoFallarSnap = plazoFallarSnapshotForCase(caseItem);
+  const isCivil = isCivilCaseType(caseItem.caseType);
+  const partyLabels = partyRoleLabels(caseItem.caseType);
+  const claimantsTitle = partyLabels.claimantPlural;
+  const defendantsTitle = partyLabels.defendantPlural;
+  const claimantSingularLower = partyLabels.claimantSingular.toLowerCase();
 
   return (
     <div className="card-modern w-full min-w-0 overflow-hidden shadow-sm transition-all hover:shadow-lg">
@@ -138,46 +233,18 @@ export function CaseSintesisPanel({
 
       <div className="bg-white">
         <div className="grid grid-cols-1 divide-y divide-slate-100 border-b border-slate-100 md:grid-cols-2 md:divide-x md:divide-y-0">
-          <div className="min-w-0 px-6 py-6 sm:px-8 sm:py-7 space-y-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Accionante</p>
-            <p className="text-[15px] font-bold text-slate-800 leading-snug tracking-tight">{caseItem.claimant}</p>
-            <div className="flex flex-wrap gap-2">
-              {caseItem.claimantId ? (
-                <span className="inline-flex rounded-md border border-slate-100 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-600">
-                  {caseItem.claimantId}
-                </span>
-              ) : (
-                <span className="inline-flex rounded-md border border-slate-100 bg-slate-50/80 px-2.5 py-1 text-[10px] font-medium text-slate-400">
-                  Identificación no disponible
-                </span>
-              )}
-            </div>
-            {caseItem.claimantEmail ? (
-              <p className="text-xs font-medium text-sky-700/90 truncate" title={caseItem.claimantEmail}>
-                {caseItem.claimantEmail}
-              </p>
-            ) : null}
-          </div>
-          <div className="min-w-0 px-6 py-6 sm:px-8 sm:py-7 space-y-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Accionado</p>
-            <p className="text-[15px] font-bold text-slate-800 leading-snug tracking-tight">{caseItem.defendant}</p>
-            <div className="flex flex-wrap gap-2">
-              {caseItem.defendantId ? (
-                <span className="inline-flex rounded-md border border-slate-100 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-600">
-                  {caseItem.defendantId}
-                </span>
-              ) : (
-                <span className="inline-flex rounded-md border border-slate-100 bg-slate-50/80 px-2.5 py-1 text-[10px] font-medium text-slate-400">
-                  Identificación no disponible
-                </span>
-              )}
-            </div>
-            {caseItem.defendantEmail ? (
-              <p className="text-xs font-medium text-sky-700/90 truncate" title={caseItem.defendantEmail}>
-                {caseItem.defendantEmail}
-              </p>
-            ) : null}
-          </div>
+          <PartySideList
+            title={claimantsTitle}
+            names={caseItem.claimant}
+            ids={caseItem.claimantId}
+            emails={caseItem.claimantEmail}
+          />
+          <PartySideList
+            title={defendantsTitle}
+            names={caseItem.defendant}
+            ids={caseItem.defendantId}
+            emails={caseItem.defendantEmail}
+          />
         </div>
 
         {caseItem.legalHechos || caseItem.legalPretensiones || caseItem.legalDerechoTutelado ? (
@@ -281,7 +348,7 @@ export function CaseSintesisPanel({
                       <p className="mt-1 line-clamp-2 text-[10px] text-slate-600">
                         {p.source_type === 'jurisprudencia'
                           ? `Corporación: ${p.source_corporation || '—'}`
-                          : `Accionado: ${p.defendant}`}
+                          : `${partyLabels.defendantSingular}: ${p.defendant}`}
                       </p>
                       <button
                         type="button"
@@ -334,15 +401,15 @@ export function CaseSintesisPanel({
                 type="button"
                 onClick={() => void onSummarize()}
                 disabled={isSummarizing}
-                title="Llama a la IA con el accionante y el texto del expediente para producir un informe en markdown y guardarlo en el campo síntesis del caso."
+                title={`Llama a la IA con el ${claimantSingularLower} y el texto del expediente para producir un informe en markdown y guardarlo en el campo síntesis del caso.`}
                 className="text-[10px] font-bold text-accent uppercase tracking-widest bg-blue-50 px-4 py-2.5 rounded-lg border border-blue-100 hover:bg-blue-100/80 flex items-center gap-2 disabled:opacity-50"
               >
                 <Sparkles className="w-3 h-3" /> Generar síntesis operativa completa
               </button>
               <p className="text-[11px] text-slate-500 leading-relaxed px-2">
                 Construye el texto de <span className="font-semibold text-slate-600">síntesis procesal</span> (markdown)
-                a partir del accionante y del cuerpo del correo o expediente; no reemplaza hechos ni pretensiones ya
-                guardados.
+                a partir del {claimantSingularLower} y del cuerpo del correo o expediente; no reemplaza hechos ni
+                pretensiones ya guardados.
               </p>
             </div>
           )}

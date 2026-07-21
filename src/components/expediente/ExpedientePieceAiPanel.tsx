@@ -70,6 +70,8 @@ export function ExpedientePieceAiPanel({
       if (cancelled) return;
       if (cached) {
         setResult(cached);
+        // Ya había lectura: mostrar el resumen al abrir la pieza (no solo el chip).
+        setExpanded(true);
       }
     })();
     return () => {
@@ -84,14 +86,22 @@ export function ExpedientePieceAiPanel({
   }, [refreshToken, gate.allowed, load, doc, pdfPageCount]);
 
   const busy = loading || refreshing;
+  const canToggleCached = Boolean(result) && !busy;
+  const primaryDisabled = busy || (!result && !gate.allowed);
 
   return (
     <div className="shrink-0 border-t border-slate-200 bg-slate-50/95">
       <div className="flex flex-wrap items-center gap-2 px-3 py-2 sm:px-4">
         <button
           type="button"
-          disabled={!gate.allowed || busy}
-          title={gate.reason}
+          disabled={primaryDisabled}
+          title={
+            result
+              ? expanded
+                ? 'Ocultar resumen de lectura IA'
+                : 'Ver resumen de lectura IA guardado'
+              : gate.reason
+          }
           onClick={() => {
             if (result && !busy) {
               setExpanded((v) => !v);
@@ -106,7 +116,7 @@ export function ExpedientePieceAiPanel({
           ) : (
             <Sparkles className="h-3.5 w-3.5" />
           )}
-          Lectura rápida con IA
+          {result ? (expanded ? 'Ocultar lectura IA' : 'Ver lectura IA') : 'Lectura rápida con IA'}
         </button>
         {result ? (
           <button
@@ -121,9 +131,16 @@ export function ExpedientePieceAiPanel({
           </button>
         ) : null}
         {result?.cached ? (
-          <span className="text-[9px] font-medium text-slate-500">Resultado guardado</span>
+          <button
+            type="button"
+            disabled={!canToggleCached}
+            onClick={() => setExpanded((v) => !v)}
+            className="text-[9px] font-medium text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline disabled:no-underline"
+          >
+            Resultado guardado{expanded ? '' : ' · ver'}
+          </button>
         ) : null}
-        {!gate.allowed && gate.reason ? (
+        {!gate.allowed && !result && gate.reason ? (
           <span className="text-[9px] leading-snug text-slate-500">{gate.reason}</span>
         ) : null}
       </div>

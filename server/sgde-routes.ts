@@ -11,11 +11,14 @@ import {
 } from './sgde-credentials';
 import { importExpedienteFromSgde } from './sgde-import';
 import { migrateSgdeOriginToCase, preflightSgdeOriginExpediente } from './sgde-migrate';
-import { publishSegundaTrasladoToSgdeImpugnacion } from './sgde-segunda-impugnacion';
+import { publishSegundaTrasladoToSgdeImpugnacion, probeSegundaInstanciaWriteAccess } from './sgde-segunda-impugnacion';
 import { createExpedienteInSgde } from './sgde-create-expediente';
 import { syncDocumentsWithSgde } from './sgde-sync-documents';
 import { repairStorageFromSgde, ensureCaseDocumentViewUrl } from './sgde-repair-storage';
+import { repairCorreoRepartoPdf } from './repair-correo-reparto';
+import { refreshSegundaPartiesFromFallo } from './segunda-fallo-parties-service';
 import { signCaseDocumentInSgde } from './sgde-sign-document';
+import type OpenAI from 'openai';
 import { parseSegundaInstanciaFromEmail } from './sgde-segunda-instancia-parse';
 import { SgdeClient, getDefaultSgdeBaseUrl } from './sgde-client';
 import { formatSgdeConnectionError } from './sgde-tls';
@@ -52,9 +55,13 @@ async function sgdeClientForRequest(
   };
 }
 
-export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => SupabaseClient): void {
+export function registerSgdeRoutes(
+  app: Express,
+  getSupabaseAdmin: () => SupabaseClient,
+  getOpenAi?: () => OpenAI,
+): void {
   console.info(
-    `[tutelia] SGDE API (${SGDE_API_BUILD}): status, credentials, case-tree, link, preflight-origin, preview-node, migrate-origin-to-case, import-expediente, create-expediente, sync-documents, repair-storage, document-view-url, sign-document`
+    `[tutelia] SGDE API (${SGDE_API_BUILD}): status, credentials, case-tree, link, preflight-origin, probe-segunda-write, preview-node, migrate-origin-to-case, import-expediente, create-expediente, sync-documents, repair-storage, document-view-url, sign-document`
   );
 
   app.get('/api/sgde/status', async (req, res) => {
@@ -171,6 +178,98 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
     } catch (e) {
       console.error('sgde/preflight-origin:', e);
       return res.status(500).json({ error: String((e as Error)?.message || e) });
+    }
+  });
+
+  app.post('/api/sgde/probe-segunda-write', async (req, res) => {
+    const caseId = String((req.body as { caseId?: string })?.caseId || '').trim();
+    if (!caseId) {
+      return res.status(400).json({ ok: false, forbidden: false, message: 'caseId es requerido.', sgdeRootId: null });
+    }
+
+    const sess = await sgdeClientForRequest(req, getSupabaseAdmin);
+    if (sess.ok === false) {
+      return res.status(sess.status).json({
+        ok: false,
+        forbidden: false,
+        message: sess.message,
+        sgdeRootId: null,
+        code: sess.code,
+      });
+    }
+
+    try {
+      const auth = await requireAuthenticatedCaller(req, getSupabaseAdmin);
+      if (auth.ok === false) {
+        return res.status(auth.status).json({
+          ok: false,
+          forbidden: false,
+          message: auth.message,
+          sgdeRootId: null,
+        });
+      }
+      await assertCaseCourtAccess(auth.admin, auth.userId, caseId);
+
+      const { data: caseRow, error: caseErr } = await auth.admin
+        .from('cases')
+        .select('id, case_type, origin_radicado, sgde_id')
+        .eq('id', caseId)
+        .maybeSingle();
+      if (caseErr || !caseRow?.id) {
+        return res.status(404).json({
+          ok: false,
+          forbidden: false,
+          message: 'Expediente no encontrado.',
+          sgdeRootId: null,
+        });
+      }
+      if (caseRow.case_type !== 'tutela_segunda') {
+        return res.json({
+          ok: true,
+          forbidden: false,
+          message: 'No aplica (solo tutela 2ª).',
+          sgdeRootId: null,
+        });
+      }
+
+      const originRadicado23 = String(caseRow.origin_radicado || '').replace(/\D/g, '').slice(0, 23);
+      let sgdeRootId = String(caseRow.sgde_id || '').trim().toLowerCase();
+      if (!sgdeRootId && originRadicado23.length === 23) {
+        sgdeRootId = (await sess.client.buscarExpedienteNodeId(originRadicado23)) || '';
+      }
+      if (!sgdeRootId) {
+        return res.json({
+          ok: false,
+          forbidden: false,
+          message: 'No hay nodo SGDE del expediente de origen. Vincule o ejecute Actualizar en traslado digital.',
+          sgdeRootId: null,
+        });
+      }
+
+      const probe = await probeSegundaInstanciaWriteAccess(sess.client, sgdeRootId);
+      if (probe.ok) {
+        return res.json({
+          ok: true,
+          forbidden: false,
+          message: 'Permiso de escritura confirmado en Segunda instancia / Impugnación.',
+          sgdeRootId,
+          impugnacionFolderId: probe.impugnacionFolderId,
+        });
+      }
+      return res.json({
+        ok: false,
+        forbidden: probe.forbidden,
+        message: probe.message,
+        sgdeRootId,
+      });
+    } catch (e) {
+      console.error('sgde/probe-segunda-write:', e);
+      return res.status(500).json({
+        ok: false,
+        forbidden: false,
+        message: String((e as Error)?.message || e),
+        sgdeRootId: null,
+      });
     }
   });
 
@@ -348,7 +447,7 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
 
     const { data: caseRow, error: caseErr } = await sess.auth.admin
       .from('cases')
-      .select('id, court_id')
+      .select('id, court_id, case_type')
       .eq('id', caseId)
       .maybeSingle();
     if (caseErr || !caseRow?.id) {
@@ -372,7 +471,30 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
         maxFiles: typeof body.maxFiles === 'number' ? body.maxFiles : undefined,
         force: body.force === true,
       });
-      return res.json({ ok: true, ...result, portalBaseUrl: sess.portalBaseUrl });
+
+      let partiesRefresh: Awaited<ReturnType<typeof refreshSegundaPartiesFromFallo>> | null = null;
+      if (
+        result.migrated > 0 &&
+        String(caseRow.case_type || '') === 'tutela_segunda' &&
+        getOpenAi
+      ) {
+        try {
+          partiesRefresh = await refreshSegundaPartiesFromFallo({
+            admin: sess.auth.admin,
+            openai: getOpenAi(),
+            caseId,
+          });
+        } catch (partyErr) {
+          console.warn('[sgde/migrate-origin] partes desde fallo PI:', partyErr);
+        }
+      }
+
+      return res.json({
+        ok: true,
+        ...result,
+        portalBaseUrl: sess.portalBaseUrl,
+        partiesRefresh,
+      });
     } catch (e) {
       console.error('sgde/migrate-origin-to-case:', e);
       return res.status(500).json({ error: String((e as Error)?.message || e) });
@@ -670,6 +792,87 @@ export function registerSgdeRoutes(app: Express, getSupabaseAdmin: () => Supabas
       return res.json({ ...result, portalBaseUrl: sess.portalBaseUrl });
     } catch (e) {
       console.error('sgde/sign-document:', e);
+      return res.status(500).json({ error: String((e as Error)?.message || e) });
+    }
+  });
+
+  app.post('/api/cases/repair-correo-reparto', async (req, res) => {
+    const auth = await requireAuthenticatedCaller(req, getSupabaseAdmin);
+    if (auth.ok === false) {
+      return res.status(auth.status).json({ error: auth.message });
+    }
+
+    const body = (req.body ?? {}) as { caseId?: string; documentId?: string };
+    const caseId = String(body.caseId || '').trim();
+    if (!caseId) return res.status(400).json({ error: 'caseId es requerido.' });
+
+    const { data: caseRow, error: caseErr } = await auth.admin
+      .from('cases')
+      .select('id, court_id')
+      .eq('id', caseId)
+      .maybeSingle();
+    if (caseErr || !caseRow?.id) {
+      return res.status(404).json({ error: 'Expediente no encontrado.' });
+    }
+
+    const denied = await assertCaseCourtAccess(auth.admin, auth.userId, String(caseRow.court_id));
+    if (denied) {
+      return res.status(403).json({ error: denied });
+    }
+
+    try {
+      const result = await repairCorreoRepartoPdf({
+        admin: auth.admin,
+        caseId,
+        documentId: body.documentId ? String(body.documentId) : undefined,
+      });
+      if (!result.ok && result.repaired === 0) {
+        return res.status(400).json(result);
+      }
+      return res.json(result);
+    } catch (e) {
+      console.error('cases/repair-correo-reparto:', e);
+      return res.status(500).json({ error: String((e as Error)?.message || e) });
+    }
+  });
+
+  app.post('/api/cases/refresh-segunda-parties-from-fallo', async (req, res) => {
+    const auth = await requireAuthenticatedCaller(req, getSupabaseAdmin);
+    if (auth.ok === false) {
+      return res.status(auth.status).json({ error: auth.message });
+    }
+    if (!getOpenAi) {
+      return res.status(503).json({ error: 'OpenAI no configurado.' });
+    }
+
+    const body = (req.body ?? {}) as { caseId?: string; force?: boolean };
+    const caseId = String(body.caseId || '').trim();
+    if (!caseId) return res.status(400).json({ error: 'caseId es requerido.' });
+
+    const { data: caseRow, error: caseErr } = await auth.admin
+      .from('cases')
+      .select('id, court_id, case_type')
+      .eq('id', caseId)
+      .maybeSingle();
+    if (caseErr || !caseRow?.id) {
+      return res.status(404).json({ error: 'Expediente no encontrado.' });
+    }
+
+    const denied = await assertCaseCourtAccess(auth.admin, auth.userId, String(caseRow.court_id));
+    if (denied) {
+      return res.status(403).json({ error: denied });
+    }
+
+    try {
+      const result = await refreshSegundaPartiesFromFallo({
+        admin: auth.admin,
+        openai: getOpenAi(),
+        caseId,
+        force: body.force === true,
+      });
+      return res.json(result);
+    } catch (e) {
+      console.error('cases/refresh-segunda-parties-from-fallo:', e);
       return res.status(500).json({ error: String((e as Error)?.message || e) });
     }
   });

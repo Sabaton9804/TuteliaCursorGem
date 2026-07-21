@@ -20,6 +20,8 @@ export function subscribePostgresChanges(opts: {
   /** Prefijo estable (p. ej. case-stages-{id}). Se le añade un UUID. */
   topicPrefix: string;
   bindings: PostgresChangeBinding[];
+  /** Se llama al suscribir / re-suscribir (útil para refetch tras reconexión). */
+  onStatus?: (status: string) => void;
 }): RealtimeChannel {
   const topic = `${opts.topicPrefix}-${crypto.randomUUID()}`;
   let channel = supabase.channel(topic);
@@ -36,7 +38,12 @@ export function subscribePostgresChanges(opts: {
       () => onEvent(),
     );
   }
-  channel.subscribe();
+  channel.subscribe((status) => {
+    opts.onStatus?.(status);
+    if (import.meta.env.DEV && status !== 'SUBSCRIBED') {
+      console.info('[realtime]', topic, status);
+    }
+  });
   return channel;
 }
 

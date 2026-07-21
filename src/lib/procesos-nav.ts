@@ -1,3 +1,5 @@
+import type { CaseNavScope } from './case-process-scope';
+
 export type ProcesosCivilesListFilter = {
   tipoProceso: string | 'all';
   situacion: string | 'all';
@@ -59,17 +61,28 @@ export function procesosEstadoFilterParamKey(
   return key;
 }
 
-export function isProcesosRouteActive(pathname: string, search = ''): boolean {
+function caseDetailIsProcesosScope(search: string, caseNavScope?: CaseNavScope | null): boolean {
+  if (caseNavScope === 'procesos') return true;
+  if (caseNavScope === 'tutelas') return false;
+  return new URLSearchParams(search).get('from') === 'procesos';
+}
+
+export function isProcesosRouteActive(pathname: string, search = '', caseNavScope?: CaseNavScope | null): boolean {
   if (pathname === '/procesos' || pathname.startsWith('/procesos/')) return true;
   if (pathname.startsWith('/case/')) {
-    return new URLSearchParams(search).get('from') === 'procesos';
+    return caseDetailIsProcesosScope(search, caseNavScope);
   }
   return false;
 }
 
-export function isProcesosSubItemActive(pathname: string, path: string, search = ''): boolean {
+export function isProcesosSubItemActive(
+  pathname: string,
+  path: string,
+  search = '',
+  caseNavScope?: CaseNavScope | null,
+): boolean {
   if (pathname.startsWith('/case/')) {
-    return path === '/procesos/civiles' && new URLSearchParams(search).get('from') === 'procesos';
+    return path === '/procesos/civiles' && caseDetailIsProcesosScope(search, caseNavScope);
   }
   if (path === '/procesos') return pathname === '/procesos';
   return pathname === path || pathname.startsWith(`${path}/`);

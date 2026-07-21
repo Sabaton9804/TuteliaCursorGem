@@ -11,12 +11,17 @@ export function canRenameExpedientePieza(doc: Document): PiezaActionGate {
 
 export function canDeleteExpedientePieza(doc: Document, caseItem: Case): PiezaActionGate {
   if (doc.type === 'email_body') {
-    return { allowed: false, reason: 'La constancia de ingreso no se elimina del expediente.' };
-  }
-  if (caseItem.informeIngresoDocumentId === doc.id) {
     return {
-      allowed: false,
-      reason: 'Es el informe de ingreso registrado en el proceso. Retírelo desde Secretaría si procede.',
+      allowed: true,
+      reason:
+        'Es la constancia del correo de reparto. Al eliminarla podrá volver a cargarla en el expediente si la necesita.',
+    };
+  }
+  if (caseItem.informeIngresoDocumentId === doc.id || doc.type === 'informe_ingreso_expediente') {
+    return {
+      allowed: true,
+      reason:
+        'Es el informe de ingreso registrado. Al eliminarlo, el proceso quedará sin PDF de informe y podrá cargarlo de nuevo desde Documentos del despacho.',
     };
   }
   if (doc.type === 'borrador_auto_admisorio_revision') {

@@ -1,5 +1,6 @@
 import type { Document } from '../types';
 import type { ExpedienteInstanciaCode } from './expediente-notebook';
+import { NOTEBOOK_SI_IMPUGNACION } from './expediente-notebook';
 import { compareExpedientePiezas } from './expediente-document-order';
 
 export type ExpedienteTreeNode = {
@@ -31,11 +32,14 @@ export function sgdeCuadernoFromFolderPath(
 ): { code: string; label: string } | null {
   const segments = splitSgdeFolderPath(folderPath);
   if (segments.length === 0) return null;
+  const inst = instanciaFromSgdeFolderPath(folderPath);
   const cdo =
     segments.find((s) => /\d*cdo/i.test(s) || /cuaderno/i.test(s)) ??
     (segments.length >= 2 ? segments[1] : segments[0]);
   if (!cdo) return null;
-  const inst = instanciaFromSgdeFolderPath(folderPath);
+  if (inst === 'SI' && /impugn/i.test(cdo)) {
+    return { code: NOTEBOOK_SI_IMPUGNACION, label: 'Impugnación' };
+  }
   const slug = cdo
     .replace(/[^a-zA-Z0-9]+/g, '_')
     .replace(/^_|_$/g, '')
@@ -59,6 +63,26 @@ function findOrCreateFolder(
   return node;
 }
 
+/**
+ * En SGDE a veces un PDF contenedor («14. Respuesta…») envuelve el subexpediente real.
+ * Para la vista en Tutelia, se omite ese segmento y se muestra «EXPEDIENTE…» al mismo nivel.
+ */
+export function flattenSgdePathSegmentsForDisplay(segments: string[]): string[] {
+  if (segments.length < 2) return segments;
+  const out: string[] = [];
+  for (let i = 0; i < segments.length; i += 1) {
+    const seg = segments[i]!;
+    const next = segments[i + 1];
+    const numberedWrapper = /^\d+\.\s/.test(seg);
+    const nextIsExpediente = Boolean(next && /^expediente\b/i.test(next.trim()));
+    if (numberedWrapper && nextIsExpediente) {
+      continue;
+    }
+    out.push(seg);
+  }
+  return out;
+}
+
 function sortTreeNodes(nodes: ExpedienteTreeNode[]): void {
   nodes.sort((a, b) => {
     if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1;
@@ -79,7 +103,7 @@ export function buildExpedienteTreeFromDocs(docs: Document[]): ExpedienteTreeNod
   const localOnly: Document[] = [];
 
   for (const doc of docs) {
-    const segments = splitSgdeFolderPath(doc.sgdeFolderPath);
+    const segments = flattenSgdePathSegmentsForDisplay(splitSgdeFolderPath(doc.sgdeFolderPath));
     if (segments.length === 0) {
       localOnly.push(doc);
       continue;
@@ -99,21 +123,27 @@ export function buildExpedienteTreeFromDocs(docs: Document[]): ExpedienteTreeNod
     });
   }
 
+  sortTreeNodes(roots);
+
+  // Piezas solo Tutelia al final (tras carpetas SGDE), para no “romper” 01, 02, 03… del Principal.
   if (localOnly.length > 0) {
-    roots.push({
-      id: 'folder:local',
-      name: 'Piezas locales',
-      kind: 'folder',
-      children: localOnly.map((doc) => ({
+    const localChildren = localOnly
+      .slice()
+      .sort((a, b) => compareExpedientePiezas(a, b))
+      .map((doc) => ({
         id: doc.id,
         name: doc.name || 'Documento',
         kind: 'file' as const,
         doc,
-      })),
+      }));
+    roots.push({
+      id: 'folder:local',
+      name: 'Piezas locales',
+      kind: 'folder',
+      children: localChildren,
     });
   }
 
-  sortTreeNodes(roots);
   return roots;
 }
 

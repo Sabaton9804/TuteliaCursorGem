@@ -1,6 +1,11 @@
 import { supabase } from './supabase';
 import type { CaseType } from '../types';
-import type { ProcessDefinitionRow, ProcessStageDefinitionRow, ProcessStageTransitionRow } from './process-definition-types';
+import type {
+  CourtProcessStageRow,
+  ProcessDefinitionRow,
+  ProcessStageDefinitionRow,
+  ProcessStageTransitionRow,
+} from './process-definition-types';
 import {
   STAGE_PIPELINE_BY_CASE_TYPE,
   STAGE_LABEL_ES,
@@ -9,11 +14,18 @@ import {
 import { filterToEnabledCourtProcesses, isRadicableCaseType } from './process-product-scope';
 import { caseTermBusinessDaysFromDecreto2591 } from './decreto-2591-plazos';
 import { isProcessRuntimeBdOnly, warnProcessPipelineFallback } from './process-runtime-config';
+import { fetchCourtProcessStagesForDefs } from './court-process-stages-service';
 
 export type LoadedProcessDefinition = ProcessDefinitionRow & {
+  /** Etapas efectivas (plantilla + labels/CUSTOM del juzgado) para labels y plazos. */
   stages: ProcessStageDefinitionRow[];
+  /** Plantilla global sin overrides (para seed/restaurar). */
+  templateStages: ProcessStageDefinitionRow[];
   transitions: ProcessStageTransitionRow[];
+  /** Carril visible (sin ocultas); incluye CUSTOM_* del juzgado. */
   pipeline: readonly CaseStageCode[];
+  /** Overrides del despacho si existen; vacío = usar solo plantilla. */
+  courtStages: readonly CourtProcessStageRow[];
 };
 
 let cachedCourtId: string | null = null;
@@ -148,6 +160,48 @@ function pipelineFromStages(stages: ProcessStageDefinitionRow[]): CaseStageCode[
     .map((s) => s.code as CaseStageCode);
 }
 
+function pipelineFromCourtStages(court: CourtProcessStageRow[]): CaseStageCode[] {
+  return [...court]
+    .filter((s) => !s.is_hidden)
+    .sort((a, b) => a.order_index - b.order_index)
+    .map((s) => s.stage_code as CaseStageCode);
+}
+
+/** Aplica labels/orden court sobre plantilla e inserta etapas CUSTOM. */
+function mergeStagesWithCourt(
+  plantilla: ProcessStageDefinitionRow[],
+  court: CourtProcessStageRow[],
+): ProcessStageDefinitionRow[] {
+  const byCode = new Map(plantilla.map((s) => [s.code, { ...s }]));
+  for (const c of court) {
+    const existing = byCode.get(c.stage_code);
+    if (existing) {
+      existing.label = c.label;
+      existing.order_index = c.order_index;
+      if (c.responsible_role) existing.responsible_role = c.responsible_role;
+      if (c.term_days != null) existing.term_days = c.term_days;
+      if (c.term_type) existing.term_type = c.term_type;
+      continue;
+    }
+    if (!c.is_custom) continue;
+    byCode.set(c.stage_code, {
+      id: c.id,
+      process_definition_id: c.process_definition_id,
+      code: c.stage_code,
+      label: c.label,
+      order_index: c.order_index,
+      stage_kind: 'linear',
+      term_days: c.term_days,
+      term_type: c.term_type,
+      responsible_role: c.responsible_role,
+      generates_alert: false,
+      alert_threshold_pct: 75,
+      workflow_task_type: null,
+    });
+  }
+  return [...byCode.values()].sort((a, b) => a.order_index - b.order_index);
+}
+
 export async function fetchEnabledProcessDefinitions(courtId: string): Promise<LoadedProcessDefinition[]> {
   const { data: enabled, error: enErr } = await supabase
     .from('court_enabled_processes')
@@ -183,7 +237,7 @@ export async function fetchEnabledProcessDefinitions(courtId: string): Promise<L
   if (!rows.length) return [];
 
   const ids = rows.map((r) => String(r.id));
-  const [stagesRes, transRes] = await Promise.all([
+  const [stagesRes, transRes, courtByDef] = await Promise.all([
     supabase
       .from('process_stages_definition')
       .select('*')
@@ -193,6 +247,7 @@ export async function fetchEnabledProcessDefinitions(courtId: string): Promise<L
       .from('process_stage_transitions')
       .select('process_definition_id, from_stage_code, to_stage_code, label, is_default')
       .in('process_definition_id', ids),
+    fetchCourtProcessStagesForDefs(courtId, ids),
   ]);
 
   const { data: stages, error: stErr } = stagesRes;
@@ -224,11 +279,14 @@ export async function fetchEnabledProcessDefinitions(courtId: string): Promise<L
   return filterToEnabledCourtProcesses(
     rows.map((raw) => {
       const def = rowToProcessDefinition(raw);
-      const stList = stagesByDef.get(def.id) ?? [];
+      const plantilla = stagesByDef.get(def.id) ?? [];
+      const courtStages = courtByDef.get(def.id) ?? [];
+      const stList = courtStages.length ? mergeStagesWithCourt(plantilla, courtStages) : plantilla;
       const trList = transitionsByDef.get(def.id) ?? [];
-      const pipeline = pipelineFromStages(stList);
       const legacyType = def.legacy_case_type as CaseType | null;
-      let resolvedPipeline = pipeline;
+      let resolvedPipeline: CaseStageCode[] = courtStages.length
+        ? pipelineFromCourtStages(courtStages)
+        : pipelineFromStages(plantilla);
       if (!resolvedPipeline.length && legacyType) {
         if (isProcessRuntimeBdOnly()) {
           warnProcessPipelineFallback(legacyType, 'process_stages_definition vacío');
@@ -241,8 +299,10 @@ export async function fetchEnabledProcessDefinitions(courtId: string): Promise<L
       return {
         ...def,
         stages: stList,
+        templateStages: plantilla,
         transitions: trList,
         pipeline: resolvedPipeline,
+        courtStages,
       };
     }),
   );

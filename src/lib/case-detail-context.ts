@@ -1,6 +1,7 @@
 import type { Action, Case, Document, SustanciadorAssignmentMode } from '../types';
 import { plazoFallarLabelForCase } from './decreto-2591-plazos';
 import { resolveAssigneeForCase } from './court-staff-assignees';
+import { partyRoleLabels } from './process-product-scope';
 import { sanitizeExpedienteFilenameForDisplay } from './sanitize-expediente-filename';
 import { caseDocumentRawLabel } from './case-document-display-name';
 
@@ -45,8 +46,9 @@ export function buildSynthesisContextBlock(
       : `${plazoLabel}: no registrado (deadline_at vacío).`
     : null;
 
+  const roles = partyRoleLabels(caseItem.caseType);
   const lines = [
-    `Accionado: ${caseItem.defendant}`,
+    `${roles.defendantSingular}: ${caseItem.defendant}`,
     `Estado judicial (status): ${caseItem.status}`,
     caseItem.operationalStatus?.trim()
       ? `Estado operativo (tablero / gestión): ${caseItem.operationalStatus}`
@@ -105,12 +107,12 @@ export function buildCaseTimeline(caseItem: Case, docs: Document[], actions: Act
 
   if (caseItem.deadlineAt?.trim() && plazoFallarLabelForCase(caseItem.caseType)) {
     const at = tsOrFallback(caseItem.deadlineAt, base);
+    const defendantLower = partyRoleLabels(caseItem.caseType).defendantSingular.toLowerCase();
     rows.push({
       key: 'sys-deadline',
       at,
       title: 'Plazo o término relevante',
-      subtitle:
-        'Use este dato para traslados, contestación del accionado y seguimiento; confirme en autos si difiere.',
+      subtitle: `Use este dato para traslados, contestación del ${defendantLower} y seguimiento; confirme en autos si difiere.`,
       kind: 'system',
     });
   }

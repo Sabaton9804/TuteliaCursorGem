@@ -13,7 +13,6 @@ import { supabase } from '../../lib/supabase';
 import { useCaseDetail } from '../../contexts/CaseDetailContext';
 import { useCaseStages } from '../../hooks/useCaseStages';
 import {
-  STAGE_LABEL_ES,
   stageLabelForCaseType,
   type CaseStageCode,
   pipelineForCaseType,
@@ -162,7 +161,7 @@ export function CaseStagesExperience() {
     if (!openRow) return;
     const idx = pipeline.indexOf(openRow.stageCode);
     if (idx <= 0) return;
-    const prevLabel = STAGE_LABEL_ES[pipeline[idx - 1]!];
+    const prevLabel = stageLabel(pipeline[idx - 1]!);
     if (
       !window.confirm(
         `¿Seguro que desea retroceder a ${prevLabel}? Esto reabrirá la etapa anterior.`,
@@ -197,7 +196,7 @@ export function CaseStagesExperience() {
     if (!skipPick || !openRow) return;
     if (
       !window.confirm(
-        `¿Seguro que desea saltar a ${STAGE_LABEL_ES[skipPick]}? Las etapas intermedias se marcarán como omitidas.`,
+        `¿Seguro que desea saltar a ${stageLabel(skipPick)}? Las etapas intermedias se marcarán como omitidas.`,
       )
     )
       return;
@@ -975,7 +974,7 @@ export function CaseStagesExperience() {
                               <option value="">— Elija etapa —</option>
                               {skipOptions.map((c) => (
                                 <option key={c} value={c}>
-                                  {STAGE_LABEL_ES[c]}
+                                  {stageLabel(c)}
                                 </option>
                               ))}
                             </select>
@@ -1025,7 +1024,7 @@ export function CaseStagesExperience() {
                                     <span className="text-[9px] font-black uppercase text-accent">En curso</span>
                                   ) : null}
                                 </div>
-                                <p className="font-semibold text-slate-800">{STAGE_LABEL_ES[r.stageCode]}</p>
+                                <p className="font-semibold text-slate-800">{stageLabel(r.stageCode)}</p>
                                 <p className="text-[10px] text-slate-500 mt-0.5">
                                   Entrada: {formatStageDate(r.enteredAt)}
                                   {r.exitedAt ? ` · Salida: ${formatStageDate(r.exitedAt)}` : ''}

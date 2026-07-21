@@ -71,6 +71,8 @@ type Props = {
 
   onPreflightChange?: (result: SgdePreflightResult | null) => void;
 
+  onPreflightLoadingChange?: (loading: boolean) => void;
+
   onSegundaExtract?: (extract: SegundaFieldsExtract | null) => void;
 
 };
@@ -88,6 +90,8 @@ export function CaseSgdeSegundaPreflightPanel({
   disabled,
 
   onPreflightChange,
+
+  onPreflightLoadingChange,
 
   onSegundaExtract,
 
@@ -130,6 +134,7 @@ export function CaseSgdeSegundaPreflightPanel({
     }
 
     setLoading(true);
+    onPreflightLoadingChange?.(true);
 
     setErr(null);
 
@@ -196,10 +201,11 @@ export function CaseSgdeSegundaPreflightPanel({
     } finally {
 
       setLoading(false);
+      onPreflightLoadingChange?.(false);
 
     }
 
-  }, [originRadicado, effectiveNodeHint, emailDigest, onPreflightChange, onSegundaExtract]);
+  }, [originRadicado, effectiveNodeHint, emailDigest, onPreflightChange, onPreflightLoadingChange, onSegundaExtract]);
 
 
 
@@ -265,6 +271,10 @@ export function CaseSgdeSegundaPreflightPanel({
 
       ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
 
+      : result?.status === 'sin_permiso_escritura'
+
+        ? 'border-red-300 bg-red-50 text-red-950'
+
       : result?.status === 'incompleto' || result?.status === 'solo_compartidos'
 
         ? 'border-amber-200 bg-amber-50 text-amber-950'
@@ -320,6 +330,22 @@ export function CaseSgdeSegundaPreflightPanel({
           </button>
 
         </div>
+
+
+
+        {result?.status === 'sin_permiso_escritura' ? (
+          <div className="rounded-xl border-2 border-red-400 bg-red-50 px-4 py-3 text-xs text-red-950 shadow-sm">
+            <p className="font-bold flex items-center gap-2 text-sm">
+              <AlertCircle className="h-5 w-5 shrink-0" />
+              Sin permiso de edición en SGDE
+            </p>
+            <p className="mt-2 leading-relaxed">{result.message}</p>
+            <p className="mt-2 font-semibold">
+              Solicite al juzgado de primera instancia compartir el expediente con permisos de edición antes de
+              subir piezas a Impugnación.
+            </p>
+          </div>
+        ) : null}
 
 
 

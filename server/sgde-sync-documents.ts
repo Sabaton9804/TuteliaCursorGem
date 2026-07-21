@@ -3,12 +3,34 @@ import type { SgdeClient, SgdePdfLeaf } from './sgde-client';
 import { repairStorageFromSgde } from './sgde-repair-storage';
 import {
   buildSgdeExpedienteProperties,
+  inferActCodeForSgdeTipo,
   tipoDocumentalSgdeFromFileName,
+  tipoDocumentalSgdeSegundaFromFileName,
   uploadOrderPriority,
+  uploadOrderPrioritySegunda,
 } from './sgde-tutela-metadata';
 import { CASE_DOCUMENTS_BUCKET, sanitizeCaseDocumentLogicalName } from './case-document-storage';
+import {
+  caseHasCautelarNotebook,
+  NOTEBOOK_PI_C01_PRINCIPAL,
+  NOTEBOOK_PI_C02_CAUTELAR,
+  NOTEBOOK_SI_IMPUGNACION,
+  normalizeNotebookCode,
+} from '../src/lib/expediente-notebook.ts';
+import type { ExpedienteCuadernoExtra } from '../src/lib/expediente-extra-cuadernos.ts';
+import { sgdeSegundaOriginWriteBlockedMessage } from './sgde-segunda-impugnacion.ts';
 
 export type SgdeDocumentSyncStatus = 'linked' | 'local_only' | 'sgde_only';
+
+function parseCuadernosExtra(raw: unknown): ExpedienteCuadernoExtra[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((e) => ({
+      code: String((e as { code?: string }).code || '').trim(),
+      label: String((e as { label?: string }).label || '').trim(),
+    }))
+    .filter((e) => e.code);
+}
 
 export type SgdeDocumentSyncItem = {
   status: SgdeDocumentSyncStatus;
@@ -36,14 +58,18 @@ export type SyncDocumentsWithSgdeResult = {
   sgdeRootId: string;
 };
 
+const SGDE_PATH_SEGUNDA_IMPUGNACION = 'Segunda instancia / Impugnación';
+
 type CaseRow = {
   id: string;
   court_id: string;
   radicado: string;
+  origin_radicado: string | null;
   claimant: string;
   defendant: string;
   sgde_id: string | null;
   case_type: string | null;
+  expediente_cuadernos_extra?: unknown;
 };
 
 function notebookForCaseType(caseType: string | null): string {
@@ -58,7 +84,69 @@ type DocRow = {
   content_type: string | null;
   notebook_code: string | null;
   sgde_id: string | null;
+  sgde_folder_path: string | null;
+  act_code: string | null;
 };
+
+function buildFolderPathToId(
+  rows: Array<{ folder_path?: string | null; sgde_folder_node_id?: string | null }>
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const row of rows) {
+    const fp = String(row.folder_path || '').trim();
+    const fid = String(row.sgde_folder_node_id || '').trim();
+    if (fp && fid) out.set(fp, fid);
+  }
+  return out;
+}
+
+/** Máximo rama:orden ya usado en cada carpeta SGDE (no global del expediente). */
+function buildOrdenByFolderFromLeaves(
+  leaves: SgdePdfLeaf[],
+  folderPathToId: Map<string, string>
+): Map<string, number> {
+  const ordenByFolder = new Map<string, number>();
+  for (const leaf of leaves) {
+    const fp = (leaf.folderPath || '').trim();
+    if (!fp) continue;
+    const folderId = folderPathToId.get(fp);
+    if (!folderId) continue;
+    const ord = parseInt(String(leaf.orden || ''), 10);
+    if (!Number.isFinite(ord) || ord <= 0) continue;
+    ordenByFolder.set(folderId, Math.max(ordenByFolder.get(folderId) || 0, ord));
+  }
+  return ordenByFolder;
+}
+
+function resolveUploadFolder(
+  doc: DocRow,
+  defaultNotebookCode: string,
+  folderIdByNotebook: Map<string, string>,
+  folderPathByNotebook: Map<string, string>,
+  folderPathToId: Map<string, string>,
+  principalFolderId: string
+): { folderId: string; folderPath: string } {
+  const docPath = doc.sgde_folder_path?.trim();
+  if (docPath) {
+    const fid = folderPathToId.get(docPath);
+    if (fid) return { folderId: fid, folderPath: docPath };
+  }
+  const docNb = normalizeNotebookCode(doc.notebook_code || defaultNotebookCode);
+  const folderId =
+    folderIdByNotebook.get(docNb) ||
+    (docNb === NOTEBOOK_PI_C02_CAUTELAR
+      ? folderIdByNotebook.get(NOTEBOOK_PI_C02_CAUTELAR)
+      : undefined) ||
+    principalFolderId;
+  const folderPath =
+    folderPathByNotebook.get(docNb) ||
+    (docNb === NOTEBOOK_PI_C02_CAUTELAR
+      ? 'Primera instancia / Medidas cautelares'
+      : docNb === NOTEBOOK_SI_IMPUGNACION
+        ? SGDE_PATH_SEGUNDA_IMPUGNACION
+        : 'Primera instancia / Principal');
+  return { folderId, folderPath };
+}
 
 function normalizeDocKey(raw: string): string {
   return raw
@@ -88,14 +176,25 @@ function matchLeafToDoc(
   }
   const leafKey = normalizeDocKey(leaf.name);
   if (!leafKey) return null;
+  const pathLower = String(leaf.folderPath || '').toLowerCase();
+  const pathIsCautelar = /cautelar/.test(pathLower);
+  const pathIsPrincipal = /principal/.test(pathLower) && !pathIsCautelar;
+  const nameHits: DocRow[] = [];
   for (const d of docs) {
     if (usedDocIds.has(d.id)) continue;
     const docKey = normalizeDocKey(d.name);
     if (docKey && (docKey === leafKey || leafKey.includes(docKey) || docKey.includes(leafKey))) {
-      return d;
+      nameHits.push(d);
     }
   }
-  return null;
+  if (nameHits.length === 0) return null;
+  const preferred = nameHits.find((d) => {
+    const nb = normalizeNotebookCode(d.notebook_code);
+    if (pathIsCautelar) return nb === NOTEBOOK_PI_C02_CAUTELAR;
+    if (pathIsPrincipal) return nb !== NOTEBOOK_PI_C02_CAUTELAR;
+    return true;
+  });
+  return preferred || nameHits[0] || null;
 }
 
 export async function syncDocumentsWithSgde(opts: {
@@ -110,13 +209,21 @@ export async function syncDocumentsWithSgde(opts: {
 
   const { data: caseRow, error: caseErr } = await admin
     .from('cases')
-    .select('id, court_id, radicado, claimant, defendant, sgde_id, case_type')
+    .select(
+      'id, court_id, radicado, origin_radicado, claimant, defendant, sgde_id, case_type, expediente_cuadernos_extra',
+    )
     .eq('id', caseId)
     .maybeSingle();
   if (caseErr || !caseRow?.id) throw new Error('Expediente no encontrado.');
   const c = caseRow as CaseRow;
+  const isSegunda = c.case_type === 'tutela_segunda';
 
-  const radicado23 = String(c.radicado || '').replace(/\D/g, '').slice(0, 23);
+  const radicadoSegunda23 = String(c.radicado || '').replace(/\D/g, '').slice(0, 23);
+  const originRadicado23 = String(c.origin_radicado || '')
+    .replace(/\D/g, '')
+    .slice(0, 23);
+  const radicado23 =
+    isSegunda && originRadicado23.length === 23 ? originRadicado23 : radicadoSegunda23;
   if (radicado23.length !== 23) {
     throw new Error('Radicado inválido (23 dígitos).');
   }
@@ -126,7 +233,7 @@ export async function syncDocumentsWithSgde(opts: {
     sgdeRootId = (await client.buscarExpedienteNodeId(radicado23)) || '';
   }
   if (!sgdeRootId) {
-    throw new Error('El expediente no está vinculado a SGDE. Use «Crear en SGDE» o «Vincular» primero.');
+    throw new Error('El expediente no está vinculado a SGDE. Use «Vincular» o el preflight del traslado.');
   }
 
   const { data: courtRow } = await admin
@@ -149,13 +256,32 @@ export async function syncDocumentsWithSgde(opts: {
     .from('case_sgde_folder_map')
     .select('sgde_folder_node_id, notebook_code')
     .eq('case_id', caseId)
-    .eq('notebook_code', notebookCode)
+    .eq('notebook_code', isSegunda ? NOTEBOOK_SI_IMPUGNACION : notebookCode)
     .maybeSingle();
   if (folderMap?.sgde_folder_node_id) {
     principalFolderId = String(folderMap.sgde_folder_node_id);
   }
 
-  if (!principalFolderId) {
+  if (!principalFolderId && isSegunda) {
+    const imp = await client.ensureSegundaInstanciaImpugnacion(sgdeRootId);
+    if (imp.ok === false) {
+      errors.push(imp.error);
+    } else {
+      principalFolderId = imp.impugnacionFolderId;
+      await admin.from('case_sgde_folder_map').upsert(
+        {
+          court_id: c.court_id,
+          case_id: caseId,
+          notebook_code: NOTEBOOK_SI_IMPUGNACION,
+          sgde_folder_node_id: imp.impugnacionFolderId,
+          folder_path: SGDE_PATH_SEGUNDA_IMPUGNACION,
+        },
+        { onConflict: 'case_id,notebook_code' }
+      );
+    }
+  }
+
+  if (!principalFolderId && !isSegunda) {
     const structure = await client.ensurePrimeraInstanciaPrincipal(sgdeRootId);
     if (structure.ok === false) throw new Error(structure.error);
     principalFolderId = structure.principalFolderId;
@@ -171,6 +297,59 @@ export async function syncDocumentsWithSgde(opts: {
     );
   }
 
+  const folderIdByNotebook = new Map<string, string>();
+  if (principalFolderId) {
+    folderIdByNotebook.set(
+      isSegunda ? NOTEBOOK_SI_IMPUGNACION : normalizeNotebookCode(notebookCode),
+      principalFolderId,
+    );
+  }
+  const folderPathByNotebook = new Map<string, string>();
+  if (principalFolderId) {
+    folderPathByNotebook.set(
+      isSegunda ? NOTEBOOK_SI_IMPUGNACION : normalizeNotebookCode(notebookCode),
+      isSegunda ? SGDE_PATH_SEGUNDA_IMPUGNACION : 'Primera instancia / Principal',
+    );
+  }
+
+  const { data: allFolderMaps } = await admin
+    .from('case_sgde_folder_map')
+    .select('sgde_folder_node_id, notebook_code, folder_path')
+    .eq('case_id', caseId);
+  for (const row of allFolderMaps || []) {
+    const nb = normalizeNotebookCode(String(row.notebook_code || ''));
+    const fid = String(row.sgde_folder_node_id || '').trim();
+    if (nb && fid) {
+      folderIdByNotebook.set(nb, fid);
+      if (row.folder_path) folderPathByNotebook.set(nb, String(row.folder_path));
+    }
+  }
+  const folderPathToId = buildFolderPathToId(allFolderMaps || []);
+
+  const extras = parseCuadernosExtra(c.expediente_cuadernos_extra);
+  if (caseHasCautelarNotebook(extras) && !folderIdByNotebook.get(NOTEBOOK_PI_C02_CAUTELAR)) {
+    const cautelar = await client.ensurePrimeraInstanciaCautelar(sgdeRootId);
+    if (cautelar.ok === false) {
+      errors.push(`Cuaderno cautelares SGDE: ${cautelar.error}`);
+    } else {
+      folderIdByNotebook.set(NOTEBOOK_PI_C02_CAUTELAR, cautelar.cautelarFolderId);
+      folderPathByNotebook.set(
+        NOTEBOOK_PI_C02_CAUTELAR,
+        'Primera instancia / Medidas cautelares'
+      );
+      await admin.from('case_sgde_folder_map').upsert(
+        {
+          court_id: c.court_id,
+          case_id: caseId,
+          notebook_code: NOTEBOOK_PI_C02_CAUTELAR,
+          sgde_folder_node_id: cautelar.cautelarFolderId,
+          folder_path: 'Primera instancia / Medidas cautelares',
+        },
+        { onConflict: 'case_id,notebook_code' }
+      );
+    }
+  }
+
   const sgdeLeaves = await client.collectPdfLeavesForExpediente(sgdeRootId, {
     maxDepth: 12,
     maxNodes: 800,
@@ -180,7 +359,7 @@ export async function syncDocumentsWithSgde(opts: {
 
   const { data: docsRaw } = await admin
     .from('case_documents')
-    .select('id, name, type, storage_path, content_type, notebook_code, sgde_id')
+    .select('id, name, type, storage_path, content_type, notebook_code, sgde_id, sgde_folder_path, act_code')
     .eq('case_id', caseId)
     .order('sort_order', { ascending: true });
 
@@ -219,10 +398,11 @@ export async function syncDocumentsWithSgde(opts: {
 
   const localOnlyDocs = docs.filter((d) => !usedDocIds.has(d.id) && isPdfCandidate(d));
   if (uploadMissing && localOnlyDocs.length > 0) {
+    const orderPriority = isSegunda ? uploadOrderPrioritySegunda : uploadOrderPriority;
     const sorted = [...localOnlyDocs].sort(
-      (a, b) => uploadOrderPriority(a.name, a.type) - uploadOrderPriority(b.name, b.type)
+      (a, b) => orderPriority(a.name, a.type, a.act_code) - orderPriority(b.name, b.type, b.act_code),
     );
-    let orden = sgdeLeaves.length + 1;
+    const ordenByFolder = buildOrdenByFolderFromLeaves(sgdeLeaves, folderPathToId);
     for (const doc of sorted) {
       const path = String(doc.storage_path || '').trim();
       const { data: blob, error: dlErr } = await admin.storage.from(CASE_DOCUMENTS_BUCKET).download(path);
@@ -237,18 +417,38 @@ export async function syncDocumentsWithSgde(opts: {
         errors.push(`${doc.name}: archivo vacío`);
         continue;
       }
-      const logicalName = sanitizeCaseDocumentLogicalName(`${doc.name}.pdf`, `${doc.name}.pdf`);
+      const logicalName = sanitizeCaseDocumentLogicalName(String(doc.name || ''), 'documento.pdf');
+      const docNb = normalizeNotebookCode(doc.notebook_code || notebookCode);
+      const { folderId: targetFolderId, folderPath: targetFolderPath } = resolveUploadFolder(
+        doc,
+        isSegunda ? NOTEBOOK_SI_IMPUGNACION : notebookCode,
+        folderIdByNotebook,
+        folderPathByNotebook,
+        folderPathToId,
+        principalFolderId
+      );
+      if (!targetFolderId) {
+        uploadFailed += 1;
+        errors.push(
+          `${doc.name}: no hay carpeta SGDE destino (${isSegunda ? 'Segunda instancia / Impugnación' : 'Principal'}).`,
+        );
+        continue;
+      }
+      const orden = (ordenByFolder.get(targetFolderId) || 0) + 1;
+      ordenByFolder.set(targetFolderId, orden);
+      const tipo = isSegunda
+        ? tipoDocumentalSgdeSegundaFromFileName(doc.name, doc.type, doc.act_code)
+        : tipoDocumentalSgdeFromFileName(doc.name, doc.type, doc.act_code);
       const up = await client.uploadDocumentToFolder({
-        folderNodeUuid: principalFolderId,
+        folderNodeUuid: targetFolderId,
         radicado23,
         buffer: buf,
         fileName: logicalName,
         contentType: 'application/pdf',
-        tipoDocumental: tipoDocumentalSgdeFromFileName(doc.name, doc.type),
+        tipoDocumental: tipo,
         expedienteMetadata: props,
         orden,
       });
-      orden += 1;
       if (up.ok === false) {
         uploadFailed += 1;
         errors.push(`${doc.name}: ${up.error}`);
@@ -257,9 +457,17 @@ export async function syncDocumentsWithSgde(opts: {
       uploaded += 1;
       usedDocIds.add(doc.id);
       const patch: Record<string, unknown> = {
-        sgde_folder_path: 'Primera instancia / Principal',
+        sgde_folder_path: targetFolderPath,
         sgde_sync_status: 'linked',
+        notebook_code:
+          docNb === NOTEBOOK_PI_C01_PRINCIPAL || docNb === NOTEBOOK_PI_C02_CAUTELAR
+            ? docNb
+            : normalizeNotebookCode(doc.notebook_code || notebookCode),
       };
+      if (!doc.act_code?.trim()) {
+        const act = inferActCodeForSgdeTipo(doc.name, doc.type);
+        if (act) patch.act_code = act;
+      }
       if (up.sgdeDocId) patch.sgde_id = up.sgdeDocId;
       await admin.from('case_documents').update(patch).eq('id', doc.id);
       items.push({
@@ -267,8 +475,8 @@ export async function syncDocumentsWithSgde(opts: {
         documentId: doc.id,
         name: doc.name,
         sgdeId: up.sgdeDocId,
-        sgdeFolderPath: 'Primera instancia / Principal',
-        notebookCode: doc.notebook_code || undefined,
+        sgdeFolderPath: targetFolderPath,
+        notebookCode: docNb,
       });
     }
   }
@@ -359,6 +567,9 @@ export async function syncDocumentsWithSgde(opts: {
     repaired ? `${repaired} PDF reparado(s) en Storage` : null,
     imported ? `${imported} importado(s) desde SGDE` : null,
     repairFailed ? `${repairFailed} fallo(s) al reparar Storage` : null,
+    isSegunda && uploadFailed > 0 && errors.some((e) => /403|permiso|escritura/i.test(e))
+      ? sgdeSegundaOriginWriteBlockedMessage()
+      : null,
   ]
     .filter(Boolean)
     .join(' · ');

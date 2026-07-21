@@ -38,7 +38,8 @@ export type RoleCapability =
   | 'ver_correo'
   | 'eliminar_pieza_expediente'
   | 'invitar_equipo'
-  | 'registrar_rama_admision';
+  | 'registrar_rama_admision'
+  | 'editar_radicado';
 
 const ALL: readonly RoleCapability[] = [
   'radicar',
@@ -62,6 +63,7 @@ const ALL: readonly RoleCapability[] = [
   'eliminar_pieza_expediente',
   'invitar_equipo',
   'registrar_rama_admision',
+  'editar_radicado',
 ] as const;
 
 const SECRETARIA_BASE: RoleCapability[] = [
@@ -92,6 +94,7 @@ const ROLE_CAPABILITIES: Record<UserRole, ReadonlySet<RoleCapability>> = {
     'config_sgde',
     'eliminar_pieza_expediente',
     'registrar_rama_admision',
+    'editar_radicado',
   ]),
   sustanciador: new Set([
     ...DESPACHO_BASE,
@@ -113,6 +116,7 @@ const ROLE_CAPABILITIES: Record<UserRole, ReadonlySet<RoleCapability>> = {
     'config_sgde',
     'eliminar_pieza_expediente',
     'registrar_rama_admision',
+    'editar_radicado',
   ]),
   escribiente: new Set([
     ...SECRETARIA_BASE,
@@ -165,6 +169,11 @@ export function canEditPlantillas(role: UserRole | null | undefined, categoria: 
 
 export function canEditMembrete(role: UserRole | null | undefined): boolean {
   return hasRoleCapability(role, 'editar_membrete');
+}
+
+/** Corregir CUI/radicado de 23 dígitos en expediente ya radicado. */
+export function canEditCaseRadicado(role: UserRole | null | undefined): boolean {
+  return hasRoleCapability(role, 'editar_radicado');
 }
 
 export type NavLinkDef = {

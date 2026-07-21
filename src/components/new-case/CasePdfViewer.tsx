@@ -1,12 +1,16 @@
 import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { FileText, AlertCircle, Loader2, ExternalLink, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Document, Page } from 'react-pdf';
+import { ensurePdfJsWorker } from '../../lib/pdfjs-worker';
 import { looksLikePdf } from '../../lib/pdf-sniff';
 import { logPdfViewerDebug } from '../../lib/pdf-payload-debug';
 import { fetchParseSessionAttachment } from '../../lib/parse-session-attachment';
 
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
+
+// react-pdf resetea workerSrc al importarse; reaplicar el worker bundlado por Vite.
+ensurePdfJsWorker();
 
 const PDF_VIEWER_ZOOM_SCALES = [0.5, 0.75, 1.0, 1.25, 1.5] as const;
 type PdfViewerZoom = 'fit' | (typeof PDF_VIEWER_ZOOM_SCALES)[number];
@@ -214,13 +218,15 @@ export function CasePdfViewer({
         </div>
         <div>
           <h3 className="text-lg font-bold text-slate-700">{filename}</h3>
-          <p className="text-sm text-slate-400 mt-2 max-w-sm mx-auto">
-            Vista previa generada para radicación electrónica. Pulse radicar para procesar el expediente completo.
+          <p className="text-sm text-slate-500 mt-2 max-w-md mx-auto leading-relaxed">
+            No hay bytes del PDF en el navegador. Los anexos grandes o unidos se sirven desde la sesión
+            de parseo; si reinició el servidor o recargó tras unir, vuelva a cargar el .eml o vuelva a
+            pulsar <span className="font-semibold">Unir</span>.
           </p>
         </div>
-        <div className="w-full max-w-md h-64 bg-white/50 border border-slate-200 border-dashed rounded-2xl flex items-center justify-center">
-          <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">
-            Sin vista previa (adjunto no cargado)
+        <div className="w-full max-w-md h-40 bg-white/50 border border-slate-200 border-dashed rounded-2xl flex items-center justify-center px-6">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center leading-relaxed">
+            Sin vista previa (adjunto no cargado en sesión)
           </span>
         </div>
       </div>

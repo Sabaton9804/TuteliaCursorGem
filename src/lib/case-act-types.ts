@@ -53,82 +53,141 @@ export type StageActTriggerCode =
 export type CaseActTypeDef = {
   code: CaseActCode;
   labelEs: string;
+  /** Nombre protocolo CSJ (TitleCase, sin espacios). */
   suggestedFilename?: string;
+  /**
+   * Valor de `rama:tipoDocumental` en SGDE al sincronizar.
+   * Fuente de verdad junto con `suggestedFilename` (nombre de archivo ↔ tipo).
+   */
+  sgdeTipoDocumental?: string;
   stageCode?: string;
   responsibleRole?: string;
   sortBand: number;
   repeatable?: boolean;
 };
 
+/** Tipo documental SGDE por acto (usado si el catálogo no trae `sgdeTipoDocumental`). */
+export const SGDE_TIPO_DOCUMENTAL_BY_ACT: Readonly<Record<CaseActCode, string>> = {
+  correo_reparto: 'Correo de reparto',
+  escrito_tutela: 'Demanda',
+  acta_reparto: 'Acta de reparto',
+  anexos_pruebas: 'Anexos',
+  informe_ingreso: 'Ingreso a despacho',
+  auto_admite: 'Auto admisorio',
+  notificacion_admisorio: 'Notificación',
+  constancia_notificacion: 'Constancia',
+  correo_contestacion: 'Correo',
+  respuesta_accionado: 'Contestación',
+  auto_amplia_termino: 'Auto interlocutorio',
+  auto_requiere: 'Auto interlocutorio',
+  fallo_tutela: 'Sentencia',
+  notificacion_fallo: 'Notificación',
+  constancia_notificacion_fallo: 'Constancia',
+  impugnacion_escrito: 'Memorial de impugnación',
+  remision_superior: 'Oficio',
+  remision_corte: 'Oficio',
+  escrito_demanda: 'Demanda',
+  contestacion_demanda: 'Contestación',
+  sentencia: 'Sentencia',
+  auto_inadmite: 'Auto inadmisorio',
+  notificacion_inadmision: 'Notificación',
+  auto_rechazo: 'Auto de rechazo',
+  auto_interlocutorio: 'Auto interlocutorio',
+  prueba_documental: 'Anexos',
+  acta_audiencia: 'Acta de audiencia',
+  apelacion_escrito: 'Memorial',
+  titulo_ejecutivo: 'Título ejecutivo',
+  mandamiento_pago: 'Mandamiento de pago',
+  excepciones_ejecutivo: 'Excepciones',
+  auto_embargo: 'Auto interlocutorio',
+};
+
 /** Catálogo estático tutela 1ª (espejo del seed SQL hasta cargar desde BD). */
 export const TUTELA_PRIMERA_ACT_TYPES: readonly CaseActTypeDef[] = [
-  { code: 'correo_reparto', labelEs: 'Correo oficina de reparto', suggestedFilename: 'CorreoReparto.pdf', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 1 },
-  { code: 'escrito_tutela', labelEs: 'Escrito de tutela / demanda', suggestedFilename: 'EscritoTutela.pdf', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 2 },
-  { code: 'acta_reparto', labelEs: 'Acta de reparto', suggestedFilename: 'ActaReparto.pdf', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 3 },
-  { code: 'anexos_pruebas', labelEs: 'Anexos y pruebas', suggestedFilename: 'AnexosPruebas.pdf', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 4 },
-  { code: 'informe_ingreso', labelEs: 'Informe de ingreso al despacho', suggestedFilename: 'InformeIngresoDespacho.pdf', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 5 },
-  { code: 'auto_admite', labelEs: 'Auto admisorio (PDF firmado)', suggestedFilename: 'AutoAdmiteTutela.pdf', stageCode: 'ADMISION', responsibleRole: 'despacho', sortBand: 6 },
-  { code: 'notificacion_admisorio', labelEs: 'Notificación auto admisorio', suggestedFilename: 'NotificacionAutoAdmite.pdf', stageCode: 'NOTIFICACION_AUTO_ADMISORIO', responsibleRole: 'escribiente', sortBand: 7 },
-  { code: 'constancia_notificacion', labelEs: 'Constancia de notificación', suggestedFilename: 'ConstanciaNotificacion.pdf', stageCode: 'NOTIFICACION_AUTO_ADMISORIO', responsibleRole: 'escribiente', sortBand: 8 },
-  { code: 'correo_contestacion', labelEs: 'Correo de contestación (entrada)', suggestedFilename: 'CorreoContestacion.pdf', stageCode: 'TERMINO_RESPUESTA', responsibleRole: 'escribiente', sortBand: 9, repeatable: true },
-  { code: 'respuesta_accionado', labelEs: 'Respuesta entidad accionada', suggestedFilename: 'RespuestaAccionado.pdf', stageCode: 'TERMINO_RESPUESTA', responsibleRole: 'escribiente', sortBand: 10, repeatable: true },
-  { code: 'auto_amplia_termino', labelEs: 'Auto amplía término', suggestedFilename: 'AutoAmpliaTermino.pdf', stageCode: 'TERMINO_RESPUESTA', responsibleRole: 'despacho', sortBand: 11 },
-  { code: 'auto_requiere', labelEs: 'Auto de requerimiento', suggestedFilename: 'AutoRequiere.pdf', stageCode: 'TERMINO_RESPUESTA', responsibleRole: 'despacho', sortBand: 12 },
-  { code: 'fallo_tutela', labelEs: 'Fallo de tutela (PDF firmado)', suggestedFilename: 'FalloTutela.pdf', stageCode: 'FALLO', responsibleRole: 'despacho', sortBand: 20 },
-  { code: 'notificacion_fallo', labelEs: 'Notificación del fallo', suggestedFilename: 'NotificacionFallo.pdf', stageCode: 'NOTIFICACION_FALLO', responsibleRole: 'escribiente', sortBand: 21 },
-  { code: 'constancia_notificacion_fallo', labelEs: 'Constancia notificación fallo', suggestedFilename: 'ConstanciaNotifFallo.pdf', stageCode: 'NOTIFICACION_FALLO', responsibleRole: 'escribiente', sortBand: 22 },
-  { code: 'impugnacion_escrito', labelEs: 'Escrito de impugnación', suggestedFilename: 'ImpugnacionFallo.pdf', stageCode: 'IMPUGNACION', responsibleRole: 'secretaria', sortBand: 23 },
-  { code: 'remision_superior', labelEs: 'Remisión al superior (impugnación)', suggestedFilename: 'RemisionSuperior.pdf', stageCode: 'REMISION_SUPERIOR', responsibleRole: 'secretaria', sortBand: 24 },
-  { code: 'remision_corte', labelEs: 'Remisión a la Corte Constitucional', suggestedFilename: 'RemisionCorte.pdf', stageCode: 'REMISION_CORTE', responsibleRole: 'oficial_mayor', sortBand: 30 },
-  { code: 'auto_inadmite', labelEs: 'Auto inadmisorio (PDF firmado)', suggestedFilename: 'AutoInadmite.pdf', stageCode: 'INADMISION', responsibleRole: 'despacho', sortBand: 6 },
-  { code: 'notificacion_inadmision', labelEs: 'Notificación auto inadmisorio', suggestedFilename: 'NotificacionInadmision.pdf', stageCode: 'INADMISION', responsibleRole: 'escribiente', sortBand: 7 },
-  { code: 'auto_rechazo', labelEs: 'Auto de rechazo (PDF firmado)', suggestedFilename: 'AutoRechazoDemanda.pdf', stageCode: 'RECHAZO', responsibleRole: 'despacho', sortBand: 6 },
+  { code: 'correo_reparto', labelEs: 'Correo oficina de reparto', suggestedFilename: 'CorreoReparto.pdf', sgdeTipoDocumental: 'Correo de reparto', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 1 },
+  { code: 'escrito_tutela', labelEs: 'Escrito de tutela / demanda', suggestedFilename: 'EscritoTutela.pdf', sgdeTipoDocumental: 'Demanda', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 2 },
+  { code: 'acta_reparto', labelEs: 'Acta de reparto', suggestedFilename: 'ActaReparto.pdf', sgdeTipoDocumental: 'Acta de reparto', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 3 },
+  { code: 'anexos_pruebas', labelEs: 'Anexos y pruebas', suggestedFilename: 'AnexosPruebas.pdf', sgdeTipoDocumental: 'Anexos', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 4 },
+  { code: 'informe_ingreso', labelEs: 'Informe de ingreso al despacho', suggestedFilename: 'InformeIngresoDespacho.pdf', sgdeTipoDocumental: 'Ingreso a despacho', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 5 },
+  { code: 'auto_admite', labelEs: 'Auto admisorio (PDF firmado)', suggestedFilename: 'AutoAdmiteTutela.pdf', sgdeTipoDocumental: 'Auto admisorio', stageCode: 'ADMISION', responsibleRole: 'despacho', sortBand: 6 },
+  { code: 'notificacion_admisorio', labelEs: 'Notificación auto admisorio', suggestedFilename: 'NotificacionAutoAdmite.pdf', sgdeTipoDocumental: 'Notificación', stageCode: 'NOTIFICACION_AUTO_ADMISORIO', responsibleRole: 'escribiente', sortBand: 7 },
+  { code: 'constancia_notificacion', labelEs: 'Constancia de notificación', suggestedFilename: 'ConstanciaNotificacion.pdf', sgdeTipoDocumental: 'Constancia', stageCode: 'NOTIFICACION_AUTO_ADMISORIO', responsibleRole: 'escribiente', sortBand: 8 },
+  { code: 'correo_contestacion', labelEs: 'Correo de contestación (entrada)', suggestedFilename: 'CorreoContestacion.pdf', sgdeTipoDocumental: 'Correo', stageCode: 'TERMINO_RESPUESTA', responsibleRole: 'escribiente', sortBand: 9, repeatable: true },
+  { code: 'respuesta_accionado', labelEs: 'Respuesta entidad accionada', suggestedFilename: 'RespuestaAccionado.pdf', sgdeTipoDocumental: 'Contestación', stageCode: 'TERMINO_RESPUESTA', responsibleRole: 'escribiente', sortBand: 10, repeatable: true },
+  { code: 'auto_amplia_termino', labelEs: 'Auto amplía término', suggestedFilename: 'AutoAmpliaTermino.pdf', sgdeTipoDocumental: 'Auto interlocutorio', stageCode: 'TERMINO_RESPUESTA', responsibleRole: 'despacho', sortBand: 11 },
+  { code: 'auto_requiere', labelEs: 'Auto de requerimiento', suggestedFilename: 'AutoRequiere.pdf', sgdeTipoDocumental: 'Auto interlocutorio', stageCode: 'TERMINO_RESPUESTA', responsibleRole: 'despacho', sortBand: 12 },
+  { code: 'fallo_tutela', labelEs: 'Fallo de tutela (PDF firmado)', suggestedFilename: 'FalloTutela.pdf', sgdeTipoDocumental: 'Sentencia', stageCode: 'FALLO', responsibleRole: 'despacho', sortBand: 20 },
+  { code: 'notificacion_fallo', labelEs: 'Notificación del fallo', suggestedFilename: 'NotificacionFallo.pdf', sgdeTipoDocumental: 'Notificación', stageCode: 'NOTIFICACION_FALLO', responsibleRole: 'escribiente', sortBand: 21 },
+  { code: 'constancia_notificacion_fallo', labelEs: 'Constancia notificación fallo', suggestedFilename: 'ConstanciaNotifFallo.pdf', sgdeTipoDocumental: 'Constancia', stageCode: 'NOTIFICACION_FALLO', responsibleRole: 'escribiente', sortBand: 22 },
+  { code: 'impugnacion_escrito', labelEs: 'Escrito de impugnación', suggestedFilename: 'ImpugnacionFallo.pdf', sgdeTipoDocumental: 'Memorial de impugnación', stageCode: 'IMPUGNACION', responsibleRole: 'secretaria', sortBand: 23 },
+  { code: 'remision_superior', labelEs: 'Remisión al superior (impugnación)', suggestedFilename: 'RemisionSuperior.pdf', sgdeTipoDocumental: 'Oficio', stageCode: 'REMISION_SUPERIOR', responsibleRole: 'secretaria', sortBand: 24 },
+  { code: 'remision_corte', labelEs: 'Remisión a la Corte Constitucional', suggestedFilename: 'RemisionCorte.pdf', sgdeTipoDocumental: 'Oficio', stageCode: 'REMISION_CORTE', responsibleRole: 'oficial_mayor', sortBand: 30 },
+  { code: 'auto_inadmite', labelEs: 'Auto inadmisorio (PDF firmado)', suggestedFilename: 'AutoInadmite.pdf', sgdeTipoDocumental: 'Auto inadmisorio', stageCode: 'INADMISION', responsibleRole: 'despacho', sortBand: 6 },
+  { code: 'notificacion_inadmision', labelEs: 'Notificación auto inadmisorio', suggestedFilename: 'NotificacionInadmision.pdf', sgdeTipoDocumental: 'Notificación', stageCode: 'INADMISION', responsibleRole: 'escribiente', sortBand: 7 },
+  { code: 'auto_rechazo', labelEs: 'Auto de rechazo (PDF firmado)', suggestedFilename: 'AutoRechazoDemanda.pdf', sgdeTipoDocumental: 'Auto de rechazo', stageCode: 'RECHAZO', responsibleRole: 'despacho', sortBand: 6 },
 ] as const;
 
 /** Catálogo civil ordinario / general (CGP). */
 export const CIVIL_ORDINARIO_ACT_TYPES: readonly CaseActTypeDef[] = [
-  { code: 'escrito_demanda', labelEs: 'Demanda / escrito inicial', suggestedFilename: 'EscritoDemanda.pdf', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 1 },
-  { code: 'informe_ingreso', labelEs: 'Informe de ingreso al despacho', suggestedFilename: 'InformeIngresoDespacho.pdf', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 2 },
-  { code: 'auto_admite', labelEs: 'Auto admisorio (PDF firmado)', suggestedFilename: 'AutoAdmiteDemanda.pdf', stageCode: 'ADMISION', responsibleRole: 'despacho', sortBand: 3 },
-  { code: 'notificacion_admisorio', labelEs: 'Notificación auto admisorio', suggestedFilename: 'NotificacionAutoAdmite.pdf', stageCode: 'NOTIFICACION_AUTO_ADMISORIO', responsibleRole: 'escribiente', sortBand: 4 },
-  { code: 'contestacion_demanda', labelEs: 'Contestación de la demanda', suggestedFilename: 'ContestacionDemanda.pdf', stageCode: 'TERMINO_RESPUESTA', responsibleRole: 'escribiente', sortBand: 5, repeatable: true },
-  { code: 'auto_interlocutorio', labelEs: 'Auto interlocutorio (trámite)', suggestedFilename: 'AutoInterlocutorio.pdf', stageCode: 'TRAMITE', responsibleRole: 'despacho', sortBand: 10, repeatable: true },
-  { code: 'prueba_documental', labelEs: 'Prueba documental / decreto de pruebas', suggestedFilename: 'DecretoPruebas.pdf', stageCode: 'TRAMITE', responsibleRole: 'despacho', sortBand: 11, repeatable: true },
-  { code: 'acta_audiencia', labelEs: 'Acta de audiencia', suggestedFilename: 'ActaAudiencia.pdf', stageCode: 'TRAMITE', responsibleRole: 'secretaria', sortBand: 12, repeatable: true },
-  { code: 'sentencia', labelEs: 'Sentencia (PDF firmado)', suggestedFilename: 'Sentencia.pdf', stageCode: 'FALLO', responsibleRole: 'despacho', sortBand: 20 },
-  { code: 'notificacion_fallo', labelEs: 'Notificación de la sentencia', suggestedFilename: 'NotificacionSentencia.pdf', stageCode: 'NOTIFICACION_FALLO', responsibleRole: 'escribiente', sortBand: 21 },
-  { code: 'apelacion_escrito', labelEs: 'Escrito de apelación', suggestedFilename: 'ApelacionSentencia.pdf', stageCode: 'APELACION', responsibleRole: 'secretaria', sortBand: 22 },
-  { code: 'auto_inadmite', labelEs: 'Auto inadmisorio (PDF firmado)', suggestedFilename: 'AutoInadmiteDemanda.pdf', stageCode: 'INADMISION', responsibleRole: 'despacho', sortBand: 30 },
-  { code: 'auto_rechazo', labelEs: 'Auto de rechazo (PDF firmado)', suggestedFilename: 'AutoRechazoDemanda.pdf', stageCode: 'RECHAZO', responsibleRole: 'despacho', sortBand: 31 },
+  { code: 'correo_reparto', labelEs: 'Correo oficina de reparto', suggestedFilename: 'CorreoReparto.pdf', sgdeTipoDocumental: 'Correo de reparto', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 1 },
+  { code: 'acta_reparto', labelEs: 'Acta de reparto', suggestedFilename: 'ActaReparto.pdf', sgdeTipoDocumental: 'Acta de reparto', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 2 },
+  { code: 'anexos_pruebas', labelEs: 'Anexos de la demanda', suggestedFilename: 'AnexosDemanda.pdf', sgdeTipoDocumental: 'Anexos', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 3 },
+  { code: 'escrito_demanda', labelEs: 'Demanda / escrito inicial', suggestedFilename: 'EscritoDemanda.pdf', sgdeTipoDocumental: 'Demanda', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 4 },
+  { code: 'informe_ingreso', labelEs: 'Informe de ingreso al despacho', suggestedFilename: 'InformeIngresoDespacho.pdf', sgdeTipoDocumental: 'Ingreso a despacho', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 5 },
+  { code: 'auto_admite', labelEs: 'Auto admisorio (PDF firmado)', suggestedFilename: 'AutoAdmiteDemanda.pdf', sgdeTipoDocumental: 'Auto admisorio', stageCode: 'ADMISION', responsibleRole: 'despacho', sortBand: 6 },
+  { code: 'notificacion_admisorio', labelEs: 'Notificación auto admisorio', suggestedFilename: 'NotificacionAutoAdmite.pdf', sgdeTipoDocumental: 'Notificación', stageCode: 'NOTIFICACION_AUTO_ADMISORIO', responsibleRole: 'escribiente', sortBand: 7 },
+  { code: 'contestacion_demanda', labelEs: 'Contestación de la demanda', suggestedFilename: 'ContestacionDemanda.pdf', sgdeTipoDocumental: 'Contestación', stageCode: 'TERMINO_RESPUESTA', responsibleRole: 'escribiente', sortBand: 8, repeatable: true },
+  { code: 'auto_interlocutorio', labelEs: 'Auto interlocutorio (trámite)', suggestedFilename: 'AutoInterlocutorio.pdf', sgdeTipoDocumental: 'Auto interlocutorio', stageCode: 'TRAMITE', responsibleRole: 'despacho', sortBand: 10, repeatable: true },
+  { code: 'prueba_documental', labelEs: 'Prueba documental / decreto de pruebas', suggestedFilename: 'DecretoPruebas.pdf', sgdeTipoDocumental: 'Anexos', stageCode: 'TRAMITE', responsibleRole: 'despacho', sortBand: 11, repeatable: true },
+  { code: 'acta_audiencia', labelEs: 'Acta de audiencia', suggestedFilename: 'ActaAudiencia.pdf', sgdeTipoDocumental: 'Acta de audiencia', stageCode: 'TRAMITE', responsibleRole: 'secretaria', sortBand: 12, repeatable: true },
+  { code: 'sentencia', labelEs: 'Sentencia (PDF firmado)', suggestedFilename: 'Sentencia.pdf', sgdeTipoDocumental: 'Sentencia', stageCode: 'FALLO', responsibleRole: 'despacho', sortBand: 20 },
+  { code: 'notificacion_fallo', labelEs: 'Notificación de la sentencia', suggestedFilename: 'NotificacionSentencia.pdf', sgdeTipoDocumental: 'Notificación', stageCode: 'NOTIFICACION_FALLO', responsibleRole: 'escribiente', sortBand: 21 },
+  { code: 'apelacion_escrito', labelEs: 'Escrito de apelación', suggestedFilename: 'ApelacionSentencia.pdf', sgdeTipoDocumental: 'Memorial', stageCode: 'APELACION', responsibleRole: 'secretaria', sortBand: 22 },
+  { code: 'auto_inadmite', labelEs: 'Auto inadmisorio (PDF firmado)', suggestedFilename: 'AutoInadmiteDemanda.pdf', sgdeTipoDocumental: 'Auto inadmisorio', stageCode: 'INADMISION', responsibleRole: 'despacho', sortBand: 30 },
+  { code: 'auto_rechazo', labelEs: 'Auto de rechazo (PDF firmado)', suggestedFilename: 'AutoRechazoDemanda.pdf', sgdeTipoDocumental: 'Auto de rechazo', stageCode: 'RECHAZO', responsibleRole: 'despacho', sortBand: 31 },
 ] as const;
 
 /** Catálogo proceso ejecutivo singular (CGP). */
 export const CIVIL_EJECUTIVO_ACT_TYPES: readonly CaseActTypeDef[] = [
-  { code: 'titulo_ejecutivo', labelEs: 'Título ejecutivo', suggestedFilename: 'TituloEjecutivo.pdf', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 1 },
-  { code: 'escrito_demanda', labelEs: 'Demanda ejecutiva', suggestedFilename: 'DemandaEjecutiva.pdf', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 2 },
-  { code: 'informe_ingreso', labelEs: 'Informe de ingreso al despacho', suggestedFilename: 'InformeIngresoDespacho.pdf', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 3 },
-  { code: 'auto_admite', labelEs: 'Auto que ordena mandamiento de pago', suggestedFilename: 'AutoMandamientoPago.pdf', stageCode: 'ADMISION', responsibleRole: 'despacho', sortBand: 4 },
-  { code: 'mandamiento_pago', labelEs: 'Mandamiento de pago (PDF firmado)', suggestedFilename: 'MandamientoPago.pdf', stageCode: 'ADMISION', responsibleRole: 'despacho', sortBand: 5 },
-  { code: 'notificacion_admisorio', labelEs: 'Notificación mandamiento de pago', suggestedFilename: 'NotificacionMandamientoPago.pdf', stageCode: 'NOTIFICACION_AUTO_ADMISORIO', responsibleRole: 'escribiente', sortBand: 6 },
-  { code: 'excepciones_ejecutivo', labelEs: 'Excepciones de mérito', suggestedFilename: 'ExcepcionesEjecutivo.pdf', stageCode: 'TERMINO_EXCEPCIONES', responsibleRole: 'escribiente', sortBand: 7, repeatable: true },
-  { code: 'auto_embargo', labelEs: 'Auto de embargo / medida cautelar', suggestedFilename: 'AutoEmbargo.pdf', stageCode: 'TRAMITE', responsibleRole: 'despacho', sortBand: 10, repeatable: true },
-  { code: 'auto_interlocutorio', labelEs: 'Auto interlocutorio (trámite)', suggestedFilename: 'AutoInterlocutorio.pdf', stageCode: 'TRAMITE', responsibleRole: 'despacho', sortBand: 11, repeatable: true },
-  { code: 'sentencia', labelEs: 'Sentencia / auto que continúa ejecución', suggestedFilename: 'SentenciaEjecutivo.pdf', stageCode: 'FALLO', responsibleRole: 'despacho', sortBand: 20 },
-  { code: 'notificacion_fallo', labelEs: 'Notificación de la sentencia', suggestedFilename: 'NotificacionSentencia.pdf', stageCode: 'NOTIFICACION_FALLO', responsibleRole: 'escribiente', sortBand: 21 },
-  { code: 'apelacion_escrito', labelEs: 'Escrito de apelación', suggestedFilename: 'ApelacionSentencia.pdf', stageCode: 'APELACION', responsibleRole: 'secretaria', sortBand: 22 },
-  { code: 'auto_inadmite', labelEs: 'Auto inadmisorio (PDF firmado)', suggestedFilename: 'AutoInadmiteDemanda.pdf', stageCode: 'INADMISION', responsibleRole: 'despacho', sortBand: 30 },
-  { code: 'auto_rechazo', labelEs: 'Auto de rechazo (PDF firmado)', suggestedFilename: 'AutoRechazoDemanda.pdf', stageCode: 'RECHAZO', responsibleRole: 'despacho', sortBand: 31 },
+  { code: 'titulo_ejecutivo', labelEs: 'Título ejecutivo', suggestedFilename: 'TituloEjecutivo.pdf', sgdeTipoDocumental: 'Título ejecutivo', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 1 },
+  { code: 'escrito_demanda', labelEs: 'Demanda ejecutiva', suggestedFilename: 'DemandaEjecutiva.pdf', sgdeTipoDocumental: 'Demanda', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 2 },
+  { code: 'informe_ingreso', labelEs: 'Informe de ingreso al despacho', suggestedFilename: 'InformeIngresoDespacho.pdf', sgdeTipoDocumental: 'Ingreso a despacho', stageCode: 'RADICACION', responsibleRole: 'secretaria', sortBand: 3 },
+  { code: 'auto_admite', labelEs: 'Auto que ordena mandamiento de pago', suggestedFilename: 'AutoMandamientoPago.pdf', sgdeTipoDocumental: 'Auto admisorio', stageCode: 'ADMISION', responsibleRole: 'despacho', sortBand: 4 },
+  { code: 'mandamiento_pago', labelEs: 'Mandamiento de pago (PDF firmado)', suggestedFilename: 'MandamientoPago.pdf', sgdeTipoDocumental: 'Mandamiento de pago', stageCode: 'ADMISION', responsibleRole: 'despacho', sortBand: 5 },
+  { code: 'notificacion_admisorio', labelEs: 'Notificación mandamiento de pago', suggestedFilename: 'NotificacionMandamientoPago.pdf', sgdeTipoDocumental: 'Notificación', stageCode: 'NOTIFICACION_AUTO_ADMISORIO', responsibleRole: 'escribiente', sortBand: 6 },
+  { code: 'excepciones_ejecutivo', labelEs: 'Excepciones de mérito', suggestedFilename: 'ExcepcionesEjecutivo.pdf', sgdeTipoDocumental: 'Excepciones', stageCode: 'TERMINO_EXCEPCIONES', responsibleRole: 'escribiente', sortBand: 7, repeatable: true },
+  { code: 'auto_embargo', labelEs: 'Auto de embargo / medida cautelar', suggestedFilename: 'AutoEmbargo.pdf', sgdeTipoDocumental: 'Auto interlocutorio', stageCode: 'TRAMITE', responsibleRole: 'despacho', sortBand: 10, repeatable: true },
+  { code: 'auto_interlocutorio', labelEs: 'Auto interlocutorio (trámite)', suggestedFilename: 'AutoInterlocutorio.pdf', sgdeTipoDocumental: 'Auto interlocutorio', stageCode: 'TRAMITE', responsibleRole: 'despacho', sortBand: 11, repeatable: true },
+  { code: 'sentencia', labelEs: 'Sentencia / auto que continúa ejecución', suggestedFilename: 'SentenciaEjecutivo.pdf', sgdeTipoDocumental: 'Sentencia', stageCode: 'FALLO', responsibleRole: 'despacho', sortBand: 20 },
+  { code: 'notificacion_fallo', labelEs: 'Notificación de la sentencia', suggestedFilename: 'NotificacionSentencia.pdf', sgdeTipoDocumental: 'Notificación', stageCode: 'NOTIFICACION_FALLO', responsibleRole: 'escribiente', sortBand: 21 },
+  { code: 'apelacion_escrito', labelEs: 'Escrito de apelación', suggestedFilename: 'ApelacionSentencia.pdf', sgdeTipoDocumental: 'Memorial', stageCode: 'APELACION', responsibleRole: 'secretaria', sortBand: 22 },
+  { code: 'auto_inadmite', labelEs: 'Auto inadmisorio (PDF firmado)', suggestedFilename: 'AutoInadmiteDemanda.pdf', sgdeTipoDocumental: 'Auto inadmisorio', stageCode: 'INADMISION', responsibleRole: 'despacho', sortBand: 30 },
+  { code: 'auto_rechazo', labelEs: 'Auto de rechazo (PDF firmado)', suggestedFilename: 'AutoRechazoDemanda.pdf', sgdeTipoDocumental: 'Auto de rechazo', stageCode: 'RECHAZO', responsibleRole: 'despacho', sortBand: 31 },
 ] as const;
+
+export function sgdeTipoDocumentalForActCode(actCode: string | null | undefined): string | null {
+  if (!actCode?.trim()) return null;
+  const code = actCode.trim() as CaseActCode;
+  const fromCatalog =
+    TUTELA_PRIMERA_ACT_TYPES.find((a) => a.code === code)?.sgdeTipoDocumental ??
+    CIVIL_ORDINARIO_ACT_TYPES.find((a) => a.code === code)?.sgdeTipoDocumental ??
+    CIVIL_EJECUTIVO_ACT_TYPES.find((a) => a.code === code)?.sgdeTipoDocumental;
+  if (fromCatalog?.trim()) return fromCatalog.trim();
+  return SGDE_TIPO_DOCUMENTAL_BY_ACT[code] ?? null;
+}
 
 /** @deprecated Usar actCatalogForCaseType */
 export const CIVIL_ACT_TYPES = CIVIL_ORDINARIO_ACT_TYPES;
 
-const ACT_LABEL_BY_CODE = new Map<string, string>(
-  [...TUTELA_PRIMERA_ACT_TYPES, ...CIVIL_ORDINARIO_ACT_TYPES, ...CIVIL_EJECUTIVO_ACT_TYPES].map((a) => [
-    a.code,
-    a.labelEs,
-  ]),
-);
+/** Fallback sin caseType: ordinario antes que ejecutivo (mismo code, distinta etiqueta). */
+const ACT_LABEL_BY_CODE = new Map<string, string>();
+for (const a of [
+  ...TUTELA_PRIMERA_ACT_TYPES,
+  ...CIVIL_EJECUTIVO_ACT_TYPES,
+  ...CIVIL_ORDINARIO_ACT_TYPES,
+]) {
+  ACT_LABEL_BY_CODE.set(a.code, a.labelEs);
+}
 
 /** Inferencia para piezas legacy sin `act_code` en BD. */
 export function inferActCodeFromDocument(doc: Document): string | null {
@@ -144,6 +203,7 @@ export function inferActCodeFromDocument(doc: Document): string | null {
   if (/^ConstanciaNotif/i.test(doc.name) && /Fallo/i.test(doc.name)) return 'constancia_notificacion_fallo';
   if (/^ConstanciaNotif/i.test(doc.name)) return 'constancia_notificacion';
   if (/^Fallo/i.test(doc.name)) return 'fallo_tutela';
+  if (/\d+fallo/i.test(doc.name) && !/notificacion/i.test(doc.name)) return 'fallo_tutela';
   if (/^Sentencia/i.test(doc.name)) return 'sentencia';
   if (/^AutoInterloc/i.test(doc.name)) return 'auto_interlocutorio';
   if (/^DecretoPruebas/i.test(doc.name) || /^Prueba/i.test(doc.name)) return 'prueba_documental';
@@ -154,16 +214,23 @@ export function inferActCodeFromDocument(doc: Document): string | null {
   if (/^MandamientoPago/i.test(doc.name)) return 'mandamiento_pago';
   if (/^AutoEmbargo/i.test(doc.name)) return 'auto_embargo';
   if (/^Apelacion/i.test(doc.name)) return 'apelacion_escrito';
-  if (/^EscritoDemanda/i.test(doc.name) || /^Demanda/i.test(doc.name)) return 'escrito_demanda';
+  if (/^Anexos/i.test(doc.name)) return 'anexos_pruebas';
+  if (/^EscritoDemanda/i.test(doc.name) || /^DemandaEjecutiva/i.test(doc.name)) return 'escrito_demanda';
+  if (/^Demanda/i.test(doc.name) && !/^Demandado/i.test(doc.name)) return 'escrito_demanda';
   // Nombres SGDE / juzgado (p. ej. 001001demandaanexos01): no vienen en TitleCase Tutelia.
   const raw = `${doc.name || ''} ${doc.originalName || ''}`.toLowerCase();
+  if (/falloniega|fallotutel/.test(raw) && !/notificacion|notificadoautoconcede/.test(raw)) {
+    return 'fallo_tutela';
+  }
+  if (/anexo|anexos/.test(raw) && !/auto|sentencia|fallo/.test(raw)) {
+    return 'anexos_pruebas';
+  }
+  if (/prueba|evidencia|decretopruebas/.test(raw) && !/auto|sentencia|fallo/.test(raw)) {
+    return /tutela|accion/.test(raw) ? 'anexos_pruebas' : 'prueba_documental';
+  }
   if (/demanda|escrito.?inicial|escrito.?demanda/.test(raw) && !/contestaci[oó]n/.test(raw)) {
-    // Tutela suele mapear escrito a demanda tutelar vía otros codes; para civil usa escrito_demanda.
     if (/tutela/.test(raw)) return 'escrito_tutela';
     return 'escrito_demanda';
-  }
-  if (/anexo|prueba|evidencia/.test(raw) && !/auto|sentencia|fallo/.test(raw)) {
-    return /tutela|accion/.test(raw) ? 'anexos_pruebas' : 'prueba_documental';
   }
   if (/^Respuesta/i.test(doc.name)) return 'respuesta_accionado';
   return null;
@@ -183,16 +250,22 @@ export function caseHasAnyAct(docs: Document[], actCodes: readonly string[]): bo
   return actCodes.some((c) => present.has(c));
 }
 
-export function labelForActCode(code: string | null | undefined): string | null {
-  if (!code?.trim()) return null;
-  return ACT_LABEL_BY_CODE.get(code) ?? null;
-}
-
 export function actCatalogForCaseType(caseType: CaseType | null | undefined): readonly CaseActTypeDef[] {
   if (caseType === 'tutela_primera') return TUTELA_PRIMERA_ACT_TYPES;
   if (caseType && isCivilEjecutivoCaseType(caseType)) return CIVIL_EJECUTIVO_ACT_TYPES;
   if (caseType && isCivilCaseType(caseType)) return CIVIL_ORDINARIO_ACT_TYPES;
   return [];
+}
+
+export function labelForActCode(
+  code: string | null | undefined,
+  caseType?: CaseType | null,
+): string | null {
+  if (!code?.trim()) return null;
+  const catalog = actCatalogForCaseType(caseType);
+  const fromCatalog = catalog.find((a) => a.code === code)?.labelEs;
+  if (fromCatalog) return fromCatalog;
+  return ACT_LABEL_BY_CODE.get(code) ?? null;
 }
 
 export type ActTimelineEntry = {
@@ -289,13 +362,17 @@ export function actRequiresPartyEntity(actCode: string): boolean {
 }
 
 /** TitleCase sin espacios para nombres de archivo (protocolo CSJ). */
-export function sanitizePartyEntityForFilename(entity: string): string {
+export function sanitizePartyEntityForFilename(
+  entity: string,
+  caseType?: CaseType | null,
+): string {
   const cleaned = entity
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
     .replace(/[^a-zA-Z0-9]+/g, '')
     .slice(0, 28);
-  return cleaned || 'Accionado';
+  if (cleaned) return cleaned;
+  return isCivilCaseType(caseType) ? 'Demandado' : 'Accionado';
 }
 
 export function suggestedLogicalNameForAct(
@@ -310,7 +387,7 @@ export function suggestedLogicalNameForAct(
     CIVIL_EJECUTIVO_ACT_TYPES.find((a) => a.code === actCode);
   let base = def?.suggestedFilename?.replace(/\.pdf$/i, '') ?? 'Documento';
   if (actCode === 'respuesta_accionado' && opts?.partyEntity?.trim()) {
-    base = `Respuesta${sanitizePartyEntityForFilename(opts.partyEntity)}`;
+    base = `Respuesta${sanitizePartyEntityForFilename(opts.partyEntity, opts.caseType)}`;
   }
   const ext = opts?.originalFilename?.match(/\.([a-zA-Z0-9]+)$/i)?.[1]?.toLowerCase() ?? 'pdf';
   const safeExt = ext === 'jpeg' || ext === 'jpg' ? 'pdf' : ext;

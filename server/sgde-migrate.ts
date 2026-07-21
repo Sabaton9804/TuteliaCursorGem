@@ -7,6 +7,7 @@ import {
   type SgdeTreeNode,
 } from './sgde-client';
 import { extractSegundaFieldsFromSgdeLeaves, type SegundaFieldsExtract } from './sgde-segunda-extract';
+import { probeSegundaInstanciaWriteAccess } from './sgde-segunda-impugnacion';
 import {
   buildPreflightTreeFromPdfLeaves,
   sgdeTreeToPreflightDocumentTree,
@@ -25,6 +26,7 @@ export type SgdePreflightStatus =
   | 'sin_documentos'
   | 'no_encontrado'
   | 'solo_compartidos'
+  | 'sin_permiso_escritura'
   | 'error_login';
 
 export type SgdePreflightPdfFile = {
@@ -49,6 +51,7 @@ export type SgdePreflightResult = {
   documentTree: SgdePreflightTreeNode[];
   segundaExtract: SegundaFieldsExtract | null;
   message: string;
+  segundaWriteAccess?: 'ok' | 'forbidden' | 'skipped';
 };
 
 const RECOMMENDED_HINTS: Array<{ key: string; patterns: RegExp[] }> = [
@@ -88,7 +91,15 @@ export function notebookCodeFromSgdeFolderPath(
   folderPath: string | undefined,
   fallback: string
 ): string {
-  const segments = (folderPath || '')
+  const path = (folderPath || '').trim();
+  if (!path) return fallback;
+  const lower = path.toLowerCase();
+  const segunda = /segunda\s*instancia/.test(lower);
+  if (/cautelar/.test(lower)) return 'PI_C02_CAUTELAR';
+  if (/principal/.test(lower) || /01\s*cdo\s*principal|01cdoprincipal/.test(lower)) {
+    return segunda ? 'SI_C01_PRINCIPAL' : 'PI_C01_PRINCIPAL';
+  }
+  const segments = path
     .split(/\s*\/\s*/)
     .map((s) => s.trim())
     .filter(Boolean);
@@ -96,13 +107,18 @@ export function notebookCodeFromSgdeFolderPath(
   const cdo =
     segments.find((s) => /\d*cdo/i.test(s) || /cuaderno/i.test(s)) ??
     (segments.length >= 2 ? segments[1] : segments[0]);
-  const inst = /segunda\s*instancia/i.test(segments[0] || '') ? 'SI' : 'PI';
+  const inst = segunda ? 'SI' : 'PI';
   const slug = cdo
     .replace(/[^a-zA-Z0-9]+/g, '_')
     .replace(/^_|_$/g, '')
     .toUpperCase()
     .slice(0, 36);
-  return slug ? `${inst}_${slug}` : fallback;
+  if (!slug) return fallback;
+  if (slug === 'PRINCIPAL' || slug === 'C01_PRINCIPAL' || slug === '01CDOPRINCIPAL') {
+    return inst === 'SI' ? 'SI_C01_PRINCIPAL' : 'PI_C01_PRINCIPAL';
+  }
+  if (slug.includes('CAUTELAR')) return 'PI_C02_CAUTELAR';
+  return `${inst}_${slug}`;
 }
 
 export function sgdeFilenameToProtocolName(raw: string, orden?: string): string {
@@ -190,6 +206,27 @@ export async function preflightSgdeOriginExpediente(
     };
   }
 
+  const writeProbe = await probeSegundaInstanciaWriteAccess(client, rootId);
+  if (writeProbe.ok === false && writeProbe.forbidden) {
+    const rootNameEarly = await client.getNodeName(rootId);
+    return {
+      ok: false,
+      status: 'sin_permiso_escritura',
+      originRadicado,
+      sgdeRootId: rootId,
+      rootName: rootNameEarly || null,
+      pdfCount: 0,
+      recommendedFound: [],
+      recommendedMissing: RECOMMENDED_HINTS.map((h) => h.key),
+      sampleFiles: [],
+      pdfFiles: [],
+      documentTree: [],
+      segundaExtract: null,
+      message: writeProbe.message,
+      segundaWriteAccess: 'forbidden',
+    };
+  }
+
   const rootName = await client.getNodeName(rootId);
   const { leaves, tree: sgdeTree } = await client.collectExpedienteForPreflight(rootId, {
     maxDepth: 12,
@@ -197,12 +234,13 @@ export async function preflightSgdeOriginExpediente(
     maxSearchDocs: 600,
     originRadicado,
   });
+  const leavesOrdered = sortSgdePdfLeavesByIndex(leaves);
   const documentTree =
     flattenSgdePdfLeaves(sgdeTree).length > 0
       ? sgdeTreeToPreflightDocumentTree(sgdeTree)
-      : buildPreflightTreeFromPdfLeaves(leaves);
-  const { found, missing } = evaluateRecommended(leaves);
-  const pdfFiles: SgdePreflightPdfFile[] = leaves.map((l) => ({
+      : buildPreflightTreeFromPdfLeaves(leavesOrdered);
+  const { found, missing } = evaluateRecommended(leavesOrdered);
+  const pdfFiles: SgdePreflightPdfFile[] = leavesOrdered.map((l) => ({
     id: l.id,
     name: l.name,
     path: sgdeLeafDisplayPath(l),
@@ -211,11 +249,11 @@ export async function preflightSgdeOriginExpediente(
   const folderCount = new Set(leaves.map((l) => l.folderPath).filter(Boolean)).size;
 
   let segundaExtract: SegundaFieldsExtract | null = null;
-  if (leaves.length > 0) {
+  if (leavesOrdered.length > 0) {
     try {
       segundaExtract = await extractSegundaFieldsFromSgdeLeaves(
         client,
-        leaves,
+        leavesOrdered,
         opts?.emailDigest || undefined
       );
     } catch (e) {
@@ -261,6 +299,7 @@ export async function preflightSgdeOriginExpediente(
       status === 'listo'
         ? `SGDE listo: ${leaves.length} PDF en ${folderCount || 'varias'} carpeta(s) (p. ej. Primera Instancia / cuaderno principal).`
         : `Expediente en SGDE con ${leaves.length} PDF(s) en carpetas anidadas, pero faltan piezas recomendadas (${missing.join(', ')}). Puede migrar igualmente.`,
+    segundaWriteAccess: writeProbe.ok ? 'ok' : 'skipped',
   };
 }
 

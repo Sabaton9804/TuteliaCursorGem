@@ -6,6 +6,7 @@
 
 import axios, { type AxiosInstance } from 'axios';
 import https from 'node:https';
+import { ensureSinglePdfExtension } from './case-document-storage';
 import { encryptSgdePortalPassword } from './sgde-sign-crypto';
 import { formatSgdeConnectionError, isSgdeTlsInsecure } from './sgde-tls';
 
@@ -904,11 +905,25 @@ export class SgdeClient {
       const entries = await this.fetchChildren(id);
       const propsOf = (e: Record<string, unknown>) =>
         (e.properties as Record<string, unknown> | undefined) || {};
+      const entryOrden = (e: Record<string, unknown>): number | null => {
+        const props = propsOf(e);
+        const raw = props['rama:orden'] ?? props['rama:idDocumento'];
+        if (raw == null || String(raw).trim() === '') return null;
+        const n = Number(String(raw).trim());
+        return Number.isFinite(n) ? n : null;
+      };
+      // Carpetas primero; dentro de cada grupo, índice SGDE (rama:orden) y luego nombre.
       const sorted = [...entries].sort((a, b) => {
         const fa = entryIsFolder(a) ? 0 : 1;
         const fb = entryIsFolder(b) ? 0 : 1;
         if (fa !== fb) return fa - fb;
+        const oa = entryOrden(a);
+        const ob = entryOrden(b);
+        if (oa != null && ob != null && oa !== ob) return oa - ob;
+        if (oa != null && ob == null) return -1;
+        if (oa == null && ob != null) return 1;
         return String(a.name || '').localeCompare(String(b.name || ''), 'es', {
+          numeric: true,
           sensitivity: 'base',
         });
       });
@@ -1310,6 +1325,43 @@ export class SgdeClient {
     return { ok: true, primeraInstanciaId: primeraId, principalFolderId: principalId };
   }
 
+  /**
+   * Idempotente: Primera instancia → Medidas cautelares (C02 / 02CdoCautelar).
+   * Reutiliza la carpeta Primera instancia de ensurePrimeraInstanciaPrincipal.
+   */
+  async ensurePrimeraInstanciaCautelar(
+    expedienteNodeUuid: string
+  ): Promise<
+    | { ok: true; primeraInstanciaId: string; cautelarFolderId: string }
+    | { ok: false; error: string }
+  > {
+    const base = await this.ensurePrimeraInstanciaPrincipal(expedienteNodeUuid);
+    if (base.ok === false) return base;
+
+    const piChildren = await this.fetchChildren(base.primeraInstanciaId);
+    let cautelarId =
+      this.findChildFolderId(piChildren, (n) => n.includes('cautelar')) ||
+      this.findChildFolderId(piChildren, (n) => n.includes('02cdo')) ||
+      this.findChildFolderId(piChildren, (n) => n.includes('medidas cautelares'));
+
+    if (!cautelarId) {
+      let folderRes = await this.createCmFolder(base.primeraInstanciaId, 'Medidas cautelares');
+      if (folderRes.ok === false) {
+        folderRes = await this.createCmFolder(base.primeraInstanciaId, '02CdoCautelar');
+      }
+      if (folderRes.ok === false) {
+        return { ok: false, error: folderRes.error };
+      }
+      cautelarId = folderRes.nodeId;
+    }
+
+    return {
+      ok: true,
+      primeraInstanciaId: base.primeraInstanciaId,
+      cautelarFolderId: cautelarId,
+    };
+  }
+
   /** Idempotente: Segunda instancia → Impugnación (expediente SGDE ya existente). */
   async ensureSegundaInstanciaImpugnacion(
     expedienteNodeUuid: string
@@ -1324,12 +1376,23 @@ export class SgdeClient {
     const expChildren = await this.fetchChildren(expedienteNodeUuid);
     let segundaId =
       this.findChildFolderId(expChildren, (n) => n.includes('segunda')) ||
-      this.findChildFolderId(expChildren, (n) => n.includes('02segunda'));
+      this.findChildFolderId(expChildren, (n) => n.includes('02segunda')) ||
+      this.findChildFolderId(expChildren, (n) => n.includes('2da'));
 
     if (!segundaId) {
-      let folderRes = await this.createCmFolder(expedienteNodeUuid, 'Segunda instancia');
-      if (!folderRes.ok) {
-        folderRes = await this.createCmFolder(expedienteNodeUuid, '02SegundaInstancia');
+      const segundaNames = [
+        'Segunda instancia',
+        '02SegundaInstancia',
+        'Segunda Instancia',
+        '02 Segunda Instancia',
+      ];
+      let folderRes: { ok: true; nodeId: string } | { ok: false; error: string } = {
+        ok: false,
+        error: 'No se encontró carpeta de segunda instancia.',
+      };
+      for (const nombre of segundaNames) {
+        folderRes = await this.createCmFolder(expedienteNodeUuid, nombre);
+        if (folderRes.ok) break;
       }
       if (folderRes.ok === false) {
         return { ok: false, error: folderRes.error };
@@ -1338,10 +1401,20 @@ export class SgdeClient {
     }
 
     const siChildren = await this.fetchChildren(segundaId);
-    let impugnacionId = this.findChildFolderId(siChildren, (n) => n.includes('impugnacion'));
+    let impugnacionId =
+      this.findChildFolderId(siChildren, (n) => n.includes('impugnacion')) ||
+      this.findChildFolderId(siChildren, (n) => n.includes('03impugn'));
 
     if (!impugnacionId) {
-      const folderRes = await this.createCmFolder(segundaId, 'Impugnación');
+      const impugnacionNames = ['Impugnación', 'Impugnacion', '03Impugnacion', '03 Impugnacion'];
+      let folderRes: { ok: true; nodeId: string } | { ok: false; error: string } = {
+        ok: false,
+        error: 'No se encontró carpeta de impugnación.',
+      };
+      for (const nombre of impugnacionNames) {
+        folderRes = await this.createCmFolder(segundaId, nombre);
+        if (folderRes.ok) break;
+      }
       if (folderRes.ok === false) {
         return { ok: false, error: folderRes.error };
       }
@@ -1381,6 +1454,24 @@ export class SgdeClient {
     return max + 1;
   }
 
+  /**
+   * Siguiente página de inicio en el cuaderno (foliación correlativa del índice electrónico).
+   * Usa el máximo de rama:paginaFinDoc entre los documentos ya presentes.
+   */
+  private async getSiguientePaginaInicio(folderUuid: string): Promise<number> {
+    const docs = await this.fetchChildren(folderUuid);
+    let maxFin = 0;
+    for (const d of docs) {
+      if (entryIsFolder(d)) continue;
+      const props = (d.properties as Record<string, unknown> | undefined) || {};
+      const fin = Number(props['rama:paginaFinDoc'] ?? 0);
+      const pags = Number(props['rama:paginas'] ?? 0);
+      const cand = Number.isFinite(fin) && fin > 0 ? fin : Number.isFinite(pags) && pags > 0 ? pags : 0;
+      if (cand > maxFin) maxFin = cand;
+    }
+    return maxFin + 1;
+  }
+
   private azureMetaAscii(val: string, maxLen = 400): string {
     let s = val.replace(/[^\x20-\x7e]/g, '_');
     if (s.length > maxLen) s = s.slice(0, maxLen);
@@ -1396,6 +1487,13 @@ export class SgdeClient {
     tipoDocumental: string;
     expedienteMetadata: Record<string, string>;
     orden?: number;
+    /** Si se omite, se cuenta desde el PDF en `buffer`. */
+    pageCount?: number;
+    /**
+     * Página de inicio en el índice (foliación correlativa del cuaderno).
+     * Si se omite, se calcula como max(paginaFinDoc)+1 de la carpeta.
+     */
+    pageStart?: number;
   }): Promise<{ ok: true; sgdeDocId?: string } | { ok: false; error: string }> {
     const { folderNodeUuid, buffer, fileName, tipoDocumental, expedienteMetadata } = opts;
     if (!this.ticket || !this.accessToken) {
@@ -1410,6 +1508,24 @@ export class SgdeClient {
 
     const mime = opts.contentType?.includes('pdf') ? 'application/pdf' : 'application/pdf';
     const idDoc = opts.orden ?? (await this.getSiguienteOrdenDocumento(folderNodeUuid));
+    let pageCount =
+      typeof opts.pageCount === 'number' && Number.isFinite(opts.pageCount) && opts.pageCount > 0
+        ? Math.floor(opts.pageCount)
+        : 0;
+    if (pageCount <= 0) {
+      try {
+        const { countPdfPagesInBuffer } = await import('../pdf-acta-detect.ts');
+        pageCount = (await countPdfPagesInBuffer(buffer)) ?? 0;
+      } catch {
+        pageCount = 0;
+      }
+    }
+    if (pageCount <= 0) pageCount = 1;
+    const pageStart =
+      typeof opts.pageStart === 'number' && Number.isFinite(opts.pageStart) && opts.pageStart > 0
+        ? Math.floor(opts.pageStart)
+        : await this.getSiguientePaginaInicio(folderNodeUuid);
+    const pageEnd = pageStart + pageCount - 1;
     const now = new Date();
     const hoy = now.toISOString().slice(0, 10);
     const { randomUUID } = await import('node:crypto');
@@ -1464,18 +1580,18 @@ export class SgdeClient {
       'rama:palabrasClave': '',
       'rama:acceso': 'Publico',
       'cm:title': s(fileName) || '-',
-      'rama:paginaInicioDoc': 1,
-      'rama:paginaFinDoc': 1,
+      'rama:paginaInicioDoc': pageStart,
+      'rama:paginaFinDoc': pageEnd,
       'rama:tamano': buffer.length,
       'rama:formato': 'PDF',
-      'rama:paginas': 1,
+      'rama:paginas': pageCount,
     };
 
     const createBody = {
       alf_token: this.ticket,
       node: {
         id: null,
-        name: fileName.endsWith('.pdf') ? fileName : `${fileName.replace(/\.[^.]+$/, '')}.pdf`,
+        name: ensureSinglePdfExtension(fileName, 'documento.pdf'),
         nodeType: 'rama:documentos',
         properties: nodeProps,
         aspectNames: ['cm:titled'],
@@ -1511,6 +1627,126 @@ export class SgdeClient {
     }
     const errText = typeof cr.data === 'string' ? cr.data : JSON.stringify(cr.data || '');
     return { ok: false, error: `createNodeAzure ${cr.status}: ${errText.slice(0, 400)}` };
+  }
+
+  /**
+   * Actualiza metadatos de páginas / foliación de un documento ya creado en SGDE/Alfresco.
+   * `pageStart` es la página de inicio en el índice del cuaderno (correlativa).
+   */
+  async updateDocumentPageCount(
+    nodeId: string,
+    pageCount: number,
+    pageStart = 1,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const id = String(nodeId || '')
+      .trim()
+      .toLowerCase();
+    if (!/^[0-9a-f-]{36}$/.test(id)) {
+      return { ok: false, error: 'ID de documento SGDE inválido.' };
+    }
+    const pages = Math.max(1, Math.floor(pageCount));
+    const inicio = Math.max(1, Math.floor(pageStart));
+    const fin = inicio + pages - 1;
+    const url = `${this.nodesUrl()}/${encodeURIComponent(id)}`;
+    const body = {
+      properties: {
+        'rama:paginas': pages,
+        'rama:paginaInicioDoc': inicio,
+        'rama:paginaFinDoc': fin,
+      },
+    };
+    const run = async (): Promise<number> => {
+      try {
+        const r = await this.axios.put(url, body, {
+          headers: { ...this.jsonHeaders(), 'Content-Type': 'application/json' },
+          validateStatus: () => true,
+        });
+        return r.status;
+      } catch (e) {
+        const st = (e as { response?: { status?: number } })?.response?.status;
+        return typeof st === 'number' ? st : 0;
+      }
+    };
+    let status = await run();
+    if (status === 401 && this.ticket) {
+      status = await this.withTicketAlfrescoAuth(run);
+    }
+    if (status >= 200 && status < 300) return { ok: true };
+    return { ok: false, error: `Alfresco PUT páginas HTTP ${status || 'sin respuesta'}` };
+  }
+
+  /**
+   * Renombra un nodo documento en Alfresco (p. ej. InformeIngresoDespacho.pdf.pdf → .pdf).
+   */
+  async renameDocumentNode(
+    nodeId: string,
+    newName: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const id = String(nodeId || '')
+      .trim()
+      .toLowerCase();
+    if (!/^[0-9a-f-]{36}$/.test(id)) {
+      return { ok: false, error: 'ID de documento SGDE inválido.' };
+    }
+    const name = ensureSinglePdfExtension(newName, 'documento.pdf');
+    const url = `${this.nodesUrl()}/${encodeURIComponent(id)}`;
+    const run = async (): Promise<number> => {
+      try {
+        const r = await this.axios.put(
+          url,
+          { name },
+          {
+            headers: { ...this.jsonHeaders(), 'Content-Type': 'application/json' },
+            validateStatus: () => true,
+          },
+        );
+        return r.status;
+      } catch (e) {
+        const st = (e as { response?: { status?: number } })?.response?.status;
+        return typeof st === 'number' ? st : 0;
+      }
+    };
+    let status = await run();
+    if (status === 401 && this.ticket) {
+      status = await this.withTicketAlfrescoAuth(run);
+    }
+    if (status >= 200 && status < 300) return { ok: true };
+    return { ok: false, error: `Alfresco RENAME HTTP ${status || 'sin respuesta'}` };
+  }
+
+  /**
+   * Elimina un nodo documento en Alfresco (papelera / soft delete).
+   * Usar con cuidado: solo para corregir subidas erróneas.
+   */
+  async deleteDocumentNode(
+    nodeId: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const id = String(nodeId || '')
+      .trim()
+      .toLowerCase();
+    if (!/^[0-9a-f-]{36}$/.test(id)) {
+      return { ok: false, error: 'ID de documento SGDE inválido.' };
+    }
+    const url = `${this.nodesUrl()}/${encodeURIComponent(id)}`;
+    const run = async (): Promise<number> => {
+      try {
+        const r = await this.axios.delete(url, {
+          headers: this.jsonHeaders(),
+          validateStatus: () => true,
+        });
+        return r.status;
+      } catch (e) {
+        const st = (e as { response?: { status?: number } })?.response?.status;
+        return typeof st === 'number' ? st : 0;
+      }
+    };
+    let status = await run();
+    if (status === 401 && this.ticket) {
+      status = await this.withTicketAlfrescoAuth(run);
+    }
+    if (status === 204 || (status >= 200 && status < 300)) return { ok: true };
+    if (status === 404) return { ok: true }; // ya no está
+    return { ok: false, error: `Alfresco DELETE HTTP ${status || 'sin respuesta'}` };
   }
 
   /**

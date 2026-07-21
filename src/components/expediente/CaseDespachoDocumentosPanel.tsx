@@ -23,7 +23,10 @@ import {
   uploadGeneratedDocxToExpedienteWithWordReview,
 } from '../../lib/document-templates';
 import { buildInformeIngresoPlainTextPdfBlob } from '../../lib/generate-judicial-pdf';
-import { buildPdfBlobFromJudicialDocx } from '../../lib/informe-docx-to-pdf';
+import {
+  buildPdfBlobFromJudicialDocx,
+  cleanupTuteliaPdfGenerationOverlays,
+} from '../../lib/informe-docx-to-pdf';
 import {
   descargarTxt,
   textoAutoAdmisorioBorrador,
@@ -67,7 +70,9 @@ type Props = {
   caseId: string;
   /** Piezas actuales del expediente (para calcular el siguiente `sort_order` en cuaderno principal). */
   docs: Document[];
-  onCaseUpdated?: () => void;
+  onCaseUpdated?: () => void | Promise<void>;
+  /** Tras registrar el PDF del informe: refetch + ir a expediente digital. */
+  onAfterRegistrarInforme?: () => void | Promise<void>;
   /** Tras subir un Word a revisión, p. ej. cambiar a la pestaña «Documentos por revisar». */
   onAfterEnviarRevision?: () => void;
   /** Nombre visible en la notificación al juez (p. ej. usuario en sesión). */
@@ -79,6 +84,7 @@ export function CaseDespachoDocumentosPanel({
   caseId,
   docs,
   onCaseUpdated,
+  onAfterRegistrarInforme,
   onAfterEnviarRevision,
   revisionActorDisplayName,
 }: Props) {
@@ -483,12 +489,14 @@ export function CaseDespachoDocumentosPanel({
     resolveAutoBodyForJudicialDocx,
   ]);
 
-  const confirmarInformeListo = async () => {
+  const confirmarInformeListo = async (opts?: { replaceExisting?: boolean }) => {
     /**
      * Mammoth + html2canvas + html2pdf en el hilo principal con .docx grandes (p. ej. plantilla Word pesada)
      * congela la pestaña varios segundos; por encima de este umbral se usa PDF de texto (misma sustancia jurídica).
      */
     const DOCX_PDF_MAQUETADO_MAX_BYTES = 1.5 * 1024 * 1024;
+    const replaceExisting = Boolean(opts?.replaceExisting);
+    const replaceDocumentId = replaceExisting ? caseItem.informeIngresoDocumentId?.trim() || null : null;
 
     setWorkflowBusy(true);
     setTplError(null);
@@ -498,12 +506,19 @@ export function CaseDespachoDocumentosPanel({
       const docxBlob = await buildInformeDocxBlob();
 
       let pdfBlob: Blob;
+      let usedPlainFallback = false;
       if (docxBlob.size > DOCX_PDF_MAQUETADO_MAX_BYTES) {
         console.info(
           '[informe] DOCX >',
           Math.round(DOCX_PDF_MAQUETADO_MAX_BYTES / 1024 / 1024),
           'MB: PDF de texto plano (evita bloqueo del navegador).',
         );
+        if (replaceExisting) {
+          throw new Error(
+            'La plantilla Word es demasiado pesada para regenerar el PDF con membrete. Descargue el Word y conviértalo a PDF fuera de Tutelia, o aligere la plantilla.',
+          );
+        }
+        usedPlainFallback = true;
         const plain = await resolveInformePlainTextForPdf();
         pdfBlob = await buildInformeIngresoPlainTextPdfBlob({
           fullPlainText: plain,
@@ -514,6 +529,14 @@ export function CaseDespachoDocumentosPanel({
           pdfBlob = await buildPdfBlobFromJudicialDocx(docxBlob, informeTpl?.pageLayout ?? null);
         } catch (e) {
           console.warn('PDF maquetado (mismo Word que descarga) no disponible; se usa texto plano:', e);
+          if (replaceExisting) {
+            throw new Error(
+              e instanceof Error
+                ? `No se pudo regenerar el PDF maquetado: ${e.message}`
+                : 'No se pudo regenerar el PDF maquetado con membrete.',
+            );
+          }
+          usedPlainFallback = true;
           const plain = await resolveInformePlainTextForPdf();
           pdfBlob = await buildInformeIngresoPlainTextPdfBlob({
             fullPlainText: plain,
@@ -524,7 +547,10 @@ export function CaseDespachoDocumentosPanel({
 
       const ab = await pdfBlob.arrayBuffer();
       const pdfBytes = new Uint8Array(ab);
-      const displayName = sanitizeCaseDocumentLogicalName(informePdfNombre, DEFAULT_INFORME_INGRESO_PDF_NAME);
+      const displayName = sanitizeCaseDocumentLogicalName(
+        replaceExisting && nombrePdfEnExpediente ? nombrePdfEnExpediente : informePdfNombre,
+        DEFAULT_INFORME_INGRESO_PDF_NAME,
+      );
       await registerCaseInformeIngresoWithExpedientePdf({
         caseId,
         courtId: caseItem?.courtId,
@@ -534,11 +560,22 @@ export function CaseDespachoDocumentosPanel({
         pdfBytes,
         displayName,
         docs,
+        replaceDocumentId,
       });
-      onCaseUpdated?.();
+      if (usedPlainFallback) {
+        setTplError(
+          'El PDF se registró en texto plano (sin escudo/membrete) porque falló el maquetado. Use «Regenerar PDF con membrete» tras recargar la app, o descargue el Word.',
+        );
+      }
+      if (onAfterRegistrarInforme) {
+        await onAfterRegistrarInforme();
+      } else {
+        await onCaseUpdated?.();
+      }
     } catch (e) {
       setTplError(e instanceof Error ? e.message : 'No se pudo registrar el PDF del informe en el expediente.');
     } finally {
+      cleanupTuteliaPdfGenerationOverlays();
       setWorkflowBusy(false);
     }
   };
@@ -963,18 +1000,18 @@ export function CaseDespachoDocumentosPanel({
                   <strong className="font-semibold">Secretaría:</strong> puede enviar el Word a la pestaña «Documentos por
                   revisar» con <strong className="font-semibold">Enviar a revisión</strong>, o incorporar directamente el{' '}
                   <strong className="font-semibold">PDF</strong> al expediente con el botón verde (solo informe de ingreso).
-                  El auto admisorio del despacho siempre debe pasar por revisión. Por integridad judicial, el PDF registrado{' '}
-                  <strong className="font-semibold">no se elimina desde aquí</strong>.
+                  El auto admisorio del despacho siempre debe pasar por revisión. El PDF del informe se puede eliminar desde
+                  el expediente digital (quedará pendiente de volver a cargar).
                 </p>
                 {informeListo ? (
                   <p className="text-[10px] font-medium leading-snug text-emerald-900/90">
-                    Rectificaciones: cargue una pieza adicional en el expediente digital si el despacho lo permite, según
-                    práctica interna.
+                    Si el PDF quedó sin membrete (texto plano), use <strong className="font-semibold">Regenerar PDF con
+                    membrete</strong> o elimínelo en el expediente y vuelva a cargarlo.
                   </p>
                 ) : null}
               </div>
-              {!informeListo ? (
-                <div className="flex shrink-0 flex-wrap gap-2">
+              <div className="flex shrink-0 flex-wrap gap-2">
+                {!informeListo ? (
                   <button
                     type="button"
                     disabled={workflowBusy}
@@ -983,8 +1020,18 @@ export function CaseDespachoDocumentosPanel({
                   >
                     Cargar al expediente como PDF
                   </button>
-                </div>
-              ) : null}
+                ) : (
+                  <button
+                    type="button"
+                    disabled={workflowBusy || !caseItem.informeIngresoDocumentId}
+                    onClick={() => void confirmarInformeListo({ replaceExisting: true })}
+                    className="rounded-lg border border-emerald-700 bg-white px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-emerald-800 hover:bg-emerald-50 disabled:opacity-40"
+                    title="Sustituye el PDF del expediente por uno maquetado con escudo y membrete (como el Word)"
+                  >
+                    Regenerar PDF con membrete
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

@@ -2,8 +2,10 @@ import { supabase } from './supabase';
 import type { CaseType } from '../types';
 import type { DerechoTuteladoCode } from './sierju-case-codes';
 import { resolveProcessDefinitionId } from './process-definitions-service';
+import { isCivilCaseType } from './process-product-scope';
 import type { CaseSierjuMetadata, FundamentalRightCode } from './sierju-types';
 import { derechoToFundamental, sierjuClassCodeToDerecho } from './sierju-code-bridge';
+import { SIERJU_CIVIL_ACTIVE_SECTION } from './sierju-process-tipos';
 
 export type SierjuClassOption = {
   id: string;
@@ -140,13 +142,80 @@ function filterClassesForCaseType(caseType: CaseType, options: SierjuClassOption
   return options;
 }
 
+/**
+ * Carga TIPOS PROCESOS de una sección SIERJU (p. ej. civil_1a_oral) del formulario del despacho,
+ * sin depender del puente process_definition_sierju_classes.
+ */
+export async function fetchSierjuClassesBySection(
+  courtId: string,
+  sectionCode: string,
+): Promise<SierjuClassOption[]> {
+  const formTemplateCode = await fetchCourtSierjuFormTemplateCode(courtId);
+  const cacheKey = `${courtId}:section:${sectionCode}:${formTemplateCode}`;
+  if (cachedKey === cacheKey && cachedClasses.length > 0) {
+    return cachedClasses;
+  }
+
+  const { data: sectionRow, error: sectionErr } = await supabase
+    .from('sierju_sections')
+    .select('id, code, label, form_template_code')
+    .eq('code', sectionCode)
+    .eq('form_template_code', formTemplateCode)
+    .maybeSingle();
+
+  if (sectionErr) {
+    console.warn('[sierju-catalog-service] sierju_sections:', sectionErr.message);
+    return [];
+  }
+  if (!sectionRow?.id) return [];
+
+  const { data, error } = await supabase
+    .from('sierju_process_classes')
+    .select('id, code, label, sort_order, section_id')
+    .eq('section_id', sectionRow.id)
+    .order('sort_order', { ascending: true });
+
+  if (error) {
+    console.warn('[sierju-catalog-service] sierju_process_classes by section:', error.message);
+    return [];
+  }
+
+  const sectionMeta = {
+    code: String(sectionRow.code ?? sectionCode),
+    label: String(sectionRow.label ?? ''),
+    form_template_code: String(sectionRow.form_template_code ?? formTemplateCode),
+  };
+
+  const options: SierjuClassOption[] = [];
+  for (const classRaw of (data as Record<string, unknown>[]) ?? []) {
+    const opt = rowToClassOption({ is_default: false }, classRaw, sectionMeta);
+    if (opt) options.push(opt);
+  }
+  options.sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label, 'es'));
+
+  cachedKey = cacheKey;
+  cachedClasses = options;
+  return options;
+}
+
 export async function fetchSierjuClassesForCaseType(
   courtId: string,
   caseType: CaseType,
 ): Promise<SierjuClassOption[]> {
   const processDefinitionId = await resolveProcessDefinitionId(caseType, courtId);
-  if (!processDefinitionId) return [];
-  const rows = await fetchSierjuClassesForProcessDefinition(courtId, processDefinitionId);
+  const rows = processDefinitionId
+    ? await fetchSierjuClassesForProcessDefinition(courtId, processDefinitionId)
+    : [];
+
+  // Civil: el puente histórico solo enlazaba Civil-Escrito. Si no hay Oral, cargar la sección vigente.
+  if (isCivilCaseType(caseType)) {
+    const hasOral = rows.some((o) => o.sectionCode === SIERJU_CIVIL_ACTIVE_SECTION);
+    if (!hasOral) {
+      const oral = await fetchSierjuClassesBySection(courtId, SIERJU_CIVIL_ACTIVE_SECTION);
+      if (oral.length) return oral;
+    }
+  }
+
   return filterClassesForCaseType(caseType, rows);
 }
 
@@ -164,6 +233,25 @@ export function findSierjuClassById(
 ): SierjuClassOption | undefined {
   if (!classId) return undefined;
   return classes.find((c) => c.id === classId);
+}
+
+/** Resuelve fila SIERJU por código TIPOS PROCESOS (p. ej. declarativos_especiales_divisorio). */
+export function findSierjuClassByCode(
+  classes: readonly SierjuClassOption[],
+  code: string | undefined | null,
+  preferSection?: string,
+): SierjuClassOption | undefined {
+  const c = (code || '').trim();
+  if (!c) return undefined;
+  if (preferSection) {
+    const preferred =
+      classes.find((row) => row.code === c && row.sectionCode === preferSection) ||
+      classes.find(
+        (row) => row.code === c && String(row.sectionCode || '').includes('oral'),
+      );
+    if (preferred) return preferred;
+  }
+  return classes.find((row) => row.code === c);
 }
 
 export type SierjuCaseClassificationPatch = {
@@ -207,4 +295,16 @@ export async function resolveSierjuClassificationForCaseType(
 export function invalidateSierjuCatalogCache(): void {
   cachedKey = null;
   cachedClasses = [];
+}
+
+/** Resuelve classId civil a partir del código TIPOS PROCESOS (p. ej. tras tipificación IA). */
+export async function resolveSierjuClassIdByCode(
+  courtId: string,
+  caseType: CaseType,
+  code: string | null | undefined,
+): Promise<SierjuClassOption | null> {
+  const c = (code || '').trim();
+  if (!c) return null;
+  const classes = await fetchSierjuClassesForCaseType(courtId, caseType);
+  return findSierjuClassByCode(classes, c, SIERJU_CIVIL_ACTIVE_SECTION) ?? null;
 }

@@ -10,6 +10,7 @@ export type SgdePreflightStatus =
   | 'sin_documentos'
   | 'no_encontrado'
   | 'solo_compartidos'
+  | 'sin_permiso_escritura'
   | 'error_login';
 
 export type SgdePreflightPdfFile = {
@@ -48,6 +49,15 @@ export type SgdePreflightResult = {
   portalBaseUrl?: string;
   error?: string;
   code?: string;
+  segundaWriteAccess?: 'ok' | 'forbidden' | 'skipped';
+};
+
+export type SgdeSegundaWriteProbeResult = {
+  ok: boolean;
+  forbidden: boolean;
+  message: string;
+  sgdeRootId: string | null;
+  impugnacionFolderId?: string;
 };
 
 export type SgdeUserStatus = {
@@ -257,6 +267,34 @@ export async function sgdeRepairStorage(opts: {
   return body;
 }
 
+export type RepairCorreoRepartoResult = {
+  ok: boolean;
+  repaired: number;
+  message: string;
+  errors: string[];
+};
+
+export async function repairCorreoReparto(opts: {
+  caseId: string;
+  documentId?: string;
+}): Promise<RepairCorreoRepartoResult> {
+  const res = await fetch('/api/cases/repair-correo-reparto', {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify({
+      caseId: opts.caseId,
+      documentId: opts.documentId,
+    }),
+  });
+  const body = (await res.json().catch(() => ({}))) as RepairCorreoRepartoResult & {
+    error?: string;
+  };
+  if (!res.ok) {
+    throw new Error(body.error || body.message || `Error al reparar correo (${res.status})`);
+  }
+  return body;
+}
+
 export type SgdeDocumentViewUrlResult = {
   signedUrl: string;
   storagePath: string;
@@ -440,6 +478,28 @@ export async function sgdePublishSegundaImpugnacion(opts: {
   return body;
 }
 
+export async function sgdeProbeSegundaWrite(opts: {
+  caseId: string;
+}): Promise<SgdeSegundaWriteProbeResult> {
+  const res = await fetch('/api/sgde/probe-segunda-write', {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify({ caseId: opts.caseId }),
+  });
+  const body = (await res.json().catch(() => ({}))) as SgdeSegundaWriteProbeResult & {
+    error?: string;
+    code?: string;
+  };
+  if (!res.ok) {
+    const msg =
+      body.code === 'USER_NOT_CONFIGURED'
+        ? 'Configure su usuario y contraseña SGDE en Ajustes.'
+        : body.error || body.message || `Error al comprobar permisos SGDE (${res.status})`;
+    throw new Error(msg);
+  }
+  return body;
+}
+
 export async function sgdeImportExpediente(opts: {
   caseType: 'tutela_primera' | 'tutela_segunda';
   radicado: string;
@@ -503,6 +563,31 @@ export async function sgdeMigrateOriginToCase(opts: {
   return body;
 }
 
+export type RefreshSegundaPartiesResult = {
+  ok: boolean;
+  updated: boolean;
+  falloDocumentId?: string;
+  falloDocumentName?: string;
+  message: string;
+  parties?: { claimant: string; defendant: string };
+};
+
+export async function refreshSegundaPartiesFromFallo(opts: {
+  caseId: string;
+  force?: boolean;
+}): Promise<RefreshSegundaPartiesResult> {
+  const res = await fetch('/api/cases/refresh-segunda-parties-from-fallo', {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify({ caseId: opts.caseId, force: opts.force === true }),
+  });
+  const body = (await res.json().catch(() => ({}))) as RefreshSegundaPartiesResult & { error?: string };
+  if (!res.ok) {
+    throw new Error(body.error || `Error al extraer partes del fallo (${res.status})`);
+  }
+  return body;
+}
+
 export function parseSegundaInstanciaClient(
   subject: string,
   text: string,
@@ -524,6 +609,9 @@ export function parseSegundaInstanciaClient(
     /\bREMISI[ÓO]N\s+(?:EXPEDIENTE|DEL\s+EXPEDIENTE)\b/i.test(combined) ||
     (/\bREMISI[ÓO]N\b/i.test(combined) && /\bTUTELA\b/i.test(combined)) ||
     /\bIMPUGNACI[ÓO]N\b/i.test(combined) ||
+    /\bAutoConcedeImpugnacion\b/i.test(combined) ||
+    /\bAUTO\s+CONCEDE\s+IMPUGNACI[ÓO]N\b/i.test(combined) ||
+    /\bREPARTO\s+SECUENCIA\b/i.test(combined) ||
     /\bSolicitud\s+de\s+traslado\b/i.test(combined) ||
     /\btraslado\s+del\s+proceso\s+judicial\b/i.test(combined) ||
     /\bExpediente:\s*\d{23}/i.test(combined);

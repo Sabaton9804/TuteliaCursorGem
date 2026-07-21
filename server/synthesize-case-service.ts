@@ -223,9 +223,14 @@ export function buildCaseSynthesisContextBlock(input: CaseSynthesisInput): strin
 function buildExpedienteForPrompt(input: CaseSynthesisInput): string {
   const contextBlock = buildCaseSynthesisContextBlock(input);
   const rawText = buildCaseSynthesisRawText(input);
+  const segundaNote =
+    input.caseType === 'tutela_segunda'
+      ? '\nNOTA: Expediente de SEGUNDA INSTANCIA (impugnación). Las partes procesales son las del fallo de primera instancia, no el juzgado remitente ni el despacho de segunda.\n'
+      : '';
   return [
     `DEMANDANTE/ACCIONANTE: ${input.claimant || 'No especificado'}`,
     `DEMANDADO/ACCIONADO: ${input.defendant || 'No especificado'}`,
+    segundaNote,
     '',
     '### Datos del expediente en el sistema',
     contextBlock.trim(),

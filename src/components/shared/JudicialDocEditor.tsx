@@ -164,6 +164,11 @@ export const JudicialDocEditor = forwardRef<JudicialDocEditorHandle, JudicialDoc
   ) {
     const onChangeRef = useRef(onChange);
     onChangeRef.current = onChange;
+    const contentRef = useRef(content);
+    contentRef.current = content;
+    /** Evita eco controlado: padre → parse → setContent que mueve el cursor al pie. */
+    const lastAppliedRef = useRef<string>(stableSerialize(content));
+    const pendingExternalContentRef = useRef(false);
 
     const editorProps = useMemo((): EditorProps => {
       const baseClass = despachoSheetChrome
@@ -211,7 +216,10 @@ export const JudicialDocEditor = forwardRef<JudicialDocEditorHandle, JudicialDoc
         content: content ?? EMPTY_DOC,
         editorProps,
         onUpdate: ({ editor: ed }) => {
-          onChangeRef.current?.(ed.getJSON());
+          const json = ed.getJSON();
+          lastAppliedRef.current = stableSerialize(json);
+          pendingExternalContentRef.current = false;
+          onChangeRef.current?.(json);
         },
       },
       [extensions, readOnly, editorProps],
@@ -229,19 +237,59 @@ export const JudicialDocEditor = forwardRef<JudicialDocEditorHandle, JudicialDoc
     }, [editor, readOnly]);
 
     const contentSer = stableSerialize(content);
-    const lastAppliedRef = useRef<string>(contentSer);
 
-    useLayoutEffect(() => {
+    const applyExternalContent = useCallback(() => {
       if (!editor || editor.isDestroyed) return;
-      if (contentSer === lastAppliedRef.current) return;
-      const next = content ?? EMPTY_DOC;
+      const next = contentRef.current ?? EMPTY_DOC;
+      const ser = stableSerialize(next);
+      if (ser === lastAppliedRef.current) {
+        pendingExternalContentRef.current = false;
+        return;
+      }
       try {
+        const { from, to } = editor.state.selection;
         editor.commands.setContent(next, { emitUpdate: false });
-        lastAppliedRef.current = contentSer;
+        const maxPos = editor.state.doc.content.size;
+        const safeFrom = Math.min(from, maxPos);
+        const safeTo = Math.min(to, maxPos);
+        if (safeFrom <= safeTo) {
+          editor.commands.setTextSelection({ from: safeFrom, to: safeTo });
+        }
+        lastAppliedRef.current = ser;
+        pendingExternalContentRef.current = false;
       } catch {
         /* ignore */
       }
-    }, [contentSer, editor, content]);
+    }, [editor]);
+
+    useLayoutEffect(() => {
+      if (!editor || editor.isDestroyed) return;
+      if (contentSer === lastAppliedRef.current) {
+        pendingExternalContentRef.current = false;
+        return;
+      }
+      // Mientras se escribe, no reemplazar el doc (el padre re-parsea y eso tiraba el cursor al final).
+      if (editor.isFocused) {
+        pendingExternalContentRef.current = true;
+        return;
+      }
+      applyExternalContent();
+    }, [contentSer, editor, applyExternalContent]);
+
+    useEffect(() => {
+      if (!editor) return;
+      const onBlur = () => {
+        if (!pendingExternalContentRef.current) return;
+        queueMicrotask(() => {
+          if (editor.isDestroyed || editor.isFocused) return;
+          applyExternalContent();
+        });
+      };
+      editor.on('blur', onBlur);
+      return () => {
+        editor.off('blur', onBlur);
+      };
+    }, [editor, applyExternalContent]);
 
     useEffect(() => {
       if (!editor || !showComments) return;

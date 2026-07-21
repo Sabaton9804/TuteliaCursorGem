@@ -44,9 +44,16 @@ export function sanitizeCaseDocumentLogicalName(raw: string, fallback: string): 
   const fb = (fallback || 'documento.pdf').trim() || 'documento.pdf';
   let t = (raw || '').trim();
   if (!t) return fb;
+  // Colapsar foo.pdf.pdf → foo.pdf antes de partir extensión (uploads SGDE / informe ingreso).
+  if (/\.pdf$/i.test(t)) {
+    t = t.replace(/(\.pdf)+$/i, '.pdf');
+  }
   const extMatch = t.match(/\.([a-zA-Z0-9]{1,8})$/);
   const ext = normalizeStorageExtension(extMatch?.[1], normalizeStorageExtension(fb.split('.').pop()));
-  const base = (extMatch ? t.slice(0, -extMatch[0].length) : t).replace(/\.+$/, '');
+  let base = (extMatch ? t.slice(0, -extMatch[0].length) : t).replace(/\.+$/, '');
+  if (ext === 'pdf') {
+    base = base.replace(/(\.pdf)+$/i, '');
+  }
   const safeBase = base
     .replace(/[/\\]+/g, '_')
     .replace(/[^a-zA-Z0-9._-]+/g, '_')

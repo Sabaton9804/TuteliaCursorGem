@@ -11,6 +11,7 @@ import { DEFAULT_DEMO_COURT_ID } from '../../lib/default-court';
 import { userRoleLabelEs } from '../../lib/user-roles';
 import { UserProfile } from '../../types';
 import { SessionCourtProvider, useSessionCourt } from '../../contexts/SessionCourtContext';
+import { CaseNavScopeProvider } from '../../contexts/CaseNavScopeContext';
 import { CourtOperationalProvider } from '../../contexts/CourtOperationalContext';
 import PlatformAdminBar from '../platform/PlatformAdminBar';
 import { AssignmentNotificationBell } from './AssignmentNotificationBell';
@@ -535,6 +536,7 @@ export default function Shell({ children }: ShellProps) {
 
   return (
     <SessionCourtProvider profile={profile} userId={user?.uid}>
+    <CaseNavScopeProvider>
     <div className="min-h-screen flex bg-bg text-slate-900 font-sans">
       <aside
         className={`hidden md:flex flex-col bg-primary text-white shrink-0 fixed left-0 top-0 z-30 h-screen border-r border-white/10 transition-[width] duration-200 ease-out ${
@@ -806,6 +808,7 @@ export default function Shell({ children }: ShellProps) {
         )}
       </AnimatePresence>
     </div>
+    </CaseNavScopeProvider>
     </SessionCourtProvider>
   );
 }

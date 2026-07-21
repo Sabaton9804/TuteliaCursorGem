@@ -4,10 +4,23 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export const CASE_DOCUMENTS_BUCKET = 'case-documents';
 export const DEFAULT_NOTEBOOK_CODE = 'PI_C01_PRINCIPAL';
 
-export function sanitizeCaseDocumentLogicalName(raw: string, fallback: string): string {
+/** Colapsa `nombre.pdf.pdf` → `nombre.pdf` (bug frecuente al concatenar `.pdf` sobre un name ya tipado). */
+export function ensureSinglePdfExtension(raw: string, fallback = 'documento.pdf'): string {
   const fb = (fallback || 'documento.pdf').trim() || 'documento.pdf';
   let t = (raw || '').trim();
-  if (!t) return fb.endsWith('.pdf') ? fb : `${fb.replace(/\.+$/, '')}.pdf`;
+  if (!t) t = fb;
+  t = t.replace(/(\.pdf)+$/i, '');
+  t = t.replace(/\.+$/, '');
+  if (!t) t = fb.replace(/(\.pdf)+$/i, '').replace(/\.+$/, '') || 'documento';
+  return `${t}.pdf`;
+}
+
+export function sanitizeCaseDocumentLogicalName(raw: string, fallback: string): string {
+  const fb = ensureSinglePdfExtension(fallback || 'documento.pdf', 'documento.pdf');
+  let t = (raw || '').trim();
+  if (!t) return fb;
+  // Evitar InformeIngresoDespacho.pdf.pdf si el caller ya traía .pdf
+  t = t.replace(/(\.pdf)+$/i, '.pdf');
   if (!/\.pdf$/i.test(t)) t = `${t.replace(/\.+$/, '')}.pdf`;
   const safe = t
     .replace(/[/\\]+/g, '_')
@@ -15,8 +28,8 @@ export function sanitizeCaseDocumentLogicalName(raw: string, fallback: string): 
     .replace(/_+/g, '_')
     .replace(/^_|_$/g, '')
     .slice(0, 120);
-  const out = safe.toLowerCase().endsWith('.pdf') ? safe : `${safe}.pdf`;
-  return out || (fb.toLowerCase().endsWith('.pdf') ? fb : `${fb}.pdf`);
+  const out = ensureSinglePdfExtension(safe, fb);
+  return out || fb;
 }
 
 export function buildCaseAttachmentObjectPath(caseId: string, logicalName: string): string {

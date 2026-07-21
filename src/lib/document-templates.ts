@@ -226,39 +226,76 @@ export async function registerCaseInformeIngresoWithExpedientePdf(opts: {
   docs: Document[];
   /** Si es false, no avanza etapa aunque el tipo sea tutela 2ª / consulta desacato. */
   advanceStage?: boolean;
+  /**
+   * Sustituye el PDF de una pieza ya registrada (p. ej. regenerar maquetado con membrete
+   * tras un fallo del convertidor Word→PDF que dejó solo texto plano).
+   */
+  replaceDocumentId?: string | null;
 }): Promise<void> {
   await ensureSupabaseSessionForWrites();
   const notebookCode = notebookCodeForCaseType(opts.caseType);
-  const sortOrder = nextSortOrderInPrincipalNotebook(opts.docs);
   const up = await uploadCaseAttachment(supabase, opts.caseId, opts.displayName, opts.pdfBytes, 'application/pdf');
   if ('error' in up) throw up.error;
 
-  const row: Record<string, unknown> = {
-    case_id: opts.caseId,
-    name: opts.displayName,
-    original_name: opts.displayName,
-    type: 'informe_ingreso_expediente',
-    content_type: 'application/pdf',
-    size: opts.pdfBytes.byteLength,
-    storage_path: up.path,
-    is_from_link: false,
-    sort_order: sortOrder,
-    notebook_code: notebookCode,
-    act_code: 'informe_ingreso',
-    act_sequence: 5,
-  };
-
-  const { id: documentId } = await insertCaseDocumentRowReturningId(supabase, row);
   const now = new Date().toISOString();
-  const { error } = await supabase
-    .from('cases')
-    .update({
-      informe_ingreso_registrado_at: now,
-      informe_ingreso_document_id: documentId,
-      updated_at: now,
-    })
-    .eq('id', opts.caseId);
-  if (error) throw error;
+  const replaceId = opts.replaceDocumentId?.trim() || '';
+
+  if (replaceId) {
+    const prev = opts.docs.find((d) => d.id === replaceId);
+    const { error: updDocErr } = await supabase
+      .from('case_documents')
+      .update({
+        name: opts.displayName,
+        original_name: opts.displayName,
+        content_type: 'application/pdf',
+        size: opts.pdfBytes.byteLength,
+        storage_path: up.path,
+        content: null,
+        updated_at: now,
+      })
+      .eq('id', replaceId)
+      .eq('case_id', opts.caseId);
+    if (updDocErr) throw updDocErr;
+    if (prev?.storagePath?.trim() && prev.storagePath !== up.path) {
+      await removeCaseDocumentObjects(supabase, [prev.storagePath]).catch(() => undefined);
+    }
+    const { error } = await supabase
+      .from('cases')
+      .update({
+        informe_ingreso_registrado_at: now,
+        informe_ingreso_document_id: replaceId,
+        updated_at: now,
+      })
+      .eq('id', opts.caseId);
+    if (error) throw error;
+  } else {
+    const sortOrder = nextSortOrderInPrincipalNotebook(opts.docs);
+    const row: Record<string, unknown> = {
+      case_id: opts.caseId,
+      name: opts.displayName,
+      original_name: opts.displayName,
+      type: 'informe_ingreso_expediente',
+      content_type: 'application/pdf',
+      size: opts.pdfBytes.byteLength,
+      storage_path: up.path,
+      is_from_link: false,
+      sort_order: sortOrder,
+      notebook_code: notebookCode,
+      act_code: 'informe_ingreso',
+      act_sequence: 5,
+    };
+
+    const { id: documentId } = await insertCaseDocumentRowReturningId(supabase, row);
+    const { error } = await supabase
+      .from('cases')
+      .update({
+        informe_ingreso_registrado_at: now,
+        informe_ingreso_document_id: documentId,
+        updated_at: now,
+      })
+      .eq('id', opts.caseId);
+    if (error) throw error;
+  }
 
   const ct = opts.caseType;
   if (

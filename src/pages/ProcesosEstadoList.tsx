@@ -11,7 +11,7 @@ import {
   casesListSortToOrderColumn,
   COURT_CASES_STALE_MS,
 } from '../lib/court-cases-query';
-import { formatRadicado } from '../lib/formatters';
+import { formatPartesCompact, formatRadicado } from '../lib/formatters';
 import {
   catalogSituacionLabel,
   catalogTipoProcesoVisible,
@@ -326,8 +326,12 @@ export default function ProcesosEstadoList() {
                         </Link>
                       </td>
                       <td className="px-4 py-3 text-xs max-w-[180px] whitespace-normal break-words align-top" title={tipoProceso}>{tipoProceso}</td>
-                      <td className="px-4 py-3 text-xs max-w-[220px] whitespace-normal break-words align-top" title={c.claimant}>{c.claimant || '—'}</td>
-                      <td className="px-4 py-3 text-xs max-w-[220px] whitespace-normal break-words align-top" title={c.defendant}>{c.defendant || '—'}</td>
+                      <td className="px-4 py-3 text-xs max-w-[220px] truncate" title={c.claimant}>
+                        {formatPartesCompact(c.claimant)}
+                      </td>
+                      <td className="px-4 py-3 text-xs max-w-[220px] truncate" title={c.defendant}>
+                        {formatPartesCompact(c.defendant)}
+                      </td>
                       <td className="px-4 py-3 text-xs">{catalogSituacionLabel(m)}</td>
                       <td className="px-4 py-3 text-xs font-semibold">{terminadoLabel(c)}</td>
                       <td className="px-4 py-3 text-xs max-w-[160px] whitespace-normal break-words align-top" title={m?.etapa}>{m?.etapa || '—'}</td>

@@ -1,4 +1,4 @@
-import type { Document } from '../types';
+import type { CaseType, Document } from '../types';
 import { inferActCodeFromDocument, labelForActCode } from './case-act-types';
 
 /** Pieza con archivo en Storage, contenido en fila o registro de fallo de ingreso. */
@@ -32,9 +32,12 @@ export function esConstanciaCorreoReparto(doc: Document | null | undefined): boo
   return doc.type === 'email_body' || doc.name === 'CorreoReparto';
 }
 
-export function tituloPiezaExpediente(doc: Document | null | undefined): string | null {
+export function tituloPiezaExpediente(
+  doc: Document | null | undefined,
+  caseType?: CaseType | null,
+): string | null {
   if (!doc) return null;
-  const actLabel = labelForActCode(inferActCodeFromDocument(doc));
+  const actLabel = labelForActCode(inferActCodeFromDocument(doc), caseType);
   if (actLabel) return actLabel;
   if (esConstanciaCorreoReparto(doc)) return 'Constancia de ingreso (correo reparto)';
   return null;

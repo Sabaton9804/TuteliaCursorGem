@@ -15,7 +15,7 @@ export type CaseDespachoPanelProps = {
 
 /** Pestaña «Generar documentos»: informe, auto admisorio, autos de trámite, sentencia, oficios. */
 export function CaseDespachoPanel({ onAfterEnviarRevision }: CaseDespachoPanelProps) {
-  const { caseItem, docs, refetch, profile } = useCaseDetail();
+  const { caseItem, docs, refetch, profile, setActiveTab } = useCaseDetail();
 
   const stages = useCaseStages({
     caseId: caseItem.id,
@@ -25,9 +25,16 @@ export function CaseDespachoPanel({ onAfterEnviarRevision }: CaseDespachoPanelPr
     caseAssignedTo: caseItem.assignedTo,
   });
 
-  const onUpdated = () => {
-    void refetch.refetchCase();
-    void refetch.refetchDocs();
+  const onUpdated = async () => {
+    await Promise.all([refetch.refetchCase(), refetch.refetchDocs()]);
+  };
+
+  const onAfterRegistrarInforme = async () => {
+    await onUpdated();
+    setActiveTab('expediente');
+    // Segunda pasada: el INSERT a veces llega al listado un instante después del UPDATE del caso.
+    await new Promise((r) => setTimeout(r, 250));
+    await refetch.refetchDocs();
   };
 
   const onStageAdvanced = () => {
@@ -47,6 +54,7 @@ export function CaseDespachoPanel({ onAfterEnviarRevision }: CaseDespachoPanelPr
         caseId={caseItem.id}
         docs={docs}
         onCaseUpdated={onUpdated}
+        onAfterRegistrarInforme={onAfterRegistrarInforme}
         onAfterEnviarRevision={onAfterEnviarRevision}
         revisionActorDisplayName={profile?.name?.trim() || profile?.email?.trim() || undefined}
       />

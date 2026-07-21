@@ -16,6 +16,7 @@ import {
   isProcesosRouteActive,
   isProcesosSubItemActive,
 } from '../../lib/procesos-nav';
+import { useCaseNavScope } from '../../contexts/CaseNavScopeContext';
 
 type Props = {
   sidebarCollapsed: boolean;
@@ -34,30 +35,31 @@ export function AppSidebarNav({ sidebarCollapsed, urgentWorkflowCount, onNavigat
   const { profile } = useSessionCourt();
   const role = profile?.role ?? null;
   const navLinks = useMemo(() => navLinksForRole(role), [role]);
+  const caseNavScope = useCaseNavScope();
   const showTutelasNav = hasRoleCapability(role, 'ver_expediente');
   const showProcesosNav = hasRoleCapability(role, 'ver_expediente');
 
   const [tutelasOpen, setTutelasOpen] = useState(() =>
-    isTutelasRouteActive(location.pathname, location.search)
+    isTutelasRouteActive(location.pathname, location.search, caseNavScope)
   );
   const [procesosOpen, setProcesosOpen] = useState(() =>
-    isProcesosRouteActive(location.pathname, location.search)
+    isProcesosRouteActive(location.pathname, location.search, caseNavScope)
   );
 
   useEffect(() => {
-    if (isTutelasRouteActive(location.pathname, location.search)) {
+    if (isTutelasRouteActive(location.pathname, location.search, caseNavScope)) {
       setTutelasOpen(true);
     }
-  }, [location.pathname, location.search]);
+  }, [location.pathname, location.search, caseNavScope]);
 
   useEffect(() => {
-    if (isProcesosRouteActive(location.pathname, location.search)) {
+    if (isProcesosRouteActive(location.pathname, location.search, caseNavScope)) {
       setProcesosOpen(true);
     }
-  }, [location.pathname, location.search]);
+  }, [location.pathname, location.search, caseNavScope]);
 
-  const tutelasGroupActive = isTutelasRouteActive(location.pathname, location.search);
-  const procesosGroupActive = isProcesosRouteActive(location.pathname, location.search);
+  const tutelasGroupActive = isTutelasRouteActive(location.pathname, location.search, caseNavScope);
+  const procesosGroupActive = isProcesosRouteActive(location.pathname, location.search, caseNavScope);
   const showTutelasChildren = !sidebarCollapsed && tutelasOpen;
   const showProcesosChildren = !sidebarCollapsed && procesosOpen;
 
@@ -119,7 +121,12 @@ export function AppSidebarNav({ sidebarCollapsed, urgentWorkflowCount, onNavigat
         {showProcesosChildren ? (
           <div id="nav-procesos-children" className="space-y-0.5 pb-1">
             {PROCESOS_SUBMENU.map((sub) => {
-              const subActive = isProcesosSubItemActive(location.pathname, sub.path, location.search);
+              const subActive = isProcesosSubItemActive(
+                location.pathname,
+                sub.path,
+                location.search,
+                caseNavScope,
+              );
               return (
                 <Link key={sub.label} to={sub.path} onClick={onNavigate} className={subLinkClass(subActive)}>
                   <span className="truncate">{sub.label}</span>

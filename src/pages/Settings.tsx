@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { DEFAULT_DEMO_COURT_ID } from '../lib/default-court';
-import { Shield, Database, CheckCircle2, UsersRound, Mail, Loader2 } from 'lucide-react';
+import { Shield, Database, CheckCircle2, UsersRound, Mail, Loader2, GitBranch } from 'lucide-react';
 import { fetchSgdeUserStatus, saveSgdeCredentials, deleteSgdeCredentials } from '../lib/sgde-api';
 import { Link } from 'react-router-dom';
 import { useSessionCourt } from '../contexts/SessionCourtContext';
@@ -14,6 +14,7 @@ import {
 } from '../lib/sustanciador-reparto';
 import { RepartoParidadPanel } from '../components/settings/RepartoParidadPanel';
 import { RepartoAlternadoPanel } from '../components/settings/RepartoAlternadoPanel';
+import { CourtProcessStagesPanel } from '../components/settings/CourtProcessStagesPanel';
 
 /** Manual primero: es el valor por defecto en BD para juzgados nuevos. */
 const MODE_OPTIONS: SustanciadorAssignmentMode[] = [
@@ -319,6 +320,17 @@ export default function Settings() {
         )}
       </div>
 
+      <div className="card-modern p-8 space-y-6">
+        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400 border-b border-slate-50 pb-4">
+          <GitBranch className="w-4 h-4 text-accent" aria-hidden />
+          Etapas del proceso (por tipo)
+        </div>
+        <p className="text-sm font-medium text-slate-500 leading-relaxed">
+          Personalice nombres, orden y visibilidad del carril a partir de la plantilla Tutelia. Las etapas propias se
+          marcan a mano; los automatismos siguen anclados a los códigos de plantilla.
+        </p>
+        <CourtProcessStagesPanel />
+      </div>
 
       <div className="card-modern p-8 space-y-4">
         <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400 border-b border-slate-50 pb-4">

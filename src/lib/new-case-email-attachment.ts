@@ -39,8 +39,24 @@ export function isMergeableAttachment(att: { type?: string; contentType?: string
   return isEmailBodyAttachment(att) || att.contentType === 'application/pdf';
 }
 
+/** Quita caracteres que StandardFonts / WinAnsi de pdf-lib no pueden codificar. */
+export function sanitizeTextForPdfWinAnsi(input: string): string {
+  return (
+    input
+      .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF\u00AD]/g, '')
+      .replace(/\u00A0/g, ' ')
+      .replace(/[\u2018\u2019\u2032]/g, "'")
+      .replace(/[\u201C\u201D\u2033]/g, '"')
+      .replace(/[\u2013\u2014]/g, '-')
+      .replace(/\u2026/g, '...')
+      .replace(/[^\t\n\r\x20-\x7E\xA0-\xFF]/g, '?')
+  );
+}
+
 /** PDF del cuerpo del correo para Storage / SGDE / unir. */
 export async function emailBodyToPdfBytes(subject: string, body: string): Promise<Uint8Array> {
+  const safeSubject = sanitizeTextForPdfWinAnsi(subject);
+  const safeBody = sanitizeTextForPdfWinAnsi(body);
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const fontSize = 10;
@@ -65,7 +81,7 @@ export async function emailBodyToPdfBytes(subject: string, body: string): Promis
     return lines;
   };
 
-  const content = `${subject}\n\n${body}`.slice(0, 28_000);
+  const content = `${safeSubject}\n\n${safeBody}`.slice(0, 28_000);
   const allLines = content.split('\n').flatMap((para) => (para.trim() ? wrap(para) : ['']));
 
   let page = pdf.addPage([612, 792]);

@@ -4,7 +4,7 @@ import { Clock, AlertTriangle, CheckCircle2, Search } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { formatRadicado } from '../lib/formatters';
+import { formatPartesCompact, formatRadicado } from '../lib/formatters';
 import {
   buildExpedienteViewRow,
   civilOperationalSemaforo,
@@ -12,7 +12,7 @@ import {
   listProductLabel,
   type ExpedienteViewRow,
 } from '../lib/expedientes-view-model';
-import { isTutelaListRow, isProcesosCivilListRow } from '../lib/case-process-scope';
+import { isTutelaListRow, isProcesosCivilListRow, caseDetailHref } from '../lib/case-process-scope';
 import { courtCasesQueryKey, fetchCourtCasesForList, type CourtCasesOrderColumn } from '../lib/court-cases-query';
 import { useInvalidateCourtCasesOnRealtime } from '../hooks/useCourtCasesRealtime';
 import { useSessionCourt } from '../contexts/SessionCourtContext';
@@ -225,7 +225,7 @@ export default function Dashboard() {
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
               type="text"
-              placeholder="Buscar por radicado, accionante o demandado..."
+              placeholder="Buscar por radicado, demandante/accionante o demandado..."
               className="input-modern pl-11 bg-white"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -288,7 +288,7 @@ export default function Dashboard() {
                     <tr
                       key={c.id}
                       className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
-                      onClick={() => navigate(`/case/${c.id}`)}
+                      onClick={() => navigate(caseDetailHref(c.id, c))}
                     >
                       <td className="px-6 py-5">
                         <div className="text-sm font-bold text-accent tracking-tight group-hover:underline">
@@ -298,11 +298,16 @@ export default function Dashboard() {
                       </td>
                       <td className="px-6 py-5">
                         <div className="flex flex-col">
-                          <span className="text-sm font-semibold text-slate-700">{c.claimant}</span>
+                          <span className="text-sm font-semibold text-slate-700 truncate max-w-[260px]" title={c.claimant}>
+                            {formatPartesCompact(c.claimant)}
+                          </span>
                           <div className="flex items-center gap-1.5 mt-1">
                             <span className="text-[9px] font-bold text-slate-300 uppercase">vs</span>
-                            <span className="text-[11px] font-medium text-slate-500 truncate max-w-[200px]">
-                              {c.defendant || '—'}
+                            <span
+                              className="text-[11px] font-medium text-slate-500 truncate max-w-[200px]"
+                              title={c.defendant}
+                            >
+                              {formatPartesCompact(c.defendant)}
                             </span>
                           </div>
                         </div>

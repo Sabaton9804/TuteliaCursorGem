@@ -48,6 +48,22 @@ export type ProcessStageDefinitionRow = {
   workflow_task_type: ProcessWorkflowTaskType | null;
 };
 
+/** Fila de public.court_process_stages (override por despacho). */
+export type CourtProcessStageRow = {
+  id: string;
+  court_id: string;
+  process_definition_id: string;
+  stage_code: string;
+  label: string;
+  order_index: number;
+  is_hidden: boolean;
+  is_custom: boolean;
+  source_stage_definition_id: string | null;
+  responsible_role: ProcessStageResponsibleRole | null;
+  term_days: number | null;
+  term_type: ProcessTermType;
+};
+
 /** Fila de public.process_stage_transitions (grafo de ramas). */
 export type ProcessStageTransitionRow = {
   process_definition_id: string;

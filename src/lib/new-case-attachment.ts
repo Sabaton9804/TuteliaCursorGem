@@ -8,6 +8,8 @@ export type NewCaseAttachment = {
   content: string;
   isFromLink?: boolean;
   sessionIndex?: number;
+  /** Cuaderno destino al radicar (p. ej. PI_C01_PRINCIPAL, PI_C02_CAUTELAR). */
+  notebookCode?: string;
 };
 
 const MAX_ATTACHMENT_BYTES = 32 * 1024 * 1024;

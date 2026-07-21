@@ -22,8 +22,32 @@ export function isTutelaCase(c: Pick<Case, 'caseType'>): boolean {
   return isMvpRadicableCaseType(t);
 }
 
+export type CaseNavScope = 'tutelas' | 'procesos';
+
+export function caseNavScopeFor(c: Pick<Case, 'caseType' | 'catalogMetadata'>): CaseNavScope {
+  return isProcesosCivilListRow(c) ? 'procesos' : 'tutelas';
+}
+
 export function caseListBackHref(c: Pick<Case, 'caseType'>): string {
   return isCivilCase(c) ? '/procesos/civiles' : '/cases';
+}
+
+export function caseDetailHref(
+  caseId: string,
+  c?: Pick<Case, 'caseType' | 'catalogMetadata'> | null,
+  extraParams?: Record<string, string | undefined>,
+): string {
+  const p = new URLSearchParams();
+  if (extraParams) {
+    for (const [key, value] of Object.entries(extraParams)) {
+      if (value != null && value !== '') p.set(key, value);
+    }
+  }
+  if (c && isProcesosCivilListRow(c)) {
+    p.set('from', 'procesos');
+  }
+  const q = p.toString();
+  return q ? `/case/${caseId}?${q}` : `/case/${caseId}`;
 }
 
 export function isProcesosCivilListRow(c: Pick<Case, 'caseType' | 'catalogMetadata'>): boolean {

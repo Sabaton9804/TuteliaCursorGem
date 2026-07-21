@@ -26,8 +26,10 @@ function mockDef(
     legacy_case_type: legacy,
     is_active: true,
     stages: [],
+    templateStages: [],
     transitions,
     pipeline,
+    courtStages: [],
   };
 }
 

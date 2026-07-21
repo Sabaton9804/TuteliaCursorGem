@@ -1,5 +1,6 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
+  AlertCircle,
   ChevronDown,
   ChevronRight,
   ExternalLink,
@@ -9,8 +10,9 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { ensureSupabaseSessionForWrites } from '../../lib/supabase-write-auth';
 import type { Case } from '../../types';
-import { sgdeCreateExpediente, sgdeSyncDocuments, sgdeRepairStorage, type SgdeSyncDocumentsResult } from '../../lib/sgde-api';
+import { sgdeCreateExpediente, sgdeProbeSegundaWrite, sgdeSyncDocuments, sgdeRepairStorage, type SgdeSyncDocumentsResult } from '../../lib/sgde-api';
 import {
   DOCUMENT_SGDE_SYNC_LABELS,
   DOCUMENT_SGDE_SYNC_STYLES,
@@ -25,11 +27,32 @@ import { isSgdeAutoCreateCaseType } from '../../lib/sgde-case-scope';
 import type { SgdeTreeNodeJson } from './CaseSgdePanel';
 
 async function authHeaders(): Promise<HeadersInit> {
+  await ensureSupabaseSessionForWrites();
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
-  const h: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) h.Authorization = `Bearer ${token}`;
-  return h;
+  if (!token) {
+    throw new Error('Inicie sesión en Tutelia para usar SGDE.');
+  }
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${token}`,
+  };
+}
+
+function reportSyncFeedback(
+  report: SgdeSyncDocumentsResult,
+  setSyncReport: (r: SgdeSyncDocumentsResult) => void,
+  setSyncOpen: (o: boolean) => void,
+  setErr: (e: string | null) => void,
+) {
+  setSyncReport(report);
+  setSyncOpen(true);
+  if (!report.ok || report.uploadFailed > 0 || (report.errors?.length ?? 0) > 0) {
+    const detail = report.errors?.[0]?.trim();
+    setErr(detail || report.message || 'No se pudieron subir todas las piezas a SGDE.');
+  } else {
+    setErr(null);
+  }
 }
 
 function SgdeTreeMini({ node, depth }: { node: SgdeTreeNodeJson; depth: number }) {
@@ -136,6 +159,8 @@ export function ExpedienteSgdeBar({
   const [syncReport, setSyncReport] = useState<SgdeSyncDocumentsResult | null>(null);
   const [syncOpen, setSyncOpen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [segundaWriteBlocked, setSegundaWriteBlocked] = useState<string | null>(null);
+  const [probingWrite, setProbingWrite] = useState(false);
 
   const linkStatus = caseSgdeLinkStatus(caseItem);
   const syncSummary = countDocumentSyncSummary(docs);
@@ -200,8 +225,7 @@ export function ExpedienteSgdeBar({
       await loadTree();
       try {
         const report = await sgdeSyncDocuments({ caseId, uploadMissing: true });
-        setSyncReport(report);
-        setSyncOpen(true);
+        reportSyncFeedback(report, setSyncReport, setSyncOpen, setErr);
         await onRefetchCase();
       } catch {
         /* sync opcional tras vincular */
@@ -212,6 +236,30 @@ export function ExpedienteSgdeBar({
       setLinking(false);
     }
   }, [caseId, loadTree, onRefetchCase]);
+
+  useEffect(() => {
+    if (caseItem.caseType !== 'tutela_segunda') {
+      setSegundaWriteBlocked(null);
+      setProbingWrite(false);
+      return;
+    }
+    let cancelled = false;
+    setProbingWrite(true);
+    void (async () => {
+      try {
+        const probe = await sgdeProbeSegundaWrite({ caseId });
+        if (cancelled) return;
+        setSegundaWriteBlocked(probe.forbidden ? probe.message : null);
+      } catch {
+        if (!cancelled) setSegundaWriteBlocked(null);
+      } finally {
+        if (!cancelled) setProbingWrite(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [caseId, caseItem.caseType, caseItem.sgdeId]);
 
   const canCreateInSgde =
     isSgdeAutoCreateCaseType(caseItem.caseType) &&
@@ -225,8 +273,7 @@ export function ExpedienteSgdeBar({
       await onRefetchCase();
       await loadTree();
       const report = await sgdeSyncDocuments({ caseId, uploadMissing: true });
-      setSyncReport(report);
-      setSyncOpen(true);
+      reportSyncFeedback(report, setSyncReport, setSyncOpen, setErr);
       await onRefetchCase();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -240,8 +287,7 @@ export function ExpedienteSgdeBar({
     setErr(null);
     try {
       const report = await sgdeSyncDocuments({ caseId, uploadMissing: true });
-      setSyncReport(report);
-      setSyncOpen(true);
+      reportSyncFeedback(report, setSyncReport, setSyncOpen, setErr);
       await onRefetchCase();
       await loadTree();
     } catch (e) {
@@ -357,10 +403,21 @@ export function ExpedienteSgdeBar({
               type="button"
               onClick={() => void syncWithSgde()}
               disabled={syncing}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-sky-900 hover:bg-sky-100 disabled:opacity-50"
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide disabled:opacity-50 ${
+                localOnlyDocs.length > 0
+                  ? 'border-amber-300 bg-amber-50 text-amber-950 hover:bg-amber-100'
+                  : 'border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100'
+              }`}
+              title={
+                localOnlyDocs.length > 0
+                  ? `Sube a SGDE las ${localOnlyDocs.length} pieza(s) «Solo Tutelia» (p. ej. informe de ingreso) y alinea el expediente`
+                  : 'Sincronizar piezas con SGDE'
+              }
             >
               {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-              Sincronizar
+              {localOnlyDocs.length > 0
+                ? `Enviar ${localOnlyDocs.length} a SGDE`
+                : 'Sincronizar'}
             </button>
             </>
           ) : null}
@@ -407,8 +464,39 @@ export function ExpedienteSgdeBar({
         </div>
       </div>
 
+      {caseItem.caseType === 'tutela_segunda' && probingWrite ? (
+        <p className="mt-2 flex items-center gap-2 text-[11px] text-slate-500">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Comprobando permisos de escritura en SGDE…
+        </p>
+      ) : null}
+
+      {segundaWriteBlocked ? (
+        <div className="mt-2 rounded-lg border-2 border-red-300 bg-red-50 px-3 py-2.5 text-[11px] text-red-950">
+          <p className="font-bold flex items-center gap-1.5 text-xs">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            Expediente compartido sin edición
+          </p>
+          <p className="mt-1.5 leading-relaxed">{segundaWriteBlocked}</p>
+        </div>
+      ) : null}
+
       {syncReport?.message ? (
-        <p className="mt-2 text-[11px] font-medium text-slate-600">{syncReport.message}</p>
+        <p
+          className={`mt-2 text-[11px] font-medium ${
+            syncReport.uploadFailed > 0 || (syncReport.errors?.length ?? 0) > 0
+              ? 'rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-950'
+              : 'text-slate-600'
+          }`}
+        >
+          {syncReport.message}
+        </p>
+      ) : null}
+
+      {caseItem.sgdeSyncStatus === 'error' && !syncReport?.message ? (
+        <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-950">
+          La última sincronización con SGDE falló. Pulse «Enviar a SGDE» y revise el detalle en Estado sync.
+        </p>
       ) : null}
 
       {err ? (
@@ -419,6 +507,13 @@ export function ExpedienteSgdeBar({
 
       {syncOpen && showSgdeBadges ? (
         <div className="mt-3 space-y-3 rounded-lg border border-slate-100 bg-white/90 p-3">
+          {(syncReport?.errors?.length ?? 0) > 0 ? (
+            <ul className="max-h-24 space-y-1 overflow-y-auto rounded-md border border-red-100 bg-red-50 px-2 py-1.5 text-[11px] text-red-900">
+              {syncReport!.errors!.map((line, i) => (
+                <li key={`${i}-${line.slice(0, 24)}`}>{line}</li>
+              ))}
+            </ul>
+          ) : null}
           <SyncDocGroup
             title="Sincronizados (Tutelia + SGDE)"
             empty="Ninguno todavía. Pulse Sincronizar."

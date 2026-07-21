@@ -76,3 +76,11 @@ export function deriveRadicadoSegundaInstancia(
 export function normalizeRadicadoDigits(raw: string): string {
   return raw.replace(/\D/g, '');
 }
+
+/** Mismo CUI (21 dígitos): solo cambia el sufijo de instancia (00 vs 01…). */
+export function radicadosCompartenMismoCui(a: string, b: string): boolean {
+  const da = normalizeRadicadoDigits(a);
+  const db = normalizeRadicadoDigits(b);
+  if (da.length !== 23 || db.length !== 23) return false;
+  return da.slice(0, 21) === db.slice(0, 21);
+}

@@ -34,12 +34,32 @@ function docsWithRelativePaths(docs: Document[], cuadernoLabel?: string): Docume
   });
 }
 
+/** Índices 0-based en orden visual; no mutar durante render (Strict Mode duplicaba → 02,04,06…). */
+function buildVisibleFileIndexMap(
+  nodes: ExpedienteTreeNode[],
+  expanded: Set<string>,
+): Map<string, number> {
+  const map = new Map<string, number>();
+  let i = 0;
+  const walk = (list: ExpedienteTreeNode[]) => {
+    for (const n of list) {
+      if (n.kind === 'file' && n.doc?.id) {
+        map.set(n.doc.id, i++);
+      } else if (n.kind === 'folder' && expanded.has(n.id) && n.children?.length) {
+        walk(n.children);
+      }
+    }
+  };
+  walk(nodes);
+  return map;
+}
+
 function FolderBranch({
   node,
   depth,
   expanded,
   onToggle,
-  fileIndexRef,
+  indexByDocId,
   selectedDocId,
   renderFileRow,
 }: {
@@ -47,7 +67,7 @@ function FolderBranch({
   depth: number;
   expanded: Set<string>;
   onToggle: (id: string) => void;
-  fileIndexRef: { current: number };
+  indexByDocId: Map<string, number>;
   selectedDocId?: string | null;
   renderFileRow: (doc: Document, listIndex: number) => React.ReactNode;
 }) {
@@ -81,7 +101,7 @@ function FolderBranch({
                 depth={depth + 1}
                 expanded={expanded}
                 onToggle={onToggle}
-                fileIndexRef={fileIndexRef}
+                indexByDocId={indexByDocId}
                 selectedDocId={selectedDocId}
                 renderFileRow={renderFileRow}
               />
@@ -93,7 +113,7 @@ function FolderBranch({
   }
 
   if (!node.doc) return null;
-  const idx = fileIndexRef.current++;
+  const idx = indexByDocId.get(node.doc.id) ?? 0;
   const sel = selectedDocId === node.doc.id;
   return (
     <li className="list-none" style={{ paddingLeft: pad + 14 }}>
@@ -126,6 +146,11 @@ export function ExpedienteSgdeFolderTree({
     setExpanded((prev) => mergeExpandedFolderIds(tree, prev, selectedDocId));
   }, [tree, selectedDocId]);
 
+  const indexByDocId = useMemo(
+    () => buildVisibleFileIndexMap(filtered, expanded),
+    [filtered, expanded],
+  );
+
   const toggle = (id: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -134,9 +159,6 @@ export function ExpedienteSgdeFolderTree({
       return next;
     });
   };
-
-  const fileIndexRef = { current: 0 };
-  fileIndexRef.current = 0;
 
   const hasSgdePaths = docs.some((d) => splitSgdeFolderPath(d.sgdeFolderPath).length > 0);
 
@@ -168,13 +190,13 @@ export function ExpedienteSgdeFolderTree({
             depth={0}
             expanded={expanded}
             onToggle={toggle}
-            fileIndexRef={fileIndexRef}
+            indexByDocId={indexByDocId}
             selectedDocId={selectedDocId}
             renderFileRow={renderFileRow}
           />
         ) : node.doc ? (
           <li key={node.id} className="list-none">
-            {renderFileRow(node.doc, fileIndexRef.current++)}
+            {renderFileRow(node.doc, indexByDocId.get(node.doc.id) ?? 0)}
           </li>
         ) : null
       )}

@@ -104,7 +104,8 @@ export function CaseContestacionChecklistPanel({
           <Link to="/correo/contestaciones" className="font-semibold underline">
             Contestaciones (correo)
           </Link>{' '}
-          o suba la pieza «Respuesta entidad accionada» en el expediente.
+          o suba la pieza «{isCivil ? 'Contestación de la demanda' : 'Respuesta entidad accionada'}» en el
+          expediente.
         </p>
       ) : null}
     </section>

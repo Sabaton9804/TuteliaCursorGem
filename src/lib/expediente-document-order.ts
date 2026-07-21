@@ -15,11 +15,33 @@ export function nextSortOrderInPrincipalNotebook(docs: Document[]): number {
   return maxSortOrderInNotebook(docs, DEFAULT_NOTEBOOK_CODE) + 1;
 }
 
-/** Sufijo numérico del nombre protocolo SGDE (p. ej. Correo01 → 1, AutoinadmiteDemanda06 → 6). */
+/**
+ * Prefijo numérico del índice electrónico SGDE al inicio del nombre (p. ej. 02Anexos02 → 2, 12Remision… → 12).
+ */
+export function sgdeProtocolPrefixOrder(name: string | undefined | null): number | null {
+  if (!name?.trim()) return null;
+  const base = name
+    .replace(/\.[a-zA-Z0-9]{1,8}$/i, '')
+    .trim();
+  const m = base.match(/^(\d{2})(?=[A-Za-zÁÉÍÓÚÜáéíóúüÑñ])/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Sufijo numérico del nombre protocolo SGDE (p. ej. Correo01 → 1, Escritodemanda03 → 3).
+ * Solo 1–2 dígitos finales tras letra (índice de pieza). No usar fechas/horas del
+ * original (p. ej. DEMANDA14072026_082545.pdf → no es índice 2545).
+ */
 export function sgdeProtocolSuffixOrder(name: string | undefined | null): number | null {
   if (!name?.trim()) return null;
-  const base = name.replace(/\.pdf$/i, '').trim();
-  const m = base.match(/(\d{1,4})$/);
+  const base = name
+    .replace(/\.[a-zA-Z0-9]{1,8}$/i, '')
+    .trim()
+    .replace(/[\s_-]+$/g, '');
+  // …Nombre01 / …Demanda03 — no …082545 ni …14072026
+  const m = base.match(/[A-Za-zÁÉÍÓÚÜáéíóúüÑñ](\d{1,2})$/);
   if (!m) return null;
   const n = parseInt(m[1], 10);
   return Number.isFinite(n) ? n : null;
@@ -36,6 +58,9 @@ export function isSgdeExpedientePiece(doc: Document): boolean {
 
 /** Clave de orden para piezas vinculadas a SGDE (índice del expediente, no orden alfabético). */
 export function sgdeExpedienteSortKey(doc: Document): number {
+  const prefix =
+    sgdeProtocolPrefixOrder(doc.name) ?? sgdeProtocolPrefixOrder(doc.originalName) ?? null;
+  if (prefix != null) return prefix;
   const suffix =
     sgdeProtocolSuffixOrder(doc.name) ?? sgdeProtocolSuffixOrder(doc.originalName) ?? null;
   if (suffix != null) return suffix;

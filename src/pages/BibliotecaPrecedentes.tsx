@@ -657,7 +657,7 @@ export default function BibliotecaPrecedentes() {
                       <p className="mt-1 line-clamp-2 text-slate-600">
                         {r.source_type === 'jurisprudencia'
                           ? `Corporación: ${r.source_corporation || '—'}`
-                          : `Accionado: ${r.defendant}`}
+                          : `Demandado / Accionado: ${r.defendant}`}
                       </p>
                       <p className="mt-1 text-[10px] font-semibold uppercase text-slate-500">{r.ruling_sense}</p>
                       {r.source_case_id ? (
@@ -816,7 +816,7 @@ export default function BibliotecaPrecedentes() {
                   <th className="px-4 py-3">Origen</th>
                   <th className="px-4 py-3">Radicado / ref.</th>
                   <th className="px-4 py-3">Materia</th>
-                  <th className="px-4 py-3">{listTab === 'despacho' ? 'Accionado' : 'Corporación'}</th>
+                  <th className="px-4 py-3">{listTab === 'despacho' ? 'Demandado / Accionado' : 'Corporación'}</th>
                   <th className="px-4 py-3">Sentido / nota</th>
                   <th className="px-4 py-3">Fecha del fallo</th>
                   <th className="px-4 py-3">Documento</th>

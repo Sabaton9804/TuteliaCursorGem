@@ -9,11 +9,14 @@ import {
   X,
 } from 'lucide-react';
 import { Document, Page } from 'react-pdf';
+import { ensurePdfJsWorker } from '../../lib/pdfjs-worker';
 import { formatRadicado } from '../../lib/formatters';
 import { PRECEDENT_RADICADO_PENDIENTE } from '../../lib/precedent-constants';
 
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
+
+ensurePdfJsWorker();
 
 type Props = {
   precedentId: string;

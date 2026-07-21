@@ -51,6 +51,21 @@ function notebookFromFolderPath(folderPath: string | undefined, fallback: string
   return notebookCodeFromSgdeFolderPath(folderPath, fallback);
 }
 
+/** Tutelia manda: no pisar cuaderno ya asignado (p. ej. C02) solo porque el PDF quedó en Principal por un sync viejo. */
+function resolveNotebookForRepair(
+  existing: string | null | undefined,
+  folderPath: string | undefined,
+  fallback: string
+): string {
+  const cur = String(existing || '').trim();
+  if (cur && (/^PI_/i.test(cur) || /^SI_/i.test(cur))) {
+    if (/^PI_PRINCIPAL$/i.test(cur)) return 'PI_C01_PRINCIPAL';
+    if (/^SI_PRINCIPAL$/i.test(cur)) return 'SI_C01_PRINCIPAL';
+    return cur;
+  }
+  return notebookFromFolderPath(folderPath, fallback);
+}
+
 async function repairOneDoc(opts: {
   client: SgdeClient;
   admin: SupabaseClient;
@@ -369,7 +384,11 @@ export async function repairStorageFromSgde(opts: {
           .update({
             sgde_id: leaf.id,
             sgde_folder_path: leaf.folderPath,
-            notebook_code: notebookFromFolderPath(leaf.folderPath, matched.notebook_code || notebookCode),
+            notebook_code: resolveNotebookForRepair(
+              matched.notebook_code,
+              leaf.folderPath,
+              notebookCode
+            ),
             sgde_sync_status: 'linked',
           })
           .eq('id', matched.id);
@@ -395,7 +414,11 @@ export async function repairStorageFromSgde(opts: {
         .from('case_documents')
         .update({
           sgde_folder_path: leaf.folderPath || matched.sgde_folder_path,
-          notebook_code: notebookFromFolderPath(leaf.folderPath, matched.notebook_code || notebookCode),
+          notebook_code: resolveNotebookForRepair(
+            matched.notebook_code,
+            leaf.folderPath,
+            notebookCode
+          ),
           original_name: leaf.name,
         })
         .eq('id', matched.id);

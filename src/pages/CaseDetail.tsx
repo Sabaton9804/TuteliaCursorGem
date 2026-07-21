@@ -28,6 +28,12 @@ import { format, isValid, parseISO } from 'date-fns';
 import { summarizeCase } from '../services/geminiService';
 import { formatRadicado } from '../lib/formatters';
 import { schedulePrecedentIndexAfterDecisionType } from '../lib/precedents-index-client';
+import { refreshSegundaPartiesFromFallo } from '../lib/sgde-api';
+import {
+  looksLikeSegundaMisassignedParties,
+  needsSegundaPartiesRefreshFromFallo,
+  pickFalloPrimeraDocument,
+} from '../lib/segunda-fallo-parties';
 import { CaseSintesisPanel } from '../components/expediente/CaseSintesisPanel';
 import { CaseActuacionesPanel } from '../components/expediente/CaseActuacionesPanel';
 import { CaseDespachoPanel } from '../components/expediente/CaseDespachoPanel';
@@ -54,7 +60,9 @@ import {
 } from '../lib/assignment-notifications';
 import { CaseSierjuClassification } from '../components/expediente/CaseSierjuClassification';
 import { CaseCatalogMetadataPanel } from '../components/expediente/CaseCatalogMetadataPanel';
-import { isCivilCase, caseListBackHref } from '../lib/case-process-scope';
+import { CaseRadicadoEditControl } from '../components/expediente/CaseRadicadoEditControl';
+import { isCivilCase, caseListBackHref, caseNavScopeFor } from '../lib/case-process-scope';
+import { useSetCaseNavScope } from '../contexts/CaseNavScopeContext';
 import {
   DECISION_TYPES,
   DECISION_TYPE_LABELS,
@@ -99,6 +107,7 @@ function parseExpedienteTabParam(raw: string | null): ExpedienteTab {
 export default function CaseDetail() {
   const { id } = useParams<{ id: string }>();
   const { sustanciadores, processForCaseType } = useCourtOperational();
+  const setCaseNavScope = useSetCaseNavScope();
   const [caseItem, setCaseItem] = useState<Case | null>(null);
   const [docs, setDocs] = useState<CaseDoc[]>([]);
   const [selectedDoc, setSelectedDoc] = useState<CaseDoc | null>(null);
@@ -225,6 +234,26 @@ export default function CaseDetail() {
     if (data && !error) setCaseItem(rowToCase(data as Record<string, unknown>));
   }, [id]);
 
+  const segundaPartiesRefreshAttempted = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!id || !caseItem || caseItem.caseType !== 'tutela_segunda' || !docsLoaded) return;
+    if (!needsSegundaPartiesRefreshFromFallo(caseItem, docs)) return;
+    if (!pickFalloPrimeraDocument(docs)) return;
+    if (segundaPartiesRefreshAttempted.current === id) return;
+    segundaPartiesRefreshAttempted.current = id;
+
+    void (async () => {
+      try {
+        await ensureSupabaseSessionForWrites();
+        const res = await refreshSegundaPartiesFromFallo({ caseId: id });
+        if (res.updated) await refetchCase();
+      } catch (e) {
+        console.warn('No se pudieron refrescar partes desde fallo PI:', e);
+      }
+    })();
+  }, [id, caseItem, docs, docsLoaded, refetchCase]);
+
   const refetchActions = useCallback(async () => {
     if (!id) return;
     try {
@@ -331,23 +360,41 @@ export default function CaseDetail() {
     void refetchAuditRef.current();
 
     let channel: ReturnType<typeof subscribePostgresChanges> | null = null;
+    let docsRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleDocsRefresh = () => {
+      if (docsRefreshTimer) clearTimeout(docsRefreshTimer);
+      docsRefreshTimer = setTimeout(() => {
+        docsRefreshTimer = null;
+        if (!cancelled) void refetchDocsRef.current();
+      }, 80);
+    };
+
     try {
       // Un solo .subscribe() tras todos los .on(); nombre único evita reutilizar canal ya suscrito (Strict Mode).
       channel = subscribePostgresChanges({
         topicPrefix: `case-detail-${id}`,
+        onStatus: (status) => {
+          if (status === 'SUBSCRIBED' && !cancelled) {
+            void loadCase();
+            scheduleDocsRefresh();
+          }
+        },
         bindings: [
           {
             table: 'cases',
             filter: `id=eq.${id}`,
             onEvent: () => {
               void loadCase();
+              // El informe de ingreso actualiza `cases` y añade fila en `case_documents`;
+              // si solo llega el evento del caso, el listado del expediente debe refrescar igual.
+              scheduleDocsRefresh();
             },
           },
           {
             table: 'case_documents',
             filter: `case_id=eq.${id}`,
             onEvent: () => {
-              void refetchDocsRef.current();
+              scheduleDocsRefresh();
             },
           },
           {
@@ -372,6 +419,7 @@ export default function CaseDetail() {
 
     return () => {
       cancelled = true;
+      if (docsRefreshTimer) clearTimeout(docsRefreshTimer);
       removeRealtimeChannel(channel);
     };
   }, [id]);
@@ -531,7 +579,18 @@ export default function CaseDetail() {
     try {
       await ensureSupabaseSessionForWrites();
       const contextBlock = buildSynthesisContextBlock(caseItem, docs, courtAssignmentMode);
-      const summary = await summarizeCase(caseItem.claimant, caseItem.rawText || '', contextBlock, {
+      const synthesisRawText =
+        caseItem.caseType === 'tutela_segunda'
+          ? [
+              caseItem.legalHechos,
+              caseItem.legalPretensiones,
+              caseItem.legalDerechoTutelado,
+              caseItem.rawText,
+            ]
+              .filter((s) => typeof s === 'string' && s.trim())
+              .join('\n\n')
+          : caseItem.rawText || '';
+      const summary = await summarizeCase(caseItem.claimant, synthesisRawText, contextBlock, {
         radicado: caseItem.radicado,
         caseType: caseItem.caseType,
         defendant: caseItem.defendant,
@@ -760,6 +819,11 @@ export default function CaseDetail() {
 
   useEffect(() => {
     if (!caseItem) return;
+    setCaseNavScope(caseNavScopeFor(caseItem));
+  }, [caseItem, setCaseNavScope]);
+
+  useEffect(() => {
+    if (!caseItem) return;
     if ((!esPrimeraInstancia || esCivil) && activeTab === 'incidente_desacato') {
       setActiveTab('sintesis');
     }
@@ -829,7 +893,16 @@ export default function CaseDetail() {
           <div className="min-w-0 flex-1 space-y-3">
             <div>
               <div className="flex flex-wrap items-center gap-3">
-                <h1 className="text-3xl font-bold tracking-tight text-slate-900">Expediente {formatRadicado(caseItem.radicado)}</h1>
+                <CaseRadicadoEditControl
+                  caseId={caseItem.id}
+                  courtId={caseItem.courtId}
+                  radicado={caseItem.radicado}
+                  role={sessionProfile?.role}
+                  onUpdated={async () => {
+                    await refetchCase();
+                    await refetchActions();
+                  }}
+                />
                 <span className={`px-3 py-1 text-[10px] font-bold rounded-full uppercase tracking-widest border ${
                   caseItem.status === 'received' ? 'bg-blue-50 text-blue-600 border-blue-100' :
                   caseItem.status === 'admitted' ? 'bg-amber-50 text-amber-600 border-amber-100' :

@@ -25,6 +25,7 @@ import {
   responsibleRoleForStage,
   resolveWorkflowAssigneeId,
   STAGE_LABEL_ES,
+  stageLabelForCaseType,
   workflowTaskPayloadForStage,
   type CaseStageCode,
 } from './case-workflow-stages';
@@ -42,6 +43,10 @@ import {
 } from './sgde-case-scope';
 import { isCivilCaseType } from './process-product-scope';
 import { computePlazoFallarDeadlineAt } from './plazo-fallar-tutela';
+import {
+  parseCatalogMetadata,
+  patchCivilCatalogMetadataForStage,
+} from './case-catalog-metadata';
 
 export {
   canManualManageCaseStages,
@@ -274,6 +279,33 @@ export async function openRadicacionStageAfterRadicate(
     userName,
     metadata: { etapa_anterior: null, etapa_nueva: first, trigger: 'RADICACION_COMPLETADA' },
   });
+  if (isCivilCaseType(opts.caseType)) {
+    try {
+      const { data: caseRow } = await supabase
+        .from('cases')
+        .select('catalog_metadata, operational_status, assigned_to')
+        .eq('id', opts.caseId)
+        .maybeSingle();
+      const prev = parseCatalogMetadata(caseRow?.catalog_metadata);
+      const nextMeta = patchCivilCatalogMetadataForStage(prev, {
+        caseType: opts.caseType,
+        stageCode: first,
+        ubicacionInterna: prev?.ubicacion_interna || 'Para ingresar al despacho',
+      });
+      if (nextMeta) {
+        if (!nextMeta.encargado_nombre?.trim() && (opts.caseAssignedTo || caseRow?.assigned_to)) {
+          nextMeta.encargado_nombre = String(opts.caseAssignedTo || caseRow?.assigned_to || '').trim();
+        }
+        const patch: Record<string, unknown> = { catalog_metadata: nextMeta };
+        if (!String(caseRow?.operational_status || '').trim()) {
+          patch.operational_status = nextMeta.ubicacion_interna || 'Para ingresar al despacho';
+        }
+        await supabase.from('cases').update(patch).eq('id', opts.caseId);
+      }
+    } catch (e) {
+      console.error('catalog_metadata civil tras radicación:', e);
+    }
+  }
   await enqueueWorkflowTaskForStage(supabase, {
     courtId: opts.courtId,
     caseId: opts.caseId,
@@ -1618,7 +1650,7 @@ export async function manualStageGoBack(
   await insertCaseAction(supabase, {
     caseId: opts.caseId,
     type: 'CAMBIO_ETAPA_MANUAL',
-    description: `Retroceso: ${STAGE_LABEL_ES[cur]} → ${STAGE_LABEL_ES[target]}`,
+    description: `Retroceso: ${stageLabelForCaseType(cur, opts.caseType)} → ${stageLabelForCaseType(target, opts.caseType)}`,
     userId,
     userName,
     metadata: {
@@ -1693,7 +1725,7 @@ export async function manualStageSkipTo(
   await insertCaseAction(supabase, {
     caseId: opts.caseId,
     type: 'CAMBIO_ETAPA_MANUAL',
-    description: `Salto: ${STAGE_LABEL_ES[cur]} → ${STAGE_LABEL_ES[opts.dest]}`,
+    description: `Salto: ${stageLabelForCaseType(cur, opts.caseType)} → ${stageLabelForCaseType(opts.dest, opts.caseType)}`,
     userId,
     userName,
     metadata: {

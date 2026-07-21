@@ -13,7 +13,7 @@ import {
   COURT_CASES_STALE_MS,
 } from '../lib/court-cases-query';
 import { useInvalidateCourtCasesOnRealtime } from '../hooks/useCourtCasesRealtime';
-import { formatRadicado } from '../lib/formatters';
+import { formatPartesCompact, formatRadicado } from '../lib/formatters';
 import {
   catalogSituacionLabel,
   catalogTipoProcesoVisible,
@@ -21,7 +21,21 @@ import {
 } from '../lib/case-catalog-metadata';
 import { isProcesosCivilListRow } from '../lib/case-process-scope';
 import { parseProcesosCivilesFilter } from '../lib/procesos-nav';
+import { useResizableTableColumns } from '../hooks/useResizableTableColumns';
+import { ResizableTh } from '../components/shared/ResizableTh';
 import type { Case } from '../types';
+
+const CIVIL_TABLE_COLUMNS = [
+  { id: 'radicado', defaultWidth: 200, minWidth: 140, maxWidth: 320 },
+  { id: 'tipo', defaultWidth: 180, minWidth: 100, maxWidth: 360 },
+  { id: 'demandante', defaultWidth: 200, minWidth: 120, maxWidth: 420 },
+  { id: 'demandado', defaultWidth: 200, minWidth: 120, maxWidth: 420 },
+  { id: 'situacion', defaultWidth: 110, minWidth: 90, maxWidth: 180 },
+  { id: 'etapa', defaultWidth: 140, minWidth: 90, maxWidth: 280 },
+  { id: 'ubicacion', defaultWidth: 170, minWidth: 100, maxWidth: 320 },
+  { id: 'encargado', defaultWidth: 160, minWidth: 100, maxWidth: 280 },
+  { id: 'ultimoAuto', defaultWidth: 150, minWidth: 90, maxWidth: 280 },
+] as const;
 
 function normalizeRadicadoQuery(q: string): string {
   return q.replace(/\D/g, '');
@@ -75,6 +89,11 @@ export default function ProcesosCivilesList() {
   });
 
   useInvalidateCourtCasesOnRealtime(courtId, 'list');
+
+  const { beginResize, colStyle } = useResizableTableColumns(
+    'tutelia.procesos-civiles.col-widths',
+    [...CIVIL_TABLE_COLUMNS],
+  );
 
   const civilRows = useMemo(() => cases.filter(isProcesosCivilListRow), [cases]);
 
@@ -218,18 +237,18 @@ export default function ProcesosCivilesList() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
+          <table className="table-fixed text-left text-sm" style={{ width: 'max-content', minWidth: '100%' }}>
             <thead>
               <tr className="border-b border-slate-100 bg-white text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                <th className="px-4 py-3">Radicado</th>
-                <th className="px-4 py-3">Tipo proceso</th>
-                <th className="px-4 py-3">Demandante</th>
-                <th className="px-4 py-3">Demandado</th>
-                <th className="px-4 py-3">Situación</th>
-                <th className="px-4 py-3">Etapa</th>
-                <th className="px-4 py-3">Ubicación / trámite</th>
-                <th className="px-4 py-3">Encargado</th>
-                <th className="px-4 py-3">Último auto</th>
+                <ResizableTh label="Radicado" style={colStyle('radicado')} onResizeStart={(x) => beginResize('radicado', x)} />
+                <ResizableTh label="Tipo proceso" style={colStyle('tipo')} onResizeStart={(x) => beginResize('tipo', x)} />
+                <ResizableTh label="Demandante" style={colStyle('demandante')} onResizeStart={(x) => beginResize('demandante', x)} />
+                <ResizableTh label="Demandado" style={colStyle('demandado')} onResizeStart={(x) => beginResize('demandado', x)} />
+                <ResizableTh label="Situación" style={colStyle('situacion')} onResizeStart={(x) => beginResize('situacion', x)} />
+                <ResizableTh label="Etapa" style={colStyle('etapa')} onResizeStart={(x) => beginResize('etapa', x)} />
+                <ResizableTh label="Ubicación / trámite" style={colStyle('ubicacion')} onResizeStart={(x) => beginResize('ubicacion', x)} />
+                <ResizableTh label="Encargado" style={colStyle('encargado')} onResizeStart={(x) => beginResize('encargado', x)} />
+                <ResizableTh label="Último auto" style={colStyle('ultimoAuto')} onResizeStart={(x) => beginResize('ultimoAuto', x)} />
               </tr>
             </thead>
             <tbody>
@@ -265,34 +284,39 @@ export default function ProcesosCivilesList() {
                       key={c.id}
                       className="border-b border-slate-50 hover:bg-slate-50/80 transition-colors"
                     >
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 truncate" style={colStyle('radicado')}>
                         <Link
                           to={`/case/${c.id}?from=procesos`}
                           className="font-mono text-xs font-semibold text-accent hover:underline"
+                          title={formatRadicado(c.radicado)}
                         >
                           {formatRadicado(c.radicado)}
                         </Link>
                       </td>
-                      <td className="px-4 py-3 max-w-[200px] truncate" title={catalogTipoProcesoVisible(meta, c.subject)}>
+                      <td className="px-4 py-3 truncate" style={colStyle('tipo')} title={catalogTipoProcesoVisible(meta, c.subject)}>
                         {catalogTipoProcesoVisible(meta, c.subject)}
                       </td>
-                      <td className="px-4 py-3 max-w-[240px] whitespace-normal break-words align-top text-slate-700" title={c.claimant}>{c.claimant || '—'}</td>
-                      <td className="px-4 py-3 max-w-[240px] whitespace-normal break-words align-top text-slate-700" title={c.defendant}>{c.defendant || '—'}</td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 truncate text-slate-700" style={colStyle('demandante')} title={c.claimant}>
+                        {formatPartesCompact(c.claimant)}
+                      </td>
+                      <td className="px-4 py-3 truncate text-slate-700" style={colStyle('demandado')} title={c.defendant}>
+                        {formatPartesCompact(c.defendant)}
+                      </td>
+                      <td className="px-4 py-3 truncate" style={colStyle('situacion')}>
                         <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${situacionChipClass(situacion)}`}>
                           {situacion}
                         </span>
                       </td>
-                      <td className="px-4 py-3 max-w-[140px] truncate text-slate-600" title={meta?.etapa}>
+                      <td className="px-4 py-3 truncate text-slate-600" style={colStyle('etapa')} title={meta?.etapa}>
                         {meta?.etapa || '—'}
                       </td>
-                      <td className="px-4 py-3 max-w-[180px] truncate text-slate-600" title={meta?.ubicacion_interna || meta?.tramite_pendiente}>
+                      <td className="px-4 py-3 truncate text-slate-600" style={colStyle('ubicacion')} title={meta?.ubicacion_interna || meta?.tramite_pendiente}>
                         {meta?.ubicacion_interna || c.operationalStatus || '—'}
                       </td>
-                      <td className="px-4 py-3 text-slate-600">
+                      <td className="px-4 py-3 truncate text-slate-600" style={colStyle('encargado')} title={meta?.encargado_nombre || c.assignedTo || undefined}>
                         {meta?.encargado_nombre || c.assignedTo || '—'}
                       </td>
-                      <td className="px-4 py-3 max-w-[180px] truncate text-slate-500 text-xs" title={ultimoAuto}>
+                      <td className="px-4 py-3 truncate text-slate-500 text-xs" style={colStyle('ultimoAuto')} title={ultimoAuto}>
                         {ultimoAuto}
                       </td>
                     </tr>

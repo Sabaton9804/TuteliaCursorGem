@@ -302,7 +302,7 @@ export default function CasesList() {
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
               type="search"
-              placeholder="Buscar por radicado, accionante, demandado o asunto…"
+              placeholder="Buscar por radicado, demandante/accionante, demandado o asunto…"
               className="input-modern pl-11 w-full bg-white"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}

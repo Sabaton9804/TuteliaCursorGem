@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 
 const EMAIL_ZOOM_SCALES = [0.5, 0.75, 1, 1.25, 1.5] as const;
@@ -11,7 +11,7 @@ function buildEmailSrcDoc(html: string, fitWidthPx: number): string {
   <head>
     <meta charset="utf-8" />
     <style>
-      html, body { margin: 0; padding: 0; }
+      html, body { margin: 0; padding: 0; overflow: hidden; }
       body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         line-height: 1.5;
@@ -39,7 +39,9 @@ export type CaseEmailHtmlPreviewProps = {
 export function CaseEmailHtmlPreview({ html, text }: CaseEmailHtmlPreviewProps) {
   const [zoom, setZoom] = useState<EmailZoom>('fit');
   const viewportRef = useRef<HTMLDivElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const [fitWidthPx, setFitWidthPx] = useState(640);
+  const [iframeHeight, setIframeHeight] = useState(480);
 
   useLayoutEffect(() => {
     const el = viewportRef.current;
@@ -59,6 +61,24 @@ export function CaseEmailHtmlPreview({ html, text }: CaseEmailHtmlPreviewProps) 
     [htmlStr, fitWidthPx]
   );
 
+  const resizeIframeToContent = useCallback(() => {
+    const iframe = iframeRef.current;
+    const doc = iframe?.contentDocument;
+    if (!doc?.body) return;
+    const h = Math.max(
+      doc.body.scrollHeight,
+      doc.documentElement?.scrollHeight || 0,
+      320,
+    );
+    setIframeHeight(h + 8);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!htmlStr) return;
+    const t = window.setTimeout(resizeIframeToContent, 50);
+    return () => window.clearTimeout(t);
+  }, [htmlStr, fitWidthPx, zoom, srcDoc, resizeIframeToContent]);
+
   const scale = zoom === 'fit' ? 1 : zoom;
   const textFontSize = zoom === 'fit' ? undefined : `${Math.round(14 * zoom)}px`;
 
@@ -66,11 +86,11 @@ export function CaseEmailHtmlPreview({ html, text }: CaseEmailHtmlPreviewProps) 
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div
         ref={viewportRef}
-        className="flex min-h-0 flex-1 justify-center overflow-auto bg-slate-100 p-4"
+        className="flex min-h-0 flex-1 justify-center overflow-y-auto overflow-x-hidden bg-slate-100 p-4"
       >
         {htmlStr ? (
           <div
-            className="min-h-[min(100%,28rem)] w-full max-w-full origin-top bg-white shadow-lg"
+            className="w-full max-w-full origin-top bg-white shadow-lg"
             style={
               zoom === 'fit'
                 ? { maxWidth: '100%' }
@@ -82,11 +102,14 @@ export function CaseEmailHtmlPreview({ html, text }: CaseEmailHtmlPreviewProps) 
             }
           >
             <iframe
+              ref={iframeRef}
               key={`${zoom}-${fitWidthPx}`}
               srcDoc={srcDoc}
               title="Cuerpo del correo"
+              scrolling="no"
               className="block w-full border-none"
-              style={{ minHeight: 'min(70vh, 720px)', height: '70vh' }}
+              style={{ height: iframeHeight, overflow: 'hidden' }}
+              onLoad={resizeIframeToContent}
             />
           </div>
         ) : (

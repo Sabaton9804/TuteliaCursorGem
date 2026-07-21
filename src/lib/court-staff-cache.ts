@@ -25,10 +25,41 @@ export function getCachedSustanciadores(_courtId?: string): readonly ExpedienteA
   return cachedSustanciadores;
 }
 
+function isBotPlaceholderName(name: string): boolean {
+  return /^bot(\s|$)/i.test(name.trim());
+}
+
+/**
+ * Nombre del organigrama por rol (plantillas / firma).
+ * Si hay varios perfiles con el mismo rol, prioriza personas reales sobre cuentas «Bot …»
+ * y, si coincide, el nombre del seed del despacho.
+ */
 export function getCachedNameByRole(role: UserRole, courtId?: string): string {
   if (courtId && courtId !== cachedCourtId) return '';
-  const hit = cachedStaff.find((p) => p.courtRole === role);
-  return hit?.name?.trim() ?? '';
+  const hits = cachedStaff.filter((p) => p.courtRole === role);
+  if (!hits.length) return '';
+  const real = hits.filter((p) => !isBotPlaceholderName(p.name));
+  const pool = real.length ? real : hits;
+  const demoName = DEMO_DESPACHO_STAFF.find((d) => d.courtRole === role)?.name?.trim();
+  if (demoName) {
+    const demoKey = demoName
+      .normalize('NFD')
+      .replace(/\p{M}/gu, '')
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim();
+    const demoHit = pool.find((p) => {
+      const k = p.name
+        .normalize('NFD')
+        .replace(/\p{M}/gu, '')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+      return k === demoKey;
+    });
+    if (demoHit?.name?.trim()) return demoHit.name.trim();
+  }
+  return pool[0]?.name?.trim() ?? '';
 }
 
 export function getCachedCourtId(): string | null {

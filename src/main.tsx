@@ -4,8 +4,10 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import App from './App.tsx';
 import { appQueryClient } from './lib/query-client';
 import './index.css';
-/** Debe ir al final: react-pdf resetea el worker al importarse; aquí lo volvemos a fijar al bundle de Vite. */
-import './lib/pdfjs-worker';
+/** Baseline; los visores vuelven a llamar ensurePdfJsWorker() tras importar react-pdf. */
+import { ensurePdfJsWorker } from './lib/pdfjs-worker';
+
+ensurePdfJsWorker();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

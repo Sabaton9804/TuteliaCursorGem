@@ -83,8 +83,8 @@ const STAGE_ACT_GATES: GateRule[] = [
   },
 ];
 
-function formatMissingActs(codes: string[]): string {
-  const labels = codes.map((c) => labelForActCode(c) ?? c);
+function formatMissingActs(codes: string[], caseType?: CaseType | null): string {
+  const labels = codes.map((c) => labelForActCode(c, caseType) ?? c);
   if (labels.length === 1) return labels[0];
   if (labels.length === 2) return `${labels[0]} o ${labels[1]}`;
   return `${labels.slice(0, -1).join(', ')} o ${labels[labels.length - 1]}`;
@@ -104,7 +104,7 @@ export function checkStageActGate(
     return {
       ok: false,
       missingActs: rule.requiredActs,
-      message: `No puede ${rule.actionLabel} sin una pieza de ${formatMissingActs(rule.requiredActs)} en el expediente digital.`,
+      message: `No puede ${rule.actionLabel} sin una pieza de ${formatMissingActs(rule.requiredActs, caseType)} en el expediente digital.`,
     };
   }
 
@@ -114,7 +114,7 @@ export function checkStageActGate(
   return {
     ok: false,
     missingActs: missing,
-    message: `Faltan piezas en el expediente: ${formatMissingActs(missing)}.`,
+    message: `Faltan piezas en el expediente: ${formatMissingActs(missing, caseType)}.`,
   };
 }
 

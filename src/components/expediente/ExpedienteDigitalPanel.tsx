@@ -36,16 +36,24 @@ import {
 } from '../../lib/expediente-document-actions';
 import type { Document } from '../../types';
 import {
+  caseHasCautelarNotebook,
+  cautelarNotebookExtra,
   DEFAULT_NOTEBOOK_CODE,
   INSTANCIA_LABELS,
   NOTEBOOK_META,
   NOTEBOOK_PI_C01_PRINCIPAL,
+  NOTEBOOK_PI_C02_CAUTELAR,
   NOTEBOOK_SI_C01_PRINCIPAL,
   instanciaForNotebook,
   notebookCodeForCaseType,
   normalizeNotebookCode,
   type ExpedienteInstanciaCode,
 } from '../../lib/expediente-notebook';
+import {
+  buildNotebookSections,
+  docBelongsToNotebook,
+  groupSectionsByInstancia,
+} from '../../lib/expediente-notebook-sections';
 import {
   DOCUMENT_SGDE_SYNC_LABELS,
   DOCUMENT_SGDE_SYNC_STYLES,
@@ -59,11 +67,9 @@ import {
   expedientePiezasParaLista,
   isCaseDocumentOpenableInViewer,
   isExpedientePiezaListable,
-  tituloPiezaExpediente,
 } from '../../lib/expediente-viewer-doc';
 import { Link } from 'react-router-dom';
 import {
-  sgdeCuadernoFromFolderPath,
   splitSgdeFolderPath,
 } from '../../lib/expediente-folder-tree';
 import { ExpedienteSgdeFolderTree, ExpedienteTreeModeHint } from './ExpedienteSgdeFolderTree';
@@ -124,10 +130,8 @@ function rawFileLabel(doc: Document): string {
   return caseDocumentRawLabel(doc);
 }
 
-/** Título legible en listado del expediente (sanitizado para pantalla). */
+/** Título en listado: nombre del archivo (como se radicó / cargó), no la etiqueta del acto. */
 function listaTituloDocumento(doc: Document): string {
-  const fijo = tituloPiezaExpediente(doc);
-  if (fijo) return fijo;
   const raw = rawFileLabel(doc);
   if (!raw) return 'Sin nombre';
   return sanitizeExpedienteFilenameForDisplay(raw);
@@ -167,8 +171,11 @@ function extChipClass(ext: string): string {
   return 'bg-slate-500 text-white';
 }
 
-function badgeFor(doc: Document): { text: string; className: string } {
-  const actLabel = labelForActCode(inferActCodeFromDocument(doc));
+function badgeFor(
+  doc: Document,
+  caseType?: Case['caseType'] | null,
+): { text: string; className: string } {
+  const actLabel = labelForActCode(inferActCodeFromDocument(doc), caseType);
   if (actLabel) {
     return { text: actLabel, className: 'bg-indigo-50 text-indigo-900 border border-indigo-100' };
   }
@@ -189,79 +196,16 @@ function sortReparto(list: Document[]): Document[] {
   return [...list].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 }
 
-function docBelongsToNotebook(doc: Document, code: string): boolean {
-  if (normalizeNotebookCode(doc.notebookCode) === code) return true;
-  const fromPath = sgdeCuadernoFromFolderPath(doc.sgdeFolderPath);
-  return fromPath?.code === code;
-}
-
-function filterByNotebook(docs: Document[], code: string): Document[] {
-  return sortReparto(docs.filter((d) => docBelongsToNotebook(d, code)));
+function filterByNotebook(
+  docs: Document[],
+  code: string,
+  opts?: import('./expediente-notebook-sections').DocNotebookMatchOpts
+): Document[] {
+  return sortReparto(docs.filter((d) => docBelongsToNotebook(d, code, opts)));
 }
 
 function maxSortOrder(docs: Document[], code: string): number {
   return filterByNotebook(docs, code).reduce((m, d) => Math.max(m, d.order ?? 0), -1);
-}
-
-function buildNotebookSections(
-  extra: ExpedienteCuadernoExtra[],
-  docs: Document[],
-  caseType?: Case['caseType']
-): ExpedienteCuadernoExtra[] {
-  const primary =
-    caseType === 'tutela_segunda' ? NOTEBOOK_SI_C01_PRINCIPAL : NOTEBOOK_PI_C01_PRINCIPAL;
-  const out: ExpedienteCuadernoExtra[] = [];
-  const seen = new Set<string>();
-
-  const addSection = (code: string, label: string) => {
-    const c = (code || '').trim();
-    if (!c || seen.has(c)) return;
-    seen.add(c);
-    out.push({ code: c, label: (label || '').trim() || c });
-  };
-
-  for (const d of docs) {
-    const cuaderno = sgdeCuadernoFromFolderPath(d.sgdeFolderPath);
-    if (cuaderno) addSection(cuaderno.code, cuaderno.label);
-  }
-
-  const hasSgdeCuadernos = out.length > 0;
-  if (!hasSgdeCuadernos) {
-    addSection(primary, NOTEBOOK_META[primary].label);
-  }
-
-  if (caseType === 'tutela_segunda') {
-    addSection(NOTEBOOK_PI_C01_PRINCIPAL, 'Expediente de origen (1ª instancia)');
-  }
-
-  for (const e of extra) {
-    const code = (e.code || '').trim();
-    if (!code || seen.has(code)) continue;
-    addSection(code, (e.label || '').trim() || code);
-  }
-
-  const fromDocs = new Set<string>();
-  for (const d of docs) {
-    const c = normalizeNotebookCode(d.notebookCode);
-    if (c !== primary && !seen.has(c)) fromDocs.add(c);
-  }
-  for (const code of [...fromDocs].sort()) {
-    if (seen.has(code)) continue;
-    const label = NOTEBOOK_META[code]?.label || `Cuaderno · ${code}`;
-    addSection(code, label);
-  }
-
-  const listable = docs.filter(isExpedientePiezaListable);
-  const hasOrphans = listable.some((d) => !out.some((s) => docBelongsToNotebook(d, s.code)));
-  if (hasOrphans && !seen.has(primary)) {
-    addSection(primary, NOTEBOOK_META[primary].label);
-  }
-
-  if (out.length === 0) {
-    addSection(primary, NOTEBOOK_META[primary].label);
-  }
-
-  return out;
 }
 
 async function signedDownloadUrl(storagePath: string): Promise<string | null> {
@@ -491,22 +435,6 @@ type Props = {
   onLecturaRapidaPieza?: (doc: Document) => void;
 };
 
-function groupSectionsByInstancia(
-  sections: ExpedienteCuadernoExtra[]
-): { instancia: ExpedienteInstanciaCode; notebooks: ExpedienteCuadernoExtra[] }[] {
-  const order: ExpedienteInstanciaCode[] = ['PI', 'SI'];
-  const buckets = new Map<ExpedienteInstanciaCode, ExpedienteCuadernoExtra[]>();
-  for (const nb of sections) {
-    const inst = instanciaForNotebook(nb.code);
-    const list = buckets.get(inst) || [];
-    list.push(nb);
-    buckets.set(inst, list);
-  }
-  return order
-    .filter((i) => (buckets.get(i)?.length ?? 0) > 0)
-    .map((instancia) => ({ instancia, notebooks: buckets.get(instancia)! }));
-}
-
 export function ExpedienteDigitalPanel({
   caseId,
   caseItem,
@@ -539,7 +467,15 @@ export function ExpedienteDigitalPanel({
     files: File[];
     notebookCode: string;
   } | null>(null);
-  const [expandedNb, setExpandedNb] = useState<Set<string>>(() => new Set());
+  const defaultInstancia: ExpedienteInstanciaCode =
+    caseItem.caseType === 'tutela_segunda' ? 'SI' : 'PI';
+  const [expandedInstancia, setExpandedInstancia] = useState<Set<ExpedienteInstanciaCode>>(() =>
+    new Set(
+      caseItem.caseType === 'tutela_segunda'
+        ? (['PI', 'SI'] as ExpedienteInstanciaCode[])
+        : [defaultInstancia]
+    )
+  );
   const pickNbRef = useRef(DEFAULT_NOTEBOOK_CODE);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const listaScrollRef = useRef<HTMLDivElement>(null);
@@ -566,6 +502,7 @@ export function ExpedienteDigitalPanel({
     [mergedExtraNotebooks, docs, caseItem.caseType]
   );
   const instanciaGroups = useMemo(() => groupSectionsByInstancia(sections), [sections]);
+  const showInstanciaGroups = instanciaGroups.length > 1;
 
   const activeNb =
     sections.find((s) => s.code === selectedNb) ??
@@ -589,17 +526,34 @@ export function ExpedienteDigitalPanel({
 
     if (prevCaseIdRef.current !== caseId) {
       prevCaseIdRef.current = caseId;
-      setExpandedNb(new Set(codes.length > 0 ? [first] : [defaultNb]));
+      setExpandedInstancia(new Set(instanciaGroups.map((g) => g.instancia)));
       setSelectedNb(first);
       return;
     }
 
     setSelectedNb((prev) => (codeSet.has(prev) ? prev : first));
-    setExpandedNb((prev) => {
-      const valid = [...prev].filter((c) => codeSet.has(c));
-      return valid.length > 0 ? new Set(valid) : prev;
+  }, [caseId, defaultNb, instanciaGroups, sections]);
+
+  const selectCuaderno = useCallback(
+    (code: string) => {
+      setSelectedNb(code);
+      setPiezaBusqueda('');
+      if (showInstanciaGroups) {
+        const inst = instanciaForNotebook(code);
+        setExpandedInstancia((prev) => new Set(prev).add(inst));
+      }
+    },
+    [showInstanciaGroups]
+  );
+
+  const toggleInstancia = (inst: ExpedienteInstanciaCode) => {
+    setExpandedInstancia((prev) => {
+      const next = new Set(prev);
+      if (next.has(inst)) next.delete(inst);
+      else next.add(inst);
+      return next;
     });
-  }, [caseId, defaultNb, sections]);
+  };
 
   useEffect(() => {
     const el = listaScrollRef.current;
@@ -613,29 +567,15 @@ export function ExpedienteDigitalPanel({
     return () => cancelAnimationFrame(id);
   }, [visorAbierto, selectedDoc?.id]);
 
-  useEffect(() => {
-    setExpandedNb((prev) => {
-      if (prev.has(activeCode)) return prev;
-      const next = new Set(prev);
-      next.add(activeCode);
-      return next;
-    });
-  }, [activeCode]);
-
-  const toggleCuaderno = (code: string) => {
-    setSelectedNb(code);
-    setExpandedNb((prev) => {
-      if (prev.has(code) && prev.size === 1) return new Set<string>();
-      return new Set([code]);
-    });
-  };
-
   const piezasForNotebook = useCallback(
     (code: string) => {
-      const list = filterByNotebook(docs, code).filter(isExpedientePiezaListable);
+      const list = filterByNotebook(docs, code, {
+        caseType: caseItem.caseType,
+        sections,
+      }).filter(isExpedientePiezaListable);
       return sortExpedienteCuadernoPiezas(list, caseItem.caseType);
     },
-    [docs, caseItem.caseType],
+    [docs, caseItem.caseType, sections],
   );
 
   const piezasFiltradasFor = useCallback(
@@ -646,10 +586,11 @@ export function ExpedienteDigitalPanel({
       return list.filter((d) => {
         const titulo = listaTituloDocumento(d).toLowerCase();
         const raw = caseDocumentRawLabel(d).toLowerCase();
-        return titulo.includes(q) || raw.includes(q);
+        const acto = (labelForActCode(inferActCodeFromDocument(d), caseItem.caseType) || '').toLowerCase();
+        return titulo.includes(q) || raw.includes(q) || acto.includes(q);
       });
     },
-    [piezasForNotebook, piezaBusqueda, activeCode]
+    [piezasForNotebook, piezaBusqueda, activeCode, caseItem.caseType]
   );
 
   const openFilePicker = (notebookCode: string) => {
@@ -742,7 +683,9 @@ export function ExpedienteDigitalPanel({
           return;
         }
       }
-      if (uploadableActsForCaseType(caseItem.caseType).length > 0) {
+      // Provisional: no pedir «Tipo de acto procesal» al subir; reactivar el diálogo cuando el flujo de actos esté listo.
+      const PROMPT_ACT_ON_UPLOAD = false;
+      if (PROMPT_ACT_ON_UPLOAD && uploadableActsForCaseType(caseItem.caseType).length > 0) {
         setUploadActDialog({ files, notebookCode });
         if (fileInputRef.current) fileInputRef.current.value = '';
         return;
@@ -808,28 +751,35 @@ export function ExpedienteDigitalPanel({
     setAddCuadernoOpen(true);
   };
 
-  const confirmAddCuaderno = async () => {
-    const label = newCuadernoLabel.trim();
-    if (!label) {
-      setUploadErr('Escriba un nombre para el cuaderno.');
+  const persistExtraCuaderno = async (entry: ExpedienteCuadernoExtra) => {
+    const code = normalizeNotebookCode(entry.code);
+    const label = (entry.label || '').trim() || NOTEBOOK_META[code]?.label || code;
+    if (!code) {
+      setUploadErr('Código de cuaderno inválido.');
+      return;
+    }
+    if (mergedExtraNotebooks.some((e) => normalizeNotebookCode(e.code) === code)) {
+      selectCuaderno(code);
+      setAddCuadernoOpen(false);
+      setNewCuadernoLabel('');
       return;
     }
     setUploadErr(null);
     setAddingNb(true);
     try {
       await ensureSupabaseSessionForWrites();
-      const code = `PI_INC_${Date.now()}`;
-      const localOnly = mergeExtraCuadernos(extraNotebooks, [...localExtraNotebooks, { code, label }]).filter(
-        (e) => !extraNotebooks.some((x) => x.code === e.code)
-      );
+      const nextEntry = { code, label };
+      const localOnly = mergeExtraCuadernos(extraNotebooks, [
+        ...localExtraNotebooks,
+        nextEntry,
+      ]).filter((e) => !extraNotebooks.some((x) => x.code === e.code));
 
       const finishLocal = (notice?: string) => {
         setLocalExtraNotebooks(localOnly);
         saveLocalExtraCuadernos(caseId, localOnly);
         setAddCuadernoOpen(false);
         setNewCuadernoLabel('');
-        setSelectedNb(code);
-        setExpandedNb((prev) => new Set(prev).add(code));
+        selectCuaderno(code);
         if (notice) setUploadErr(notice);
       };
 
@@ -838,7 +788,10 @@ export function ExpedienteDigitalPanel({
         return;
       }
 
-      const persisted = mergeExtraCuadernos(extraNotebooks, [...localExtraNotebooks, { code, label }]);
+      const persisted = mergeExtraCuadernos(extraNotebooks, [
+        ...localExtraNotebooks,
+        nextEntry,
+      ]);
       const { error } = await supabase
         .from('cases')
         .update({
@@ -860,8 +813,7 @@ export function ExpedienteDigitalPanel({
       }
       setAddCuadernoOpen(false);
       setNewCuadernoLabel('');
-      setSelectedNb(code);
-      setExpandedNb((prev) => new Set(prev).add(code));
+      selectCuaderno(code);
       setLocalExtraNotebooks([]);
       saveLocalExtraCuadernos(caseId, []);
       await onRefetchCase();
@@ -872,6 +824,22 @@ export function ExpedienteDigitalPanel({
       setAddingNb(false);
     }
   };
+
+  const confirmAddCuaderno = async () => {
+    const label = newCuadernoLabel.trim();
+    if (!label) {
+      setUploadErr('Escriba un nombre para el cuaderno.');
+      return;
+    }
+    await persistExtraCuaderno({ code: `PI_INC_${Date.now()}`, label });
+  };
+
+  const addCautelarNotebook = async () => {
+    await persistExtraCuaderno(cautelarNotebookExtra());
+  };
+
+  const showCautelarPreset =
+    caseItem.caseType === 'civil_ejecutivo' && !caseHasCautelarNotebook(mergedExtraNotebooks);
 
   const onDownload = async (e: React.MouseEvent, doc: Document) => {
     e.stopPropagation();
@@ -994,7 +962,7 @@ export function ExpedienteDigitalPanel({
     const displayName = listaTituloDocumento(doc);
     const ext = typeChipForDoc(doc, rawFileLabel(doc) || displayName);
     const sel = selectedDoc?.id === doc.id;
-    const badge = badgeFor(doc);
+    const badge = badgeFor(doc, caseItem.caseType);
     const sgdeSync = documentSgdeSyncStatus(doc);
     const sgdeSyncStyle = DOCUMENT_SGDE_SYNC_STYLES[sgdeSync];
     const sgdeSyncLabel = DOCUMENT_SGDE_SYNC_LABELS[sgdeSync];
@@ -1095,11 +1063,10 @@ export function ExpedienteDigitalPanel({
     const meta = NOTEBOOK_META[code];
     const busquedaActiva = code === activeCode && piezaBusqueda.trim().length > 0;
     const treeDocs = busquedaActiva ? filtradas : list;
-    const indicePorDocId = new Map(treeDocs.map((d, i) => [d.id, i]));
     const sgdeTreeMode = list.some((d) => splitSgdeFolderPath(d.sgdeFolderPath).length > 0);
 
     return (
-      <div className="flex min-h-0 flex-1 flex-col border-t border-slate-200/90 bg-white/90 px-2 pb-2 pt-1.5">
+      <div className="flex min-h-0 flex-1 flex-col bg-white/90 px-2 pb-2 pt-1.5">
         {meta?.subtitle ? (
           <p className="mb-1.5 shrink-0 px-1 text-[9px] text-slate-500">{meta.subtitle}</p>
         ) : null}
@@ -1140,7 +1107,7 @@ export function ExpedienteDigitalPanel({
             cuadernoLabel={nb.label}
             searchQuery={busquedaActiva ? piezaBusqueda : ''}
             selectedDocId={selectedDoc?.id}
-            renderFileRow={(d, _i) => renderRow(d, indicePorDocId.get(d.id) ?? _i)}
+            renderFileRow={(d, i) => renderRow(d, i)}
           />
         </div>
         <div className="mt-1.5 shrink-0 border-t border-slate-100 pt-1.5">{renderDropZone(nb)}</div>
@@ -1148,64 +1115,100 @@ export function ExpedienteDigitalPanel({
     );
   };
 
-  const renderCuadernosAcordeon = () => (
-    <nav
-      className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col gap-2"
+  const renderCuadernoNavRow = (nb: ExpedienteCuadernoExtra, nested = false) => {
+    const count = piezasForNotebook(nb.code).length;
+    const activo = nb.code === activeCode;
+    const meta = NOTEBOOK_META[nb.code];
+    return (
+      <button
+        key={nb.code}
+        type="button"
+        onClick={() => selectCuaderno(nb.code)}
+        aria-current={activo ? 'true' : undefined}
+        className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition ${
+          nested ? 'ml-2' : ''
+        } ${
+          activo
+            ? 'bg-emerald-50 font-semibold text-emerald-950 ring-1 ring-emerald-200/80'
+            : 'text-slate-700 hover:bg-slate-100/90'
+        }`}
+      >
+        <span className="min-w-0 flex-1 truncate text-xs">{nb.label}</span>
+        {meta?.shortLabel ? (
+          <span className="hidden shrink-0 text-[9px] text-slate-400 sm:inline">{meta.shortLabel}</span>
+        ) : null}
+        <span className="shrink-0 tabular-nums text-[10px] font-medium text-slate-500">
+          {count} pieza{count === 1 ? '' : 's'}
+        </span>
+      </button>
+    );
+  };
+
+  const renderCuadernosNav = () => (
+    <div
+      className="shrink-0 space-y-1 overflow-y-auto overscroll-y-contain border-b border-slate-200/80 pb-2"
       aria-label="Cuadernos del expediente"
     >
-      {instanciaGroups.map(({ instancia, notebooks }) => (
-        <div key={instancia} className="flex min-h-0 flex-1 flex-col gap-1">
-          <p className="shrink-0 px-0.5 text-[9px] font-bold uppercase tracking-widest text-slate-400">
-            {INSTANCIA_LABELS[instancia]}
-          </p>
-          <div className="flex min-h-0 flex-1 flex-col gap-1">
-            {notebooks.map((nb) => {
-              const count = piezasForNotebook(nb.code).length;
-              const abierto = expandedNb.has(nb.code);
-              const activo = nb.code === activeCode;
-              const meta = NOTEBOOK_META[nb.code];
-              return (
-                <div
-                  key={nb.code}
-                  className={`flex min-h-0 flex-col overflow-hidden rounded-md border transition-colors ${
-                    abierto ? 'min-h-0 flex-1' : 'shrink-0'
-                  } ${activo ? 'border-emerald-300/80 ring-1 ring-emerald-200/60' : 'border-slate-200'}`}
+      {showInstanciaGroups
+        ? instanciaGroups.map(({ instancia, notebooks }) => {
+            const instOpen = expandedInstancia.has(instancia);
+            const instCount = notebooks.reduce(
+              (n, nb) => n + piezasForNotebook(nb.code).length,
+              0
+            );
+            return (
+              <div
+                key={instancia}
+                className="overflow-hidden rounded-md border border-slate-200/90 bg-slate-50/50"
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleInstancia(instancia)}
+                  aria-expanded={instOpen}
+                  className="flex w-full items-center gap-2 px-2.5 py-2 text-left transition hover:bg-slate-100/80"
                 >
-                  <button
-                    type="button"
-                    onClick={() => toggleCuaderno(nb.code)}
-                    aria-expanded={abierto}
-                    className={`flex w-full shrink-0 items-center gap-2 px-2.5 py-1.5 text-left transition ${
-                      activo
-                        ? 'bg-emerald-50/95 hover:bg-emerald-50'
-                        : 'bg-slate-50/80 hover:bg-slate-100/90'
+                  <ChevronRight
+                    className={`h-4 w-4 shrink-0 text-slate-600 transition-transform ${
+                      instOpen ? 'rotate-90' : ''
                     }`}
-                  >
-                    <ChevronRight
-                      className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition-transform ${
-                        abierto ? 'rotate-90' : ''
-                      }`}
-                      aria-hidden
-                    />
-                    <span className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-800">
-                      {nb.label}
-                    </span>
-                    {meta?.shortLabel ? (
-                      <span className="hidden shrink-0 text-[9px] text-slate-400 sm:inline">{meta.shortLabel}</span>
-                    ) : null}
-                    <span className="shrink-0 tabular-nums text-[10px] font-medium text-slate-500">
-                      {count} pieza{count === 1 ? '' : 's'}
-                    </span>
-                  </button>
-                  {abierto ? renderCuadernoCuerpo(nb) : null}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-    </nav>
+                    aria-hidden
+                  />
+                  <span className="min-w-0 flex-1 truncate text-xs font-bold uppercase tracking-wide text-slate-800">
+                    {INSTANCIA_LABELS[instancia]}
+                  </span>
+                  <span className="shrink-0 tabular-nums text-[10px] font-semibold text-slate-500">
+                    {instCount} pieza{instCount === 1 ? '' : 's'}
+                  </span>
+                </button>
+                {instOpen ? (
+                  <div className="space-y-0.5 border-t border-slate-200/70 bg-white/80 p-1">
+                    {notebooks.map((nb) => renderCuadernoNavRow(nb, true))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })
+        : sections.map((nb) => renderCuadernoNavRow(nb))}
+    </div>
   );
+
+  const renderPanelContenidoActivo = () => {
+    if (!activeNb) return null;
+    const instLabel = showInstanciaGroups
+      ? INSTANCIA_LABELS[instanciaForNotebook(activeNb.code)]
+      : null;
+    return (
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden pt-2">
+        <div className="mb-1.5 shrink-0 px-1">
+          <p className="text-xs font-semibold text-slate-800">{activeNb.label}</p>
+          {instLabel ? (
+            <p className="text-[10px] text-slate-500">{instLabel}</p>
+          ) : null}
+        </div>
+        {renderCuadernoCuerpo(activeNb)}
+      </div>
+    );
+  };
 
   return (
     <div id="panel-documentos" className="scroll-mt-24 flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
@@ -1255,6 +1258,18 @@ export function ExpedienteDigitalPanel({
         <span className="shrink-0 tabular-nums text-[9px] font-semibold text-slate-500">
           {piezasTotal} piezas
         </span>
+        {showCautelarPreset ? (
+          <button
+            type="button"
+            disabled={addingNb}
+            onClick={() => void addCautelarNotebook()}
+            title="Abrir cuaderno de medidas cautelares (C02)"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[9px] font-bold uppercase tracking-wide text-amber-900 hover:border-amber-300 disabled:opacity-50"
+          >
+            {addingNb ? <Loader2 className="h-3 w-3 animate-spin" /> : <FolderPlus className="h-3 w-3" />}
+            <span className="hidden sm:inline">Cautelares</span>
+          </button>
+        ) : null}
         <button
           type="button"
           disabled={addingNb}
@@ -1276,10 +1291,9 @@ export function ExpedienteDigitalPanel({
         ) : null}
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden pt-2">
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden pr-0.5">
-          {renderCuadernosAcordeon()}
-        </div>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {renderCuadernosNav()}
+        {renderPanelContenidoActivo()}
       </div>
 
       {renameDoc ? (
@@ -1402,6 +1416,16 @@ export function ExpedienteDigitalPanel({
             <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
               Ejemplo: incidente de desacato, de nulidad, otro incidente. Podrá cargar piezas en este cuaderno después de crearlo.
             </p>
+            {showCautelarPreset ? (
+              <button
+                type="button"
+                disabled={addingNb}
+                onClick={() => void addCautelarNotebook()}
+                className="mt-3 w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-left text-[11px] font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-50"
+              >
+                Usar preset: {NOTEBOOK_META[NOTEBOOK_PI_C02_CAUTELAR].label} (C02)
+              </button>
+            ) : null}
             <label className="mt-3 block text-[10px] font-bold uppercase tracking-wide text-slate-400">
               Nombre del cuaderno
             </label>

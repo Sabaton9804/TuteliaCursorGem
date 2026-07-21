@@ -30,6 +30,31 @@ export function isCivilCaseType(value: string | null | undefined): value is Civi
   return CIVIL_CASE_TYPES.includes(value as CivilCaseType);
 }
 
+/** Etiquetas de partes según dominio (civil CGP vs tutela). */
+export type PartyRoleLabels = {
+  claimantSingular: string;
+  claimantPlural: string;
+  defendantSingular: string;
+  defendantPlural: string;
+};
+
+export function partyRoleLabels(caseType?: string | null): PartyRoleLabels {
+  if (isCivilCaseType(caseType)) {
+    return {
+      claimantSingular: 'Demandante',
+      claimantPlural: 'Demandantes',
+      defendantSingular: 'Demandado',
+      defendantPlural: 'Demandados',
+    };
+  }
+  return {
+    claimantSingular: 'Accionante',
+    claimantPlural: 'Accionantes',
+    defendantSingular: 'Accionado',
+    defendantPlural: 'Accionados',
+  };
+}
+
 /** Tipos radicables en UI (tutela MVP + procesos civiles). */
 export const RADICABLE_CASE_TYPES = [
   ...MVP_RADICABLE_CASE_TYPES,

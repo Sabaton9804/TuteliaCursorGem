@@ -245,7 +245,7 @@ export function GlobalSearch({ courtId }: Props) {
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Radicado, accionante, accionado, derecho tutelado…"
+                placeholder="Radicado, demandante/accionante, demandado/accionado…"
                 className="min-w-0 flex-1 border-0 bg-transparent py-2 text-sm font-medium text-slate-900 outline-none placeholder:text-slate-400"
                 autoComplete="off"
                 spellCheck={false}

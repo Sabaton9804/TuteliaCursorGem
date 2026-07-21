@@ -29,6 +29,8 @@ export const LegalAnalysisRequestSchema = z.object({
   pdfBase64: z.string().min(1).optional(),
   /** Texto ya extraído (fallback si no hay PDF). */
   pdfText: z.string().min(1).optional(),
+  /** En impugnación: fallo PI vs documento de traslado/radicación. */
+  documentKind: z.enum(['radicacion', 'fallo_primera']).default('radicacion'),
   pdfWasTruncated: z.boolean().default(false),
   truncatedToPages: z.number().int().positive().optional(),
   totalPages: z.number().int().positive().optional(),
@@ -146,6 +148,14 @@ import { mapTuteliaCaseTypeToLegalAnalysisKind } from '../src/lib/legal-analysis
 
 export { mapTuteliaCaseTypeToLegalAnalysisKind };
 
+const FALLO_PRIMERA_PROMPT = `
+CONTEXTO ESPECIAL: el documento es el FALLO o SENTENCIA de tutela de PRIMERA INSTANCIA
+(no el correo de remisión, ni el acta de reparto, ni el escrito de impugnación).
+Extrae accionantes y accionados tal como constan en el fallo.
+NO incluya juzgados, despachos judiciales, secretarías ni entidades remitentes como partes,
+salvo que figuren expresamente como accionados en el litigio.
+Incluya en hechos el sentido del fallo (concedió / negó) si consta.`;
+
 function buildLegalAnalysisPrompt(req: LegalAnalysisRequest): string {
   const truncationNote = req.pdfWasTruncated
     ? `\nNOTA: Solo se adjuntan las primeras ${req.truncatedToPages ?? 'N'} páginas` +
@@ -153,9 +163,14 @@ function buildLegalAnalysisPrompt(req: LegalAnalysisRequest): string {
       '. Priorice cabecera, partes, tipificación, hechos iniciales y pretensiones. No invente anexos posteriores.'
     : '';
 
+  const documentIntro =
+    req.documentKind === 'fallo_primera'
+      ? 'Analiza el fallo de tutela de primera instancia y extrae la información solicitada.'
+      : 'Analiza el documento de radicación y extrae la información solicitada.';
+
   return `Eres un asistente jurídico especializado en derecho procesal colombiano (despacho civil de circuito).
 
-Analiza el documento de radicación y extrae la información solicitada.
+${documentIntro}
 
 Partes:
 - accionantes: TODOS los demandantes / accionantes (nombre, C.C./NIT, correo si consta; si no, email vacío).
@@ -168,6 +183,7 @@ ${HECHOS_STYLE_BY_TYPE[req.caseType]}
 Mínimo 900 caracteres y al menos 10 frases en "hechos" si el documento lo permite.
 En "pretensiones": ${NO_FIRST_PERSON_GUARDRAIL}
 ${ANTI_HALLUCINATION_GUARDRAIL}
+${req.documentKind === 'fallo_primera' ? FALLO_PRIMERA_PROMPT : ''}
 ${truncationNote}
 
 Responde ÚNICAMENTE con JSON válido según el esquema (accionantes, accionados, derechoTutelado, hechos, pretensiones).`;

@@ -6,6 +6,7 @@ import {
   suggestedLogicalNameForAct,
   uploadableActsForCaseType,
 } from '../../lib/case-act-types';
+import { isCivilCaseType, partyRoleLabels } from '../../lib/process-product-scope';
 
 export type ExpedienteUploadActPayload = {
   actCode: string;
@@ -51,8 +52,15 @@ export function ExpedienteUploadActDialog({
     ? suggestedLogicalNameForAct(actCode, {
         partyEntity: partyEntity.trim() || undefined,
         originalFilename: files[0]?.name,
+        caseType: caseType ?? undefined,
       })
     : '';
+  const partyFieldLabel = isCivilCaseType(caseType)
+    ? partyRoleLabels(caseType).defendantSingular
+    : 'Entidad accionada';
+  const partyPlaceholder = isCivilCaseType(caseType)
+    ? 'Ej. nombre del demandado…'
+    : 'Ej. Colpensiones, Nueva EPS…';
 
   return (
     <div
@@ -115,11 +123,11 @@ export function ExpedienteUploadActDialog({
 
             {needsParty ? (
               <label className="block text-xs font-semibold text-slate-700">
-                Entidad accionada
+                {partyFieldLabel}
                 <input
                   type="text"
                   className="input-modern mt-1 w-full text-sm"
-                  placeholder="Ej. Colpensiones, Nueva EPS…"
+                  placeholder={partyPlaceholder}
                   value={partyEntity}
                   disabled={busy}
                   onChange={(e) => setPartyEntity(e.target.value)}

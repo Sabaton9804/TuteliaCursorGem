@@ -5,10 +5,12 @@ import type { DerechoTuteladoCode } from '../../lib/sierju-case-codes';
 import {
   fetchSierjuClassesForCaseType,
   fetchSierjuClassesForProcessDefinition,
+  findSierjuClassByCode,
   findSierjuClassByDerecho,
   findSierjuClassById,
   type SierjuClassOption,
 } from '../../lib/sierju-catalog-service';
+import { SIERJU_CIVIL_ACTIVE_SECTION } from '../../lib/sierju-process-tipos';
 
 type CaseSierjuClassificationProps = {
   courtId: string;
@@ -16,6 +18,8 @@ type CaseSierjuClassificationProps = {
   processDefinitionId?: string | null;
   valueDerechoCode?: DerechoTuteladoCode;
   valueClassId?: string | null;
+  /** Código TIPOS PROCESOS (civil oral), p. ej. declarativos_especiales_divisorio. */
+  valueCode?: string | null;
   disabled?: boolean;
   saving?: boolean;
   label?: string;
@@ -34,6 +38,7 @@ export function CaseSierjuClassification({
   processDefinitionId,
   valueDerechoCode,
   valueClassId,
+  valueCode,
   disabled = false,
   saving = false,
   label = 'Clasificación SIERJU (alimenta el informe global)',
@@ -80,9 +85,29 @@ export function CaseSierjuClassification({
   const selectedValue = useMemo(() => {
     const byClass = findSierjuClassById(classes, valueClassId ?? undefined);
     if (byClass) return byClass.id;
+    const byCode = findSierjuClassByCode(classes, valueCode, SIERJU_CIVIL_ACTIVE_SECTION);
+    if (byCode) return byCode.id;
+    // En civil casi todas las filas mapean a OTROS: no usar derecho como fallback.
+    const isCivilSection = classes.some((c) => c.sectionCode.startsWith('civil'));
+    if (isCivilSection) return '';
     const byDerecho = findSierjuClassByDerecho(classes, valueDerechoCode);
     return byDerecho?.id ?? '';
-  }, [classes, valueClassId, valueDerechoCode]);
+  }, [classes, valueClassId, valueCode, valueDerechoCode]);
+
+  // Si el tipo ya está en el banner (valueCode) pero aún no hay classId, sincronizar al cargar el catálogo.
+  useEffect(() => {
+    if (loading || !classes.length || !valueCode?.trim()) return;
+    if (valueClassId && findSierjuClassById(classes, valueClassId)) return;
+    const byCode = findSierjuClassByCode(classes, valueCode, SIERJU_CIVIL_ACTIVE_SECTION);
+    if (!byCode || byCode.id === valueClassId) return;
+    void onChange({
+      derechoCode: byCode.derechoTuteladoCode,
+      classId: byCode.id,
+      option: byCode,
+    });
+    // onChange del padre suele ser inline; solo re-sincronizar cuando cambian catálogo/código.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- evitar bucles por identidad de onChange
+  }, [loading, classes, valueCode, valueClassId]);
 
   const sectionHint = useMemo(() => {
     const hit = findSierjuClassById(classes, selectedValue || undefined);
