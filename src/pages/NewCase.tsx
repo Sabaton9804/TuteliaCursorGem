@@ -1021,6 +1021,11 @@ export default function NewCase() {
             `${base} Cierre sesión e ingrese de nuevo para renovar el token.`,
           );
         }
+        if (response.status === 405) {
+          throw new Error(
+            'El servidor no acepta POST /api/parse-email (405). En producción debe correr Express (npm start), no solo el frontend estático. Abra /api/health en la misma URL: si no responde JSON, republique la app en AI Studio (Publish) o redeploy Cloud Run.',
+          );
+        }
         throw new Error(base);
       }
       setParsedData(data);

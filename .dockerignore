@@ -1,0 +1,13 @@
+node_modules
+dist
+.git
+.env
+.env.local
+ATT04292.env
+*.md
+.cursor
+.agents
+landingPage
+docs/pitch
+reports
+scripts/marketing/__pycache__

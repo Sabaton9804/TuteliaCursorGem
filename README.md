@@ -25,11 +25,22 @@ Tutelia **no** es un sitio estático: radicación, IA, SGDE y Outlook dependen d
 | Paso | Comando / valor |
 |------|-----------------|
 | Build | `npm run build` |
-| Start | `npm start` → `tsx server.ts` |
+| Start | `npm start` → `tsx scripts/start-production.mts` |
 | `NODE_ENV` | `production` (Cloud Run suele inyectarlo) |
 | `PORT` | Lo asigna Cloud Run; local default `3451` |
 
-**Importante:** no use `node server.ts` ni `vite preview` en producción. El servidor está en TypeScript; `npm start` usa `tsx`.
+**Importante:** no use `node server.ts` ni `vite preview` en producción. `npm start` construye `dist/` si falta y levanta Express con `tsx`.
+
+### Republicar en AI Studio
+
+Un push a GitHub **no** actualiza el Cloud Run publicado desde AI Studio. Tras cambios en el repo:
+
+1. Abra el proyecto en [AI Studio](https://ai.studio) (Build mode).
+2. Sincronice el código actualizado (o vuelva a importar desde GitHub/ZIP).
+3. Pulse **Publish** de nuevo.
+4. Verifique `https://SU-URL.run.app/api/health`.
+
+Alternativa: despliegue desde GitHub con `gcloud run deploy --source .` (usa el `Dockerfile` del repo).
 
 ### Variables mínimas en el servicio
 
