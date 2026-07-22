@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { apiUrl } from './api-base';
 import { ensureSupabaseSessionForWrites } from './supabase-write-auth';
 import type { PieceAiAnalysisData, PieceAiAnalysisResponse } from './piece-ai-analysis';
 import { PIECE_AI_PROMPT_VERSION } from './piece-ai-analysis';
@@ -49,7 +50,7 @@ export async function fetchPieceAiAnalysis(opts: {
   forceRefresh?: boolean;
   pdfPageCount?: number | null;
 }): Promise<PieceAiAnalysisResponse> {
-  const res = await fetch('/api/ai/analyze-piece', {
+  const res = await fetch(apiUrl('/api/ai/analyze-piece'), {
     method: 'POST',
     headers: await authHeaders(),
     body: JSON.stringify({

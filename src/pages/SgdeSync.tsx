@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ExternalLink, FolderTree, Loader2, Search } from 'lucide-react';
+import { apiUrl } from '../lib/api-base';
 
 type SgdeStatus = {
   enabled?: boolean;
@@ -17,7 +18,7 @@ export default function SgdeSync() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/sgde/status');
+        const res = await fetch(apiUrl('/api/sgde/status'));
         const j = (await res.json().catch(() => ({}))) as SgdeStatus;
         if (!cancelled) setStatus(j);
       } catch {

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { format, isValid, parseISO } from 'date-fns';
 import { BookOpen, ExternalLink, FileText, Loader2, Pencil, PlusCircle, Search, Upload } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { apiUrl } from '../lib/api-base';
 import { formatRadicado } from '../lib/formatters';
 import { PRECEDENT_RADICADO_PENDIENTE } from '../lib/precedent-constants';
 import { useSessionCourt } from '../contexts/SessionCourtContext';
@@ -71,7 +72,7 @@ async function authHeadersForApi(): Promise<HeadersInit> {
 
 async function fetchPrecedentPdfUrl(precedentId: string): Promise<string> {
   const headers = await authHeadersForApi();
-  const res = await fetch(`/api/precedents/${encodeURIComponent(precedentId)}/pdf-url`, { headers });
+  const res = await fetch(apiUrl(`/api/precedents/${encodeURIComponent(precedentId)}/pdf-url`), { headers });
   const j = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
   if (!res.ok) throw new Error(typeof j.error === 'string' ? j.error : 'No se pudo obtener el PDF');
   if (!j.url) throw new Error('URL del PDF no disponible');
@@ -179,7 +180,7 @@ export default function BibliotecaPrecedentes() {
     // issuer_category se infiere de corporación en servidor; opcional hint futuro
     setUploadBusy(true);
     try {
-      const res = await fetch('/api/precedents/index-from-file', { method: 'POST', body: fd });
+      const res = await fetch(apiUrl('/api/precedents/index-from-file'), { method: 'POST', body: fd });
       const j = (await res.json().catch(() => ({}))) as {
         error?: string;
         precedent?: { id: string; source_type?: string };
@@ -271,7 +272,7 @@ export default function BibliotecaPrecedentes() {
         ...(await authHeadersForApi()),
         'Content-Type': 'application/json',
       };
-      const res = await fetch(`/api/precedents/${encodeURIComponent(rowId)}`, {
+      const res = await fetch(apiUrl(`/api/precedents/${encodeURIComponent(rowId)}`), {
         method: 'PATCH',
         headers,
         body: JSON.stringify({ radicado: rawValue.trim() }),
@@ -330,7 +331,7 @@ export default function BibliotecaPrecedentes() {
       const fd = new FormData();
       fd.append('archivo', file);
       const headers = await authHeadersForApi();
-      const res = await fetch(`/api/precedents/${encodeURIComponent(precedentId)}/attach-pdf`, {
+      const res = await fetch(apiUrl(`/api/precedents/${encodeURIComponent(precedentId)}/attach-pdf`), {
         method: 'POST',
         headers,
         body: fd,
@@ -379,7 +380,7 @@ export default function BibliotecaPrecedentes() {
     if (!q) return;
     setSearchLoading(true);
     try {
-      const res = await fetch('/api/precedents/search', {
+      const res = await fetch(apiUrl('/api/precedents/search'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ courtId, queryText: q }),
@@ -418,7 +419,7 @@ export default function BibliotecaPrecedentes() {
     }
     setJSaving(true);
     try {
-      const res = await fetch('/api/precedents/index', {
+      const res = await fetch(apiUrl('/api/precedents/index'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

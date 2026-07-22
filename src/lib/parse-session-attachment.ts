@@ -1,4 +1,5 @@
 import { apiAuthHeaders } from './supabase-write-auth';
+import { apiUrl } from './api-base';
 
 export type ParseSessionAttachmentMeta = {
   sessionIndex: number;
@@ -17,7 +18,7 @@ export async function fetchParseSessionAttachment(
 ): Promise<Uint8Array> {
   const headers = await apiAuthHeaders({ json: false });
   const res = await fetch(
-    `/api/parse-session/${encodeURIComponent(parseSessionId)}/attachment/${sessionIndex}`,
+    apiUrl(`/api/parse-session/${encodeURIComponent(parseSessionId)}/attachment/${sessionIndex}`),
     { headers },
   );
   if (!res.ok) {
@@ -38,7 +39,7 @@ export async function listParseSessionAttachments(
   parseSessionId: string,
 ): Promise<ParseSessionAttachmentMeta[]> {
   const headers = await apiAuthHeaders({ json: true });
-  const res = await fetch(`/api/parse-session/${encodeURIComponent(parseSessionId)}`, {
+  const res = await fetch(apiUrl(`/api/parse-session/${encodeURIComponent(parseSessionId)}`), {
     headers,
   });
   if (!res.ok) {
@@ -97,8 +98,8 @@ export async function uploadParseSessionAttachment(opts: {
   if (opts.isFromLink) form.append('isFromLink', 'true');
 
   const url = opts.parseSessionId
-    ? `/api/parse-session/${encodeURIComponent(opts.parseSessionId)}/upload`
-    : '/api/parse-session';
+    ? apiUrl(`/api/parse-session/${encodeURIComponent(opts.parseSessionId)}/upload`)
+    : apiUrl('/api/parse-session');
   const res = await fetch(url, { method: 'POST', headers, body: form });
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;

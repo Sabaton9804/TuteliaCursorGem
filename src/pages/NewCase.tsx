@@ -8,6 +8,7 @@ import {
   Search,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { apiUrl } from '../lib/api-base';
 import { apiAuthHeaders, ensureSupabaseSessionForWrites } from '../lib/supabase-write-auth';
 import { getSupabaseAuthErrorMessage } from '../lib/supabase-auth-errors';
 import { handleDataPermissionError } from '../lib/error-handler';
@@ -964,7 +965,7 @@ export default function NewCase() {
     setArchiveLinkError(null);
     try {
       const auth = await apiAuthHeaders({ json: true });
-      const res = await fetch(`/api/parse-session/${encodeURIComponent(sid)}/fetch-archive`, {
+      const res = await fetch(apiUrl(`/api/parse-session/${encodeURIComponent(sid)}/fetch-archive`), {
         method: 'POST',
         headers: auth,
         body: JSON.stringify(linkUrl ? { url: linkUrl } : {}),
@@ -1004,7 +1005,7 @@ export default function NewCase() {
 
     try {
       const auth = await apiAuthHeaders({ json: false });
-      const response = await fetch('/api/parse-email', {
+      const response = await fetch(apiUrl('/api/parse-email'), {
         method: 'POST',
         headers: auth,
         body: formData,
@@ -1023,7 +1024,7 @@ export default function NewCase() {
         }
         if (response.status === 405) {
           throw new Error(
-            'El servidor no acepta POST /api/parse-email (405). En producción debe correr Express (npm start), no solo el frontend estático. Abra /api/health en la misma URL: si no responde JSON, republique la app en AI Studio (Publish) o redeploy Cloud Run.',
+            'El servidor no acepta POST /api/parse-email (405). Cloudflare Pages solo sirve el frontend estático: despliegue el backend Express en otro servicio (Railway, Render, Fly, Cloud Run), configure VITE_API_URL en Cloudflare apuntando a esa URL, y CORS_ORIGIN en el backend con su dominio de Pages.',
           );
         }
         throw new Error(base);
@@ -1974,7 +1975,7 @@ export default function NewCase() {
         throw new Error('No hay datos PDF para enviar a la IA.');
       }
 
-      const response = await fetch('/api/ai/legal-analysis', {
+      const response = await fetch(apiUrl('/api/ai/legal-analysis'), {
         method: 'POST',
         headers: await apiAuthHeaders({ json: true }),
         body: JSON.stringify({

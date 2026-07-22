@@ -2,9 +2,7 @@
 <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
-# Tutelia (AI Studio / Cloud Run)
-
-View your app in AI Studio: https://ai.studio/apps/3cf315b2-8431-4265-a67d-5f3d5b417262
+# Tutelia
 
 ## Run Locally
 
@@ -16,54 +14,47 @@ View your app in AI Studio: https://ai.studio/apps/3cf315b2-8431-4265-a67d-5f3d5
 
 No use `npm run preview` para probar radicación: ese comando solo sirve el `dist/` estático y **no** expone `/api/*` (verá 405 en `POST /api/parse-email`).
 
-## Deploy (Cloud Run / AI Studio)
+## Deploy en Cloudflare Pages (recomendado si ya usa Cloudflare)
 
-Tutelia **no** es un sitio estático: radicación, IA, SGDE y Outlook dependen de `server.ts` (Express). El frontend (`dist/`) y las APIs deben servirse **desde el mismo origen**.
+**Cloudflare Pages solo publica el frontend estático** (`dist/`). No ejecuta `server.ts`. Por eso `POST /api/parse-email` devuelve **405**: las variables `OPENAI_API_KEY`, `OUTLOOK_*`, etc. en Pages **no activan** el backend; solo sirven si hubiera código Node en ese host (no es el caso).
 
-### Build y arranque
+Arquitectura correcta: **dos despliegues**.
 
-| Paso | Comando / valor |
-|------|-----------------|
-| Build | `npm run build` |
-| Start | `npm start` → `tsx scripts/start-production.mts` |
-| `NODE_ENV` | `production` (Cloud Run suele inyectarlo) |
-| `PORT` | Lo asigna Cloud Run; local default `3451` |
+### 1. Backend API (Node / Express)
 
-**Importante:** no use `node server.ts` ni `vite preview` en producción. `npm start` construye `dist/` si falta y levanta Express con `tsx`.
+Despliegue en Railway, Render, Fly.io o Cloud Run (el repo incluye `Dockerfile`):
 
-### Republicar en AI Studio
+| Variable | Ejemplo |
+|----------|---------|
+| `OPENAI_API_KEY` | clave OpenAI |
+| `SUPABASE_URL` | URL Supabase |
+| `SUPABASE_SERVICE_ROLE_KEY` | service role (solo servidor) |
+| `OUTLOOK_CLIENT_ID` / `OUTLOOK_CLIENT_SECRET` | OAuth |
+| `SGDE_CREDENTIALS_KEY` | si usa SGDE |
+| `CORS_ORIGIN` | `https://tu-app.pages.dev` (su dominio Cloudflare Pages) |
+| `APP_URL` | misma URL del backend (OAuth Outlook callback) |
 
-Un push a GitHub **no** actualiza el Cloud Run publicado desde AI Studio. Tras cambios en el repo:
+Comando de arranque: `npm start`. Verifique `https://SU-API/api/health` → JSON `{"status":"ok"}`.
 
-1. Abra el proyecto en [AI Studio](https://ai.studio) (Build mode).
-2. Sincronice el código actualizado (o vuelva a importar desde GitHub/ZIP).
-3. Pulse **Publish** de nuevo.
-4. Verifique `https://SU-URL.run.app/api/health`.
+### 2. Frontend en Cloudflare Pages
 
-Alternativa: despliegue desde GitHub con `gcloud run deploy --source .` (usa el `Dockerfile` del repo).
+| Ajuste | Valor |
+|--------|-------|
+| Build command | `npm run build` |
+| Output directory | `dist` |
+| **Variables de build** | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, **`VITE_API_URL=https://SU-API`** (sin barra final) |
 
-### Variables mínimas en el servicio
+Tras cambiar `VITE_API_URL` o Supabase, **vuelva a desplegar** Pages (rebuild).
 
-Configure en AI Studio Secrets / Cloud Run (ver `.env.example`):
+En Pages puede quitar `OPENAI_API_KEY` y secretos de servidor: no los usa el build estático (y deben vivir solo en el API).
 
-- `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
-- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
-- `OPENAI_API_KEY`
-- `APP_URL` — URL pública del servicio (OAuth Outlook, callbacks)
-- Opcional: `SGDE_*`, `OUTLOOK_*`, `GEMINI_API_KEY`
+### Verificación
 
-Las variables `VITE_*` deben existir **en el build** (Vite las embebe). Si cambia Supabase en producción, vuelva a ejecutar `npm run build` antes del deploy.
+1. `https://SU-API/api/health` → JSON ok  
+2. App en Pages → **Procesar correo** → 200, no 405
 
-### Verificación post-deploy
+---
 
-1. Abra `https://SU-URL/api/health` — debe responder JSON `{"status":"ok",...}`.
-2. Si ve HTML de la SPA o 404, el backend no está corriendo (solo frontend estático).
-3. En la app, suba un `.eml` y pulse **Procesar correo** — debe responder 200, no 405.
+## Deploy monolito (Cloud Run / AI Studio / Docker)
 
-### Síntoma 405 en `/api/parse-email`
-
-Significa que el host recibe `POST` pero **no** ejecuta Express. Causas habituales:
-
-- Deploy solo de `dist/` (Firebase Hosting, Netlify estático, `vite preview`)
-- Comando de arranque incorrecto (`node server.ts` falla; use `npm start`)
-- `NODE_ENV` distinto de `production` sin middleware Vite (menos frecuente en Cloud Run)
+Si prefiere **un solo** servicio (frontend + API mismo origen), no use Pages solo: `npm run build` + `npm start` en un host Node. Ver `Dockerfile`.

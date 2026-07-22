@@ -12,6 +12,7 @@ import { isCivilCaseType, partyRoleLabels } from '../../lib/process-product-scop
 import { CASE_STATUS_LABEL } from './case-detail-status-labels';
 import { PrecedentSourceBadge } from './PrecedentSourceBadge';
 import { apiAuthHeaders } from '../../lib/supabase-write-auth';
+import { apiUrl } from '../../lib/api-base';
 
 export type CaseSintesisPanelProps = {
   isSummarizing: boolean;
@@ -176,7 +177,7 @@ export function CaseSintesisPanel({
     setPrecErr(null);
     void (async () => {
       try {
-        const res = await fetch('/api/precedents/search', {
+        const res = await fetch(apiUrl('/api/precedents/search'), {
           method: 'POST',
           headers: await apiAuthHeaders({ json: true }),
           body: JSON.stringify({ courtId, queryText }),

@@ -1123,6 +1123,29 @@ async function startServer() {
   app.use(express.json({ limit: BODY_LIMIT }));
   app.use(express.urlencoded({ extended: true, limit: BODY_LIMIT }));
 
+  const corsOrigins = (process.env.CORS_ORIGIN || process.env.APP_URL || '')
+    .split(',')
+    .map((s) => s.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+  if (corsOrigins.length) {
+    app.use((req, res, next) => {
+      const origin = typeof req.headers.origin === 'string' ? req.headers.origin.replace(/\/+$/, '') : '';
+      if (origin && corsOrigins.includes(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.setHeader(
+          'Access-Control-Allow-Headers',
+          'Authorization, Content-Type, x-tutelia-mailbox-id'
+        );
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+      }
+      if (req.method === 'OPTIONS') {
+        return res.sendStatus(204);
+      }
+      next();
+    });
+  }
+
   // API Routes
   app.get('/api/health', (req, res) => {
     res.json({

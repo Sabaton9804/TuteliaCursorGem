@@ -7,6 +7,7 @@ import {
 } from '../../lib/plantilla-marcadores-catalog';
 import { MarcadoresPreview } from './MarcadoresPreview';
 import { supabase } from '../../lib/supabase';
+import { apiUrl } from '../../lib/api-base';
 import { updateDocumentTemplate } from '../../lib/document-templates';
 
 type Row = { id: string; original: string; marcador: string };
@@ -74,7 +75,7 @@ export function DocxPlantillaImportSection({ template, courtId, disabled, onGuar
       const fd = new FormData();
       fd.append('archivo', archivo);
       fd.append('tipo', template.tipo);
-      const r = await fetch('/api/plantilla-docx/analizar', { method: 'POST', body: fd });
+      const r = await fetch(apiUrl('/api/plantilla-docx/analizar'), { method: 'POST', body: fd });
       const j = (await r.json()) as {
         error?: string;
         textoPlanoMuestra?: string;
@@ -129,7 +130,7 @@ export function DocxPlantillaImportSection({ template, courtId, disabled, onGuar
         'mappings',
         JSON.stringify(filas.map((r) => ({ original: r.original, marcador: r.marcador }))),
       );
-      const r = await fetch('/api/plantilla-docx/aplicar', { method: 'POST', body: fd });
+      const r = await fetch(apiUrl('/api/plantilla-docx/aplicar'), { method: 'POST', body: fd });
       const j = (await r.json()) as { error?: string; processedBase64?: string; previewText?: string };
       if (!r.ok || !j.processedBase64) throw new Error(j.error || 'No se pudo generar el documento procesado');
       const bin = Uint8Array.from(atob(j.processedBase64), (c) => c.charCodeAt(0));

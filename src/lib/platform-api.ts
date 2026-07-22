@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { apiUrl } from './api-base';
 
 export async function platformAuthHeaders(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -12,7 +13,7 @@ export async function platformAuthHeaders(): Promise<Record<string, string>> {
 
 export async function platformFetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = await platformAuthHeaders();
-  const res = await fetch(path, {
+  const res = await fetch(apiUrl(path), {
     ...init,
     headers: { ...headers, ...(init?.headers as Record<string, string> | undefined) },
   });

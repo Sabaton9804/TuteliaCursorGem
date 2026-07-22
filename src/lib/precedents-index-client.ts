@@ -1,4 +1,5 @@
 import type { Case } from '../types';
+import { apiUrl } from './api-base';
 import type { DecisionType } from './sierju-case-codes';
 import { DECISION_TYPE_LABELS } from './sierju-case-codes';
 
@@ -23,7 +24,7 @@ export function schedulePrecedentIndexAfterDecisionType(c: Case, decisionType: D
     decisionDate: new Date().toISOString().slice(0, 10),
     tags,
   };
-  void fetch('/api/precedents/index', {
+  void fetch(apiUrl('/api/precedents/index'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { apiUrl } from './api-base';
 import { ensureSupabaseSessionForWrites } from './supabase-write-auth';
 
 function parseOutlookClientError(status: number, body: { error?: string }): string {
@@ -94,7 +95,7 @@ export type OutlookMailboxesResponse = {
 };
 
 export async function fetchOutlookMailboxes(): Promise<OutlookMailboxesResponse> {
-  const res = await fetch('/api/outlook/mailboxes', { headers: await authHeaders() });
+  const res = await fetch(apiUrl('/api/outlook/mailboxes'), { headers: await authHeaders() });
   const j = (await res.json().catch(() => ({}))) as OutlookMailboxesResponse & { error?: string };
   if (!res.ok) throw new Error(j.error || 'No se pudo listar buzones del despacho.');
   return j;
@@ -106,7 +107,7 @@ export async function fetchOutlookContext(): Promise<{
   graphMode: 'legacy_me' | 'shared_mailbox' | null;
   requireExplicitMailbox: boolean;
 }> {
-  const res = await fetch('/api/outlook/context', { headers: await authHeaders() });
+  const res = await fetch(apiUrl('/api/outlook/context'), { headers: await authHeaders() });
   const j = (await res.json().catch(() => ({}))) as {
     activeMailboxId?: string | null;
     activeMailbox?: OutlookActiveMailbox | null;
@@ -124,7 +125,7 @@ export async function fetchOutlookContext(): Promise<{
 }
 
 export async function setOutlookMailboxContext(mailboxId: string): Promise<void> {
-  const res = await fetch('/api/outlook/context', {
+  const res = await fetch(apiUrl('/api/outlook/context'), {
     method: 'PUT',
     headers: { ...(await authHeaders()), 'Content-Type': 'application/json' },
     body: JSON.stringify({ mailboxId }),
@@ -165,13 +166,13 @@ export type OutlookMessageSummary = {
 };
 
 export async function fetchOutlookStatus(): Promise<OutlookStatus> {
-  const res = await fetch('/api/outlook/status', { headers: await authHeaders() });
+  const res = await fetch(apiUrl('/api/outlook/status'), { headers: await authHeaders() });
   if (!res.ok) throw new Error('No se pudo consultar Outlook.');
   return (await res.json()) as OutlookStatus;
 }
 
 export async function fetchOutlookAuthUrl(): Promise<string> {
-  const res = await fetch('/api/outlook/auth-url', { headers: await authHeaders() });
+  const res = await fetch(apiUrl('/api/outlook/auth-url'), { headers: await authHeaders() });
   const j = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
   if (!res.ok) throw new Error(parseOutlookClientError(res.status, j));
   if (!j.url) throw new Error('Respuesta inválida del servidor.');
@@ -179,7 +180,7 @@ export async function fetchOutlookAuthUrl(): Promise<string> {
 }
 
 export async function disconnectOutlook(): Promise<void> {
-  const res = await fetch('/api/outlook/disconnect', { method: 'DELETE', headers: await authHeaders() });
+  const res = await fetch(apiUrl('/api/outlook/disconnect'), { method: 'DELETE', headers: await authHeaders() });
   if (!res.ok) {
     const j = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(j.error || 'No se pudo desconectar.');
@@ -187,7 +188,7 @@ export async function disconnectOutlook(): Promise<void> {
 }
 
 export async function fetchOutlookFolders(): Promise<OutlookFolderSummary[]> {
-  const res = await fetch('/api/outlook/folders', { headers: await authHeaders() });
+  const res = await fetch(apiUrl('/api/outlook/folders'), { headers: await authHeaders() });
   const j = (await res.json().catch(() => ({}))) as { folders?: OutlookFolderSummary[]; error?: string };
   if (!res.ok) throw new Error(j.error || 'Error al consultar carpetas.');
   return j.folders ?? [];
@@ -198,7 +199,7 @@ export async function fetchMessagesReviewStatus(
 ): Promise<Record<string, OutlookMessageReviewListStatus>> {
   const ids = [...new Set(messageIds.map((id) => id.trim()).filter(Boolean))];
   if (!ids.length) return {};
-  const res = await fetch('/api/outlook/messages/review-status', {
+  const res = await fetch(apiUrl('/api/outlook/messages/review-status'), {
     method: 'POST',
     headers: { ...(await authHeaders()), 'Content-Type': 'application/json' },
     body: JSON.stringify({ messageIds: ids }),
@@ -227,14 +228,14 @@ export async function fetchOutlookMessages(opts?: {
   if (opts?.search?.trim()) params.set('search', opts.search.trim());
   if (opts?.folder) params.set('folder', opts.folder);
   const qs = params.toString();
-  const res = await fetch(`/api/outlook/messages${qs ? `?${qs}` : ''}`, { headers: await authHeaders() });
+  const res = await fetch(apiUrl(`/api/outlook/messages${qs ? `?${qs}` : ''}`), { headers: await authHeaders() });
   const j = (await res.json().catch(() => ({}))) as { messages?: OutlookMessageSummary[]; error?: string };
   if (!res.ok) throw new Error(j.error || 'Error al cargar la bandeja.');
   return j.messages ?? [];
 }
 
 export async function fetchOutlookMessageAttachments(messageId: string): Promise<OutlookAttachmentMeta[]> {
-  const res = await fetch(`/api/outlook/messages/${encodeURIComponent(messageId)}/attachments`, {
+  const res = await fetch(apiUrl(`/api/outlook/messages/${encodeURIComponent(messageId)}/attachments`), {
     headers: await authHeaders(),
   });
   const j = (await res.json().catch(() => ({}))) as { attachments?: OutlookAttachmentMeta[]; error?: string };
@@ -254,7 +255,7 @@ function outlookAttachmentDownloadUrl(
     disposition,
   });
   if (att.sourceMessageId) params.set('sourceMessageId', att.sourceMessageId);
-  return `/api/outlook/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(att.id)}?${params}`;
+  return apiUrl(`/api/outlook/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(att.id)}?${params}`);
 }
 
 /** Descarga o vista previa de un adjunto (requiere sesión Tutelia en cabecera). */
@@ -306,7 +307,7 @@ export async function downloadOutlookAttachment(
 }
 
 export async function fetchOutlookMessage(messageId: string): Promise<Record<string, unknown>> {
-  const res = await fetch(`/api/outlook/messages/${encodeURIComponent(messageId)}`, {
+  const res = await fetch(apiUrl(`/api/outlook/messages/${encodeURIComponent(messageId)}`), {
     headers: await authHeaders(),
   });
   const j = (await res.json().catch(() => ({}))) as { message?: Record<string, unknown>; error?: string };
@@ -315,7 +316,7 @@ export async function fetchOutlookMessage(messageId: string): Promise<Record<str
 }
 
 export async function parseOutlookMessageForRadicacion(messageId: string): Promise<Record<string, unknown>> {
-  const res = await fetch(`/api/outlook/messages/${encodeURIComponent(messageId)}/parse`, {
+  const res = await fetch(apiUrl(`/api/outlook/messages/${encodeURIComponent(messageId)}/parse`), {
     method: 'POST',
     headers: await authHeaders(),
   });
@@ -385,7 +386,7 @@ export type OutlookMessageReview = {
 export async function fetchOutlookReviews(
   status: OutlookReviewStatus = 'pending'
 ): Promise<OutlookMessageReview[]> {
-  const res = await fetch(`/api/outlook/reviews?status=${encodeURIComponent(status)}`, {
+  const res = await fetch(apiUrl(`/api/outlook/reviews?status=${encodeURIComponent(status)}`), {
     headers: await authHeaders(),
   });
   const j = (await res.json().catch(() => ({}))) as { reviews?: OutlookMessageReview[]; error?: string };
@@ -394,7 +395,7 @@ export async function fetchOutlookReviews(
 }
 
 export async function fetchOutlookReview(reviewId: string): Promise<OutlookMessageReview> {
-  const res = await fetch(`/api/outlook/reviews/${encodeURIComponent(reviewId)}`, {
+  const res = await fetch(apiUrl(`/api/outlook/reviews/${encodeURIComponent(reviewId)}`), {
     headers: await authHeaders(),
   });
   const j = (await res.json().catch(() => ({}))) as { review?: OutlookMessageReview; error?: string };
@@ -407,7 +408,7 @@ export async function approveOutlookReview(
   reviewId: string,
   caseId: string
 ): Promise<{ caseId: string; ingest: { documentsCreated: number } }> {
-  const res = await fetch(`/api/outlook/reviews/${encodeURIComponent(reviewId)}/approve`, {
+  const res = await fetch(apiUrl(`/api/outlook/reviews/${encodeURIComponent(reviewId)}/approve`), {
     method: 'POST',
     headers: { ...(await authHeaders()), 'Content-Type': 'application/json' },
     body: JSON.stringify({ caseId }),
@@ -441,7 +442,7 @@ export async function scanOutlookInbox(opts?: {
   top?: number;
   folder?: OutlookFolderKey;
 }): Promise<InboxScanSummary> {
-  const res = await fetch('/api/outlook/inbox/scan', {
+  const res = await fetch(apiUrl('/api/outlook/inbox/scan'), {
     method: 'POST',
     headers: { ...(await authHeaders()), 'Content-Type': 'application/json' },
     body: JSON.stringify({ top: opts?.top ?? 20, folder: opts?.folder ?? 'inbox' }),
@@ -452,7 +453,7 @@ export async function scanOutlookInbox(opts?: {
 }
 
 export async function rejectOutlookReview(reviewId: string, reason?: string): Promise<void> {
-  const res = await fetch(`/api/outlook/reviews/${encodeURIComponent(reviewId)}/reject`, {
+  const res = await fetch(apiUrl(`/api/outlook/reviews/${encodeURIComponent(reviewId)}/reject`), {
     method: 'POST',
     headers: { ...(await authHeaders()), 'Content-Type': 'application/json' },
     body: JSON.stringify(reason ? { reason } : {}),
@@ -465,7 +466,7 @@ export async function classifyOutlookMessage(
   messageId: string,
   opts?: { parseSessionId?: string }
 ): Promise<OutlookEmailClasificacion> {
-  const res = await fetch(`/api/outlook/messages/${encodeURIComponent(messageId)}/classify`, {
+  const res = await fetch(apiUrl(`/api/outlook/messages/${encodeURIComponent(messageId)}/classify`), {
     method: 'POST',
     headers: { ...(await authHeaders()), 'Content-Type': 'application/json' },
     body: JSON.stringify(opts?.parseSessionId ? { parseSessionId: opts.parseSessionId } : {}),
@@ -486,7 +487,7 @@ export async function sendOutlookMail(payload: {
     contentBytesBase64: string;
   }>;
 }): Promise<void> {
-  const res = await fetch('/api/outlook/send', {
+  const res = await fetch(apiUrl('/api/outlook/send'), {
     method: 'POST',
     headers: { ...(await authHeaders()), 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),

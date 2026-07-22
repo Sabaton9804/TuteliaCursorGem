@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { apiUrl } from './api-base';
 import { ensureSupabaseSessionForWrites } from './supabase-write-auth';
 import type { TextReviewResult } from './ai-despacho-assist';
 
@@ -15,7 +16,7 @@ export async function aiReviewJudicialText(opts: {
   text: string;
   documentLabel?: string;
 }): Promise<TextReviewResult> {
-  const res = await fetch('/api/ai/review-text', {
+  const res = await fetch(apiUrl('/api/ai/review-text'), {
     method: 'POST',
     headers: await authHeaders(),
     body: JSON.stringify({
@@ -52,7 +53,7 @@ export async function searchPrecedentsForCase(opts: {
   courtId: string;
   queryText: string;
 }): Promise<PrecedentSearchHit[]> {
-  const res = await fetch('/api/precedents/search', {
+  const res = await fetch(apiUrl('/api/precedents/search'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

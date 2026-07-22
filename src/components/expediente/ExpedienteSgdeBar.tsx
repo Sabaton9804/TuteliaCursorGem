@@ -10,6 +10,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { apiUrl } from '../../lib/api-base';
 import { ensureSupabaseSessionForWrites } from '../../lib/supabase-write-auth';
 import type { Case } from '../../types';
 import { sgdeCreateExpediente, sgdeProbeSegundaWrite, sgdeSyncDocuments, sgdeRepairStorage, type SgdeSyncDocumentsResult } from '../../lib/sgde-api';
@@ -170,7 +171,7 @@ export function ExpedienteSgdeBar({
     setErr(null);
     setLoading(true);
     try {
-      const res = await fetch('/api/sgde/case-tree', {
+      const res = await fetch(apiUrl('/api/sgde/case-tree'), {
         method: 'POST',
         headers: await authHeaders(),
         body: JSON.stringify({ caseId }),
@@ -211,7 +212,7 @@ export function ExpedienteSgdeBar({
     setLinking(true);
     setErr(null);
     try {
-      const res = await fetch('/api/sgde/link', {
+      const res = await fetch(apiUrl('/api/sgde/link'), {
         method: 'POST',
         headers: await authHeaders(),
         body: JSON.stringify({ caseId }),

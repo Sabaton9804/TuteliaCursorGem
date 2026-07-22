@@ -1,3 +1,5 @@
+import { apiUrl } from '../lib/api-base';
+
 function mapGeminiError(error: any): Error {
   const status = error?.status || error?.response?.status;
   const rawMessage = String(error?.message || "");
@@ -27,7 +29,7 @@ export async function summarizeCase(
   extra?: Record<string, unknown>,
 ) {
   try {
-    const response = await fetch('/api/ai/summarize', {
+    const response = await fetch(apiUrl('/api/ai/summarize'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

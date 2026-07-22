@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { apiUrl } from './api-base';
 import { resolveOriginRadicadoFromRepartoEmail } from './reparto-origin-cui';
 import { extractSegundaFieldsFromText } from './segunda-instancia-extract';
 import { ensureSupabaseSessionForWrites } from './supabase-write-auth';
@@ -138,7 +139,7 @@ async function authHeaders(): Promise<HeadersInit> {
 }
 
 export async function fetchSgdeUserStatus(): Promise<SgdeUserStatus> {
-  const res = await fetch('/api/sgde/status', { headers: await authHeaders() });
+  const res = await fetch(apiUrl('/api/sgde/status'), { headers: await authHeaders() });
   const body = (await res.json().catch(() => ({}))) as SgdeUserStatus & { error?: string };
   if (!res.ok) {
     throw new Error(body.error || `Error al consultar SGDE (${res.status})`);
@@ -147,7 +148,7 @@ export async function fetchSgdeUserStatus(): Promise<SgdeUserStatus> {
 }
 
 export async function saveSgdeCredentials(username: string, password: string): Promise<void> {
-  const res = await fetch('/api/sgde/credentials', {
+  const res = await fetch(apiUrl('/api/sgde/credentials'), {
     method: 'PUT',
     headers: await authHeaders(),
     body: JSON.stringify({ username, password }),
@@ -157,7 +158,7 @@ export async function saveSgdeCredentials(username: string, password: string): P
 }
 
 export async function deleteSgdeCredentials(): Promise<void> {
-  const res = await fetch('/api/sgde/credentials', {
+  const res = await fetch(apiUrl('/api/sgde/credentials'), {
     method: 'DELETE',
     headers: await authHeaders(),
   });
@@ -219,7 +220,7 @@ export async function sgdeSyncDocuments(opts: {
   caseId: string;
   uploadMissing?: boolean;
 }): Promise<SgdeSyncDocumentsResult> {
-  const res = await fetch('/api/sgde/sync-documents', {
+  const res = await fetch(apiUrl('/api/sgde/sync-documents'), {
     method: 'POST',
     headers: await authHeaders(),
     body: JSON.stringify({
@@ -245,7 +246,7 @@ export async function sgdeRepairStorage(opts: {
   caseId: string;
   importSgdeOnly?: boolean;
 }): Promise<SgdeRepairStorageResult> {
-  const res = await fetch('/api/sgde/repair-storage', {
+  const res = await fetch(apiUrl('/api/sgde/repair-storage'), {
     method: 'POST',
     headers: await authHeaders(),
     body: JSON.stringify({
@@ -278,7 +279,7 @@ export async function repairCorreoReparto(opts: {
   caseId: string;
   documentId?: string;
 }): Promise<RepairCorreoRepartoResult> {
-  const res = await fetch('/api/cases/repair-correo-reparto', {
+  const res = await fetch(apiUrl('/api/cases/repair-correo-reparto'), {
     method: 'POST',
     headers: await authHeaders(),
     body: JSON.stringify({
@@ -311,7 +312,7 @@ export async function sgdeDocumentViewUrl(opts: {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch('/api/sgde/document-view-url', {
+    const res = await fetch(apiUrl('/api/sgde/document-view-url'), {
       method: 'POST',
       headers: await authHeaders(),
       body: JSON.stringify({
@@ -355,7 +356,7 @@ export async function sgdeCreateExpediente(opts: {
   caseId: string;
   uploadDocuments?: boolean;
 }): Promise<CreateSgdeExpedienteResult> {
-  const res = await fetch('/api/sgde/create-expediente', {
+  const res = await fetch(apiUrl('/api/sgde/create-expediente'), {
     method: 'POST',
     headers: await authHeaders(),
     body: JSON.stringify({
@@ -382,7 +383,7 @@ export async function sgdePreflightOrigin(
   sgdeNodeIdHint?: string | null,
   emailDigest?: string | null
 ): Promise<SgdePreflightResult> {
-  const res = await fetch('/api/sgde/preflight-origin', {
+  const res = await fetch(apiUrl('/api/sgde/preflight-origin'), {
     method: 'POST',
     headers: await authHeaders(),
     body: JSON.stringify({
@@ -427,7 +428,7 @@ export async function sgdePreviewNodeBytes(nodeId: string): Promise<{
   size: number;
 }> {
   const headers = await authHeaders();
-  const res = await fetch('/api/sgde/preview-node', {
+  const res = await fetch(apiUrl('/api/sgde/preview-node'), {
     method: 'POST',
     headers: { ...headers, Accept: 'application/pdf' },
     body: JSON.stringify({ nodeId }),
@@ -455,7 +456,7 @@ export async function sgdePublishSegundaImpugnacion(opts: {
   originRadicado: string;
   sgdeRootId?: string | null;
 }): Promise<PublishSegundaImpugnacionResult> {
-  const res = await fetch('/api/sgde/publish-segunda-impugnacion', {
+  const res = await fetch(apiUrl('/api/sgde/publish-segunda-impugnacion'), {
     method: 'POST',
     headers: await authHeaders(),
     body: JSON.stringify({
@@ -481,7 +482,7 @@ export async function sgdePublishSegundaImpugnacion(opts: {
 export async function sgdeProbeSegundaWrite(opts: {
   caseId: string;
 }): Promise<SgdeSegundaWriteProbeResult> {
-  const res = await fetch('/api/sgde/probe-segunda-write', {
+  const res = await fetch(apiUrl('/api/sgde/probe-segunda-write'), {
     method: 'POST',
     headers: await authHeaders(),
     body: JSON.stringify({ caseId: opts.caseId }),
@@ -509,7 +510,7 @@ export async function sgdeImportExpediente(opts: {
   originRuling?: CaseOriginRuling | null;
   forceMigrate?: boolean;
 }): Promise<ImportFromSgdeResult> {
-  const res = await fetch('/api/sgde/import-expediente', {
+  const res = await fetch(apiUrl('/api/sgde/import-expediente'), {
     method: 'POST',
     headers: await authHeaders(),
     body: JSON.stringify({
@@ -544,7 +545,7 @@ export async function sgdeMigrateOriginToCase(opts: {
   notebookCode?: string;
   force?: boolean;
 }): Promise<MigrateSgdeOriginResult> {
-  const res = await fetch('/api/sgde/migrate-origin-to-case', {
+  const res = await fetch(apiUrl('/api/sgde/migrate-origin-to-case'), {
     method: 'POST',
     headers: await authHeaders(),
     body: JSON.stringify({
@@ -576,7 +577,7 @@ export async function refreshSegundaPartiesFromFallo(opts: {
   caseId: string;
   force?: boolean;
 }): Promise<RefreshSegundaPartiesResult> {
-  const res = await fetch('/api/cases/refresh-segunda-parties-from-fallo', {
+  const res = await fetch(apiUrl('/api/cases/refresh-segunda-parties-from-fallo'), {
     method: 'POST',
     headers: await authHeaders(),
     body: JSON.stringify({ caseId: opts.caseId, force: opts.force === true }),
@@ -687,7 +688,7 @@ export async function sgdeSignDocument(opts: {
   password?: string;
   refreshLocal?: boolean;
 }): Promise<SgdeSignDocumentResult> {
-  const res = await fetch('/api/sgde/sign-document', {
+  const res = await fetch(apiUrl('/api/sgde/sign-document'), {
     method: 'POST',
     headers: await authHeaders(),
     body: JSON.stringify({
