@@ -52,6 +52,56 @@ export function pickFalloPrimeraDocument(docs: FalloPartyDocument[]): FalloParty
   return [...candidates].sort((a, b) => falloPrimeraScore(b) - falloPrimeraScore(a))[0] ?? null;
 }
 
+export type FalloPickerOption = FalloPartyDocument & {
+  label: string;
+  suggested: boolean;
+  score: number;
+};
+
+function isPiExpedienteDocument(doc: FalloPartyDocument): boolean {
+  const nb = (doc.notebookCode || '').toUpperCase();
+  if (nb.startsWith('PI_') || nb === 'SI_C01_PRINCIPAL') return true;
+  const path = (doc.sgdeFolderPath || '').toLowerCase();
+  return /primera\s*instancia|01\s*cdo\s*principal|principal/.test(path) && !/impugnaci/.test(path);
+}
+
+function isExcludedFromFalloPicker(doc: FalloPartyDocument): boolean {
+  const nb = (doc.notebookCode || '').toUpperCase();
+  if (nb === 'SI_IMPUGNACION') return true;
+  if (doc.type === 'email_body') return true;
+  const compact = docLabel(doc).replace(/\s+/g, '');
+  if (/correoreparto|actareparto|actadereparto/.test(compact)) return true;
+  if (/^correo|^acta/.test(compact) && !/fallo|sentencia/.test(compact)) return true;
+  return false;
+}
+
+/** PDFs del expediente PI (o todo el digital) para elegir manualmente el fallo fuente. */
+export function listFalloPrimeraPickerOptions(
+  docs: Array<FalloPartyDocument & { storagePath?: string | null }>,
+): FalloPickerOption[] {
+  const withStorage = docs.filter(
+    (d) => typeof d.storagePath === 'string' && d.storagePath.trim().length > 0 && d.type !== 'email_body',
+  );
+  const piPool = withStorage.filter((d) => isPiExpedienteDocument(d) && !isExcludedFromFalloPicker(d));
+  const pool = piPool.length > 0 ? piPool : withStorage.filter((d) => !isExcludedFromFalloPicker(d));
+
+  return pool
+    .map((d) => {
+      const suggested = isFalloPrimeraCandidate(d);
+      const score = suggested ? falloPrimeraScore(d) : isPiExpedienteDocument(d) ? 15 : 5;
+      const label = (d.originalName || d.name || 'Documento').trim();
+      return { ...d, label, suggested, score };
+    })
+    .sort((a, b) => b.score - a.score || a.label.localeCompare(b.label, 'es'));
+}
+
+export function defaultFalloPickerDocumentId(options: FalloPickerOption[]): string | null {
+  const auto = pickFalloPrimeraDocument(options);
+  if (auto?.id) return auto.id;
+  const suggested = options.find((o) => o.suggested);
+  return suggested?.id ?? options[0]?.id ?? null;
+}
+
 /** Detecta partes tomadas del correo de remisión en lugar del fallo PI. */
 export function looksLikeSegundaMisassignedParties(
   claimant: string | null | undefined,

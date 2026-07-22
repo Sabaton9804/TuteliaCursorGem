@@ -14,6 +14,43 @@ import {
 
 const CASE_DOCUMENTS_BUCKET = 'case-documents';
 const FALLO_TEXT_MAX_CHARS = 12_000;
+const FALLO_TEXT_EXTRACT_PAGES = 25;
+
+async function prepareFalloForLegalAnalysis(pdfBuffer: Buffer): Promise<{
+  pdfBase64?: string;
+  pdfText?: string;
+  pdfWasTruncated: boolean;
+  truncatedToPages?: number;
+  totalPages?: number;
+}> {
+  const rawBase64 = pdfBuffer.toString('base64');
+  try {
+    const sliced = await slicePdfBase64FirstPages(rawBase64, LEGAL_ANALYSIS_MAX_PAGES);
+    if (sliced.base64) {
+      return {
+        pdfBase64: sliced.base64,
+        pdfWasTruncated: sliced.truncated,
+        truncatedToPages: sliced.truncated ? sliced.usedPages : undefined,
+        totalPages: sliced.totalPages || undefined,
+      };
+    }
+  } catch (e) {
+    console.warn('[segunda-fallo-parties] pdf-lib no pudo recortar fallo; fallback a texto:', e);
+  }
+
+  const text = (await extractPlainTextFromPdfBuffer(pdfBuffer, FALLO_TEXT_EXTRACT_PAGES)).slice(
+    0,
+    FALLO_TEXT_MAX_CHARS,
+  );
+  if (text.trim().length >= 200) {
+    return { pdfText: text.trim(), pdfWasTruncated: false };
+  }
+
+  return {
+    pdfBase64: rawBase64,
+    pdfWasTruncated: false,
+  };
+}
 
 type CaseDocumentRow = FalloPartyDocument & {
   storage_path?: string | null;
@@ -88,6 +125,8 @@ export async function refreshSegundaPartiesFromFallo(opts: {
   openai: OpenAI;
   caseId: string;
   force?: boolean;
+  /** Si la detección automática falla, el usuario elige el PDF del fallo PI. */
+  falloDocumentId?: string;
 }): Promise<RefreshSegundaPartiesResult> {
   const { admin, openai, caseId } = opts;
 
@@ -130,27 +169,41 @@ export async function refreshSegundaPartiesFromFallo(opts: {
     .eq('case_id', caseId);
   if (docErr) throw new Error(docErr.message);
 
-  const falloDoc = pickFalloPrimeraDocument(
-    (docRows || []).map((row) => ({
-      id: String(row.id),
-      name: String(row.name || ''),
-      originalName: row.original_name ? String(row.original_name) : undefined,
-      actCode: row.act_code ? String(row.act_code) : undefined,
-      type: String(row.type || ''),
-      notebookCode: row.notebook_code ? String(row.notebook_code) : undefined,
-      sgdeFolderPath: row.sgde_folder_path ? String(row.sgde_folder_path) : undefined,
-      sortOrder: typeof row.sort_order === 'number' ? row.sort_order : undefined,
-    })),
-  );
-  if (!falloDoc?.id) {
-    return {
-      ok: true,
-      updated: false,
-      message: 'Aún no hay fallo de primera instancia en el expediente digital.',
-    };
+  const mappedDocs = (docRows || []).map((row) => ({
+    id: String(row.id),
+    name: String(row.name || ''),
+    originalName: row.original_name ? String(row.original_name) : undefined,
+    actCode: row.act_code ? String(row.act_code) : undefined,
+    type: String(row.type || ''),
+    notebookCode: row.notebook_code ? String(row.notebook_code) : undefined,
+    sgdeFolderPath: row.sgde_folder_path ? String(row.sgde_folder_path) : undefined,
+    sortOrder: typeof row.sort_order === 'number' ? row.sort_order : undefined,
+  }));
+
+  const manualId = String(opts.falloDocumentId || '').trim();
+  let falloDoc: (typeof mappedDocs)[number] | null = null;
+  if (manualId) {
+    falloDoc = mappedDocs.find((d) => d.id === manualId) ?? null;
+    if (!falloDoc) {
+      return {
+        ok: false,
+        updated: false,
+        message: 'El documento seleccionado no existe en este expediente.',
+      };
+    }
+  } else {
+    falloDoc = pickFalloPrimeraDocument(mappedDocs);
+    if (!falloDoc?.id) {
+      return {
+        ok: true,
+        updated: false,
+        message:
+          'No se detectó el fallo automáticamente. Seleccione el PDF del fallo de primera instancia en Síntesis cognitiva.',
+      };
+    }
   }
 
-  const storagePath = (docRows || []).find((r) => String(r.id) === falloDoc.id)?.storage_path;
+  const storagePath = (docRows || []).find((r) => String(r.id) === falloDoc!.id)?.storage_path;
   if (!storagePath) {
     return {
       ok: false,
@@ -162,18 +215,16 @@ export async function refreshSegundaPartiesFromFallo(opts: {
   }
 
   const pdfBuffer = await downloadCaseDocumentBytes(admin, String(storagePath));
-  const sliced = await slicePdfBase64FirstPages(
-    pdfBuffer.toString('base64'),
-    LEGAL_ANALYSIS_MAX_PAGES,
-  );
+  const prepared = await prepareFalloForLegalAnalysis(pdfBuffer);
 
   const { analysis } = await runLegalAnalysisWithOpenAi(openai, {
     caseType: 'impugnacion',
     documentKind: 'fallo_primera',
-    pdfBase64: sliced.base64 || undefined,
-    pdfWasTruncated: sliced.truncated,
-    truncatedToPages: sliced.truncated ? sliced.usedPages : undefined,
-    totalPages: sliced.totalPages || undefined,
+    pdfBase64: prepared.pdfBase64,
+    pdfText: prepared.pdfText,
+    pdfWasTruncated: prepared.pdfWasTruncated,
+    truncatedToPages: prepared.truncatedToPages,
+    totalPages: prepared.totalPages,
   });
 
   const patch = analysisToCasePatch(analysis);

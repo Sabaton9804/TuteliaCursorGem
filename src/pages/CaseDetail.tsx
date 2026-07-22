@@ -28,12 +28,14 @@ import { format, isValid, parseISO } from 'date-fns';
 import { summarizeCase } from '../services/geminiService';
 import { formatRadicado } from '../lib/formatters';
 import { schedulePrecedentIndexAfterDecisionType } from '../lib/precedents-index-client';
-import { refreshSegundaPartiesFromFallo } from '../lib/sgde-api';
 import {
+  defaultFalloPickerDocumentId,
+  listFalloPrimeraPickerOptions,
   looksLikeSegundaMisassignedParties,
   needsSegundaPartiesRefreshFromFallo,
   pickFalloPrimeraDocument,
 } from '../lib/segunda-fallo-parties';
+import { refreshSegundaPartiesFromFallo } from '../lib/sgde-api';
 import { CaseSintesisPanel } from '../components/expediente/CaseSintesisPanel';
 import { CaseActuacionesPanel } from '../components/expediente/CaseActuacionesPanel';
 import { CaseDespachoPanel } from '../components/expediente/CaseDespachoPanel';
@@ -112,6 +114,20 @@ export default function CaseDetail() {
   const [docs, setDocs] = useState<CaseDoc[]>([]);
   const [selectedDoc, setSelectedDoc] = useState<CaseDoc | null>(null);
   const [isSummarizing, setIsSummarizing] = useState(false);
+  const [segundaFalloExtracting, setSegundaFalloExtracting] = useState(false);
+  const [segundaFalloExtractMsg, setSegundaFalloExtractMsg] = useState<string | null>(null);
+  const [selectedSegundaFalloDocId, setSelectedSegundaFalloDocId] = useState('');
+
+  const segundaFalloPickerOptions = useMemo(
+    () => listFalloPrimeraPickerOptions(docs),
+    [docs],
+  );
+
+  useEffect(() => {
+    if (caseItem?.caseType !== 'tutela_segunda') return;
+    const next = defaultFalloPickerDocumentId(segundaFalloPickerOptions);
+    if (next) setSelectedSegundaFalloDocId(next);
+  }, [caseItem?.caseType, caseItem?.id, segundaFalloPickerOptions]);
   const [loading, setLoading] = useState(true);
   /** Evita mostrar «sincronizando» cuando en realidad no hay filas en `case_documents`. */
   const [docsLoaded, setDocsLoaded] = useState(false);
@@ -236,23 +252,64 @@ export default function CaseDetail() {
 
   const segundaPartiesRefreshAttempted = useRef<string | null>(null);
 
+  const handleRefreshSegundaFromFallo = useCallback(
+    async (opts?: { force?: boolean; falloDocumentId?: string }) => {
+      if (!id || !caseItem || caseItem.caseType !== 'tutela_segunda') return;
+      const docId = opts?.falloDocumentId || selectedSegundaFalloDocId;
+      if (!docId) {
+        setSegundaFalloExtractMsg('Seleccione el PDF del fallo de primera instancia.');
+        return;
+      }
+      setSegundaFalloExtracting(true);
+      setSegundaFalloExtractMsg(null);
+      try {
+        await ensureSupabaseSessionForWrites();
+        const res = await refreshSegundaPartiesFromFallo({
+          caseId: id,
+          force: opts?.force === true,
+          falloDocumentId: docId,
+        });
+        if (res.updated) {
+          await refetchCase();
+          setSegundaFalloExtractMsg(res.message || 'Partes extraídas del fallo de primera instancia.');
+        } else {
+          setSegundaFalloExtractMsg(res.message || 'No se actualizaron las partes.');
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'No se pudo leer el fallo de primera instancia.';
+        setSegundaFalloExtractMsg(msg);
+        segundaPartiesRefreshAttempted.current = null;
+        throw e;
+      } finally {
+        setSegundaFalloExtracting(false);
+      }
+    },
+    [id, caseItem, refetchCase, selectedSegundaFalloDocId],
+  );
+
   useEffect(() => {
     if (!id || !caseItem || caseItem.caseType !== 'tutela_segunda' || !docsLoaded) return;
     if (!needsSegundaPartiesRefreshFromFallo(caseItem, docs)) return;
-    if (!pickFalloPrimeraDocument(docs)) return;
+    if (!selectedSegundaFalloDocId && segundaFalloPickerOptions.length === 0) return;
     if (segundaPartiesRefreshAttempted.current === id) return;
     segundaPartiesRefreshAttempted.current = id;
 
     void (async () => {
       try {
-        await ensureSupabaseSessionForWrites();
-        const res = await refreshSegundaPartiesFromFallo({ caseId: id });
-        if (res.updated) await refetchCase();
+        await handleRefreshSegundaFromFallo({ force: false });
       } catch (e) {
         console.warn('No se pudieron refrescar partes desde fallo PI:', e);
       }
     })();
-  }, [id, caseItem, docs, docsLoaded, refetchCase]);
+  }, [
+    id,
+    caseItem,
+    docs,
+    docsLoaded,
+    handleRefreshSegundaFromFallo,
+    selectedSegundaFalloDocId,
+    segundaFalloPickerOptions.length,
+  ]);
 
   const refetchActions = useCallback(async () => {
     if (!id) return;
@@ -578,31 +635,36 @@ export default function CaseDetail() {
     setIsSummarizing(true);
     try {
       await ensureSupabaseSessionForWrites();
-      const contextBlock = buildSynthesisContextBlock(caseItem, docs, courtAssignmentMode);
+      if (caseItem.caseType === 'tutela_segunda' && !(caseItem.legalHechos || '').trim() && selectedSegundaFalloDocId) {
+        await handleRefreshSegundaFromFallo({ force: true, falloDocumentId: selectedSegundaFalloDocId });
+      }
+      const refreshed = await supabase.from('cases').select('*').eq('id', id).maybeSingle();
+      const item = refreshed.data ? rowToCase(refreshed.data as Record<string, unknown>) : caseItem;
+      const contextBlock = buildSynthesisContextBlock(item, docs, courtAssignmentMode);
       const synthesisRawText =
-        caseItem.caseType === 'tutela_segunda'
+        item.caseType === 'tutela_segunda'
           ? [
-              caseItem.legalHechos,
-              caseItem.legalPretensiones,
-              caseItem.legalDerechoTutelado,
-              caseItem.rawText,
+              item.legalHechos,
+              item.legalPretensiones,
+              item.legalDerechoTutelado,
+              item.rawText,
             ]
               .filter((s) => typeof s === 'string' && s.trim())
               .join('\n\n')
-          : caseItem.rawText || '';
-      const summary = await summarizeCase(caseItem.claimant, synthesisRawText, contextBlock, {
-        radicado: caseItem.radicado,
-        caseType: caseItem.caseType,
-        defendant: caseItem.defendant,
-        subject: caseItem.subject,
-        status: caseItem.status,
-        operationalStatus: caseItem.operationalStatus,
-        deadlineAt: caseItem.deadlineAt,
-        assignedTo: caseItem.assignedTo,
-        legalHechos: caseItem.legalHechos,
-        legalPretensiones: caseItem.legalPretensiones,
-        legalDerechoTutelado: caseItem.legalDerechoTutelado,
-        catalogMetadata: caseItem.catalogMetadata as Record<string, unknown> | undefined,
+          : item.rawText || '';
+      const summary = await summarizeCase(item.claimant, synthesisRawText, contextBlock, {
+        radicado: item.radicado,
+        caseType: item.caseType,
+        defendant: item.defendant,
+        subject: item.subject,
+        status: item.status,
+        operationalStatus: item.operationalStatus,
+        deadlineAt: item.deadlineAt,
+        assignedTo: item.assignedTo,
+        legalHechos: item.legalHechos,
+        legalPretensiones: item.legalPretensiones,
+        legalDerechoTutelado: item.legalDerechoTutelado,
+        catalogMetadata: item.catalogMetadata as Record<string, unknown> | undefined,
         documentTitles: docs.map((d) => d.originalName || d.name).filter(Boolean),
         actionLines: actions.slice(0, 12).map((a) => a.description).filter(Boolean),
       });
@@ -1250,6 +1312,14 @@ export default function CaseDetail() {
           <CaseSintesisPanel
             isSummarizing={isSummarizing}
             onSummarize={handleSummarize}
+            segundaFalloExtracting={segundaFalloExtracting}
+            onExtractSegundaFromFallo={(falloDocumentId) =>
+              handleRefreshSegundaFromFallo({ force: true, falloDocumentId })
+            }
+            segundaFalloExtractMsg={segundaFalloExtractMsg}
+            segundaFalloPickerOptions={segundaFalloPickerOptions}
+            selectedSegundaFalloDocId={selectedSegundaFalloDocId}
+            onSelectSegundaFalloDocId={setSelectedSegundaFalloDocId}
             deadlineDraft={deadlineDraft}
             setDeadlineDraft={setDeadlineDraft}
             deadlineNoteDraft={deadlineNoteDraft}

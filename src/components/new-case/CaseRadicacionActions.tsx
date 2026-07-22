@@ -213,6 +213,7 @@ export type CaseRadicacionActionsProps = {
   aiAnalysis: LegalAnalysis | null;
   isRadicating: boolean;
   consecutiveReady: boolean;
+  radicadoConflict?: { raw: string; existingCaseId: string } | null;
   error: string | null;
   onRadicate: () => void;
 };
@@ -222,6 +223,7 @@ export function CaseRadicacionActions({
   aiAnalysis,
   isRadicating,
   consecutiveReady,
+  radicadoConflict,
   error,
   onRadicate,
 }: CaseRadicacionActionsProps) {
@@ -249,7 +251,7 @@ export function CaseRadicacionActions({
       <button
         type="button"
         onClick={onRadicate}
-        disabled={isRadicating || !consecutiveReady}
+        disabled={isRadicating || !consecutiveReady || Boolean(radicadoConflict)}
         className={`w-full py-6 rounded-2xl text-sm font-black uppercase tracking-[0.15em] flex items-center justify-center gap-4 transition-all duration-300 relative overflow-hidden group ${
           isRadicating
             ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'

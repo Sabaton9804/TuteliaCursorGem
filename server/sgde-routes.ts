@@ -845,9 +845,10 @@ export function registerSgdeRoutes(
       return res.status(503).json({ error: 'OpenAI no configurado.' });
     }
 
-    const body = (req.body ?? {}) as { caseId?: string; force?: boolean };
+    const body = (req.body ?? {}) as { caseId?: string; force?: boolean; falloDocumentId?: string };
     const caseId = String(body.caseId || '').trim();
     if (!caseId) return res.status(400).json({ error: 'caseId es requerido.' });
+    const falloDocumentId = body.falloDocumentId ? String(body.falloDocumentId).trim() : undefined;
 
     const { data: caseRow, error: caseErr } = await auth.admin
       .from('cases')
@@ -869,6 +870,7 @@ export function registerSgdeRoutes(
         openai: getOpenAi(),
         caseId,
         force: body.force === true,
+        falloDocumentId,
       });
       return res.json(result);
     } catch (e) {

@@ -11,12 +11,21 @@ import { plazoFallarSnapshotForCase } from '../../lib/plazo-fallar-tutela';
 import { isCivilCaseType, partyRoleLabels } from '../../lib/process-product-scope';
 import { CASE_STATUS_LABEL } from './case-detail-status-labels';
 import { PrecedentSourceBadge } from './PrecedentSourceBadge';
+import { SegundaFalloExtractBlock } from './SegundaFalloExtractBlock';
+import type { FalloPickerOption } from '../../lib/segunda-fallo-parties';
 import { apiAuthHeaders } from '../../lib/supabase-write-auth';
 import { apiUrl } from '../../lib/api-base';
 
 export type CaseSintesisPanelProps = {
   isSummarizing: boolean;
   onSummarize: () => void | Promise<void>;
+  /** Tutela 2ª: extraer accionantes/hechos del fallo PI migrado. */
+  segundaFalloExtracting?: boolean;
+  onExtractSegundaFromFallo?: (falloDocumentId: string) => void | Promise<void>;
+  segundaFalloExtractMsg?: string | null;
+  segundaFalloPickerOptions?: FalloPickerOption[];
+  selectedSegundaFalloDocId?: string;
+  onSelectSegundaFalloDocId?: (id: string) => void;
   deadlineDraft: string;
   setDeadlineDraft: (v: string) => void;
   deadlineNoteDraft: string;
@@ -145,6 +154,12 @@ function rulingSenseVariant(sense: string): 'concede' | 'niega' | 'neutral' {
 export function CaseSintesisPanel({
   isSummarizing,
   onSummarize,
+  segundaFalloExtracting = false,
+  onExtractSegundaFromFallo,
+  segundaFalloExtractMsg = null,
+  segundaFalloPickerOptions = [],
+  selectedSegundaFalloDocId = '',
+  onSelectSegundaFalloDocId,
   deadlineDraft,
   setDeadlineDraft,
   deadlineNoteDraft,
@@ -212,6 +227,11 @@ export function CaseSintesisPanel({
   const claimantsTitle = partyLabels.claimantPlural;
   const defendantsTitle = partyLabels.defendantPlural;
   const claimantSingularLower = partyLabels.claimantSingular.toLowerCase();
+  const isSegunda = caseItem.caseType === 'tutela_segunda';
+  const partiesEmpty =
+    !(caseItem.claimant || '').trim() &&
+    !(caseItem.defendant || '').trim() &&
+    !(caseItem.legalHechos || '').trim();
 
   return (
     <div className="card-modern w-full min-w-0 overflow-hidden shadow-sm transition-all hover:shadow-lg">
@@ -247,6 +267,40 @@ export function CaseSintesisPanel({
             emails={caseItem.defendantEmail}
           />
         </div>
+
+        {isSegunda && partiesEmpty && onExtractSegundaFromFallo ? (
+          <div className="border-b border-slate-100 px-6 py-5 sm:px-8">
+            <SegundaFalloExtractBlock
+              options={segundaFalloPickerOptions}
+              selectedDocumentId={selectedSegundaFalloDocId}
+              onSelectDocumentId={(id) => onSelectSegundaFalloDocId?.(id)}
+              extracting={segundaFalloExtracting}
+              onExtract={(docId) => onExtractSegundaFromFallo(docId)}
+              statusMessage={segundaFalloExtractMsg}
+              onGoToExpediente={() => setActiveTab('expediente')}
+              compact
+            />
+          </div>
+        ) : null}
+
+        {isSegunda && !partiesEmpty && onExtractSegundaFromFallo ? (
+          <details className="border-b border-slate-100 px-6 py-3 sm:px-8">
+            <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-wide text-slate-400 hover:text-slate-600">
+              Reextraer desde otro PDF del fallo
+            </summary>
+            <div className="pt-3 pb-1">
+              <SegundaFalloExtractBlock
+                options={segundaFalloPickerOptions}
+                selectedDocumentId={selectedSegundaFalloDocId}
+                onSelectDocumentId={(docId) => onSelectSegundaFalloDocId?.(docId)}
+                extracting={segundaFalloExtracting}
+                onExtract={(docId) => onExtractSegundaFromFallo(docId)}
+                statusMessage={segundaFalloExtractMsg}
+                compact
+              />
+            </div>
+          </details>
+        ) : null}
 
         {caseItem.legalHechos || caseItem.legalPretensiones || caseItem.legalDerechoTutelado ? (
           <>
@@ -382,19 +436,33 @@ export function CaseSintesisPanel({
               <ReactMarkdown>{caseItem.summary}</ReactMarkdown>
             </div>
           ) : !caseItem.legalHechos ? (
-            <div className="py-20 border-2 border-dashed border-slate-100 rounded-3xl text-center space-y-6">
+            <div className="py-16 border-2 border-dashed border-slate-100 rounded-3xl text-center space-y-6 px-4">
               <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto">
                 <Sparkles className="w-8 h-8 text-accent animate-pulse" />
               </div>
               <div>
                 <h3 className="text-lg font-bold text-slate-700">Sin síntesis procesal</h3>
-                <p className="text-sm text-slate-400 font-medium max-w-xs mx-auto mt-2">
-                  Active el asistente de IA para extraer hechos relevantes y pretensiones jurídicas.
+                <p className="text-sm text-slate-400 font-medium max-w-md mx-auto mt-2">
+                  {isSegunda
+                    ? 'Extraiga primero accionantes y hechos del fallo de primera instancia (bloque superior). Luego genere la síntesis operativa.'
+                    : 'Active el asistente de IA para extraer hechos relevantes y pretensiones jurídicas.'}
                 </p>
               </div>
-              <button type="button" onClick={() => void onSummarize()} className="btn-primary px-10 py-3 text-xs">
-                IDENTIFICAR HECHOS Y PRETENSIÓN
-              </button>
+              {!isSegunda || !partiesEmpty ? (
+                <button type="button" onClick={() => void onSummarize()} className="btn-primary px-10 py-3 text-xs">
+                  IDENTIFICAR HECHOS Y PRETENSIÓN
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void onSummarize()}
+                  disabled={isSummarizing || partiesEmpty}
+                  className="btn-primary px-8 py-3 text-xs disabled:opacity-50"
+                  title={partiesEmpty ? 'Extraiga partes del fallo PI primero' : undefined}
+                >
+                  Generar síntesis operativa
+                </button>
+              )}
             </div>
           ) : (
             <div className="pt-4 flex flex-col items-center gap-3 max-w-xl mx-auto text-center">

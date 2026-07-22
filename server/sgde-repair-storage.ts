@@ -8,7 +8,11 @@ import {
   insertCaseDocumentRowsAdmin,
   nextSortOrderForCase,
 } from './case-document-storage';
-import { sgdeFilenameToProtocolName, notebookCodeFromSgdeFolderPath } from './sgde-migrate';
+import {
+  isSgdeImpugnacionFolderPath,
+  notebookCodeFromSgdeFolderPath,
+  sgdeFilenameToProtocolName,
+} from './sgde-migrate';
 
 type DocRow = {
   id: string;
@@ -452,13 +456,20 @@ export async function repairStorageFromSgde(opts: {
 
   if (importSgdeOnly) {
     const existingNames = new Set<string>();
+    const existingSgdeIds = new Set<string>();
     for (const row of docs) {
       if (row.name) existingNames.add(String(row.name));
+      const sid = String(row.sgde_id || '').trim().toLowerCase();
+      if (sid) existingSgdeIds.add(sid);
     }
     let sortOrder = await nextSortOrderForCase(admin, caseId, notebookCode);
 
     for (const leaf of sgdeLeaves) {
       if (usedLeafIds.has(leaf.id)) continue;
+      if (existingSgdeIds.has(leaf.id.toLowerCase())) continue;
+      if (opts.caseType === 'tutela_segunda' && isSgdeImpugnacionFolderPath(leaf.folderPath)) {
+        continue;
+      }
       const res = await importLeaf({
         client,
         admin,
@@ -473,6 +484,7 @@ export async function repairStorageFromSgde(opts: {
         errors.push(`${leaf.name}: ${res.error}`);
       } else {
         imported += 1;
+        existingSgdeIds.add(leaf.id.toLowerCase());
       }
     }
   }

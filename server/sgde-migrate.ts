@@ -87,6 +87,13 @@ function evaluateRecommended(leaves: SgdePdfLeaf[]): {
   return { found, missing };
 }
 
+/** Carpeta de traslado de 2ª (piezas de radicación local), no historial PI. */
+export function isSgdeImpugnacionFolderPath(folderPath: string | undefined): boolean {
+  const path = (folderPath || '').trim().toLowerCase();
+  if (!path) return false;
+  return /segunda\s*instancia/.test(path) && /impugnaci[oó]n/.test(path);
+}
+
 export function notebookCodeFromSgdeFolderPath(
   folderPath: string | undefined,
   fallback: string
@@ -369,17 +376,31 @@ export async function migrateSgdeOriginToCase(opts: {
   const documentIds: string[] = [];
   let migrated = 0;
   let failed = 0;
+  let skippedLeaves = 0;
 
   const existingNames = new Set<string>();
+  const existingSgdeIds = new Set<string>();
   const { data: existing } = await admin
     .from('case_documents')
-    .select('name')
+    .select('name, sgde_id')
     .eq('case_id', caseId);
   for (const row of existing || []) {
     if (row?.name) existingNames.add(String(row.name));
+    const sid = String(row?.sgde_id || '').trim().toLowerCase();
+    if (sid) existingSgdeIds.add(sid);
   }
 
   for (const leaf of leaves) {
+    const leafId = leaf.id.toLowerCase();
+    if (existingSgdeIds.has(leafId)) {
+      skippedLeaves += 1;
+      continue;
+    }
+    // Tras radicar 2ª, Impugnación ya tiene Correo/Acta locales; no reimportar desde SGDE.
+    if (isSgdeImpugnacionFolderPath(leaf.folderPath)) {
+      skippedLeaves += 1;
+      continue;
+    }
     try {
       const downloaded = await client.downloadNodeContent(leaf.id);
       if (!downloaded?.buffer?.length) {
@@ -429,7 +450,10 @@ export async function migrateSgdeOriginToCase(opts: {
         continue;
       }
       const inserted = (ins.data as { id: string }[] | null)?.[0];
-      if (inserted?.id) documentIds.push(String(inserted.id));
+      if (inserted?.id) {
+        documentIds.push(String(inserted.id));
+        existingSgdeIds.add(leafId);
+      }
       migrated += 1;
     } catch (e) {
       failed += 1;
@@ -451,7 +475,7 @@ export async function migrateSgdeOriginToCase(opts: {
   return {
     sgdeRootId: rootId,
     migrated,
-    skipped: 0,
+    skipped: skippedLeaves,
     failed,
     errors,
     documentIds,

@@ -759,12 +759,11 @@ export default function NewCase() {
           .eq('court_id', courtId)
           .like('radicado', `${prefix}%`)
           .order('radicado', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+          .limit(1);
         if (cancelled) return;
         if (res.error) throw res.error;
         let next = 1;
-        const raw = res.data?.radicado;
+        const raw = res.data?.[0]?.radicado;
         if (typeof raw === 'string' && raw.length === 23) {
           const last = parseInt(raw.slice(16, 21), 10);
           if (!Number.isNaN(last)) next = last + 1;
@@ -1124,6 +1123,57 @@ export default function NewCase() {
     ? !segundaSuffixLoading && Boolean(derivedSegundaRadicado)
     : !consecutiveLoading && consecutive.length > 0 && !Number.isNaN(consecutiveNum) && consecutiveNum >= 1;
 
+  /** Bloqueo temprano: avisar si el radicado propuesto ya existe (antes de pulsar Radicar). */
+  useEffect(() => {
+    if (!parsedData || !consecutiveReady) {
+      setRadicadoConflict(null);
+      return;
+    }
+    let cancelled = false;
+    const probeRadicado =
+      caseFlowType === 'tutela_segunda'
+        ? derivedSegundaRadicado
+        : getFullRadicado(consecutive.replace(/\D/g, '').padStart(5, '0'));
+    if (!probeRadicado || probeRadicado.replace(/\D/g, '').length !== 23) {
+      setRadicadoConflict(null);
+      return;
+    }
+    void (async () => {
+      try {
+        await ensureSupabaseSessionForWrites();
+        const res = await supabase
+          .from('cases')
+          .select('id')
+          .eq('court_id', courtId)
+          .eq('radicado', probeRadicado)
+          .maybeSingle();
+        if (cancelled) return;
+        if (res.error && res.error.code !== 'PGRST116') {
+          console.warn('No se pudo verificar radicado duplicado', res.error);
+          return;
+        }
+        if (res.data?.id) {
+          setRadicadoConflict({ raw: probeRadicado, existingCaseId: res.data.id });
+        } else {
+          setRadicadoConflict(null);
+        }
+      } catch (e) {
+        if (!cancelled) console.warn('Verificación radicado duplicado', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    parsedData,
+    consecutiveReady,
+    consecutive,
+    caseFlowType,
+    courtId,
+    radicacion,
+    derivedSegundaRadicado,
+  ]);
+
   const defaultNotebookForFlow = notebookCodeForCaseType(caseFlowType);
   const radicationNotebookOptions = useMemo(() => {
     const opts: ExpedienteCuadernoExtra[] = [
@@ -1238,6 +1288,12 @@ export default function NewCase() {
       setError(originErr);
       return;
     }
+    if (radicadoConflict) {
+      setError(
+        `Ya existe un expediente con el radicado ${formatRadicado(radicadoConflict.raw)}. Abra el existente o cambie el consecutivo.`,
+      );
+      return;
+    }
 
     setRadicadoConflict(null);
     setIsRadicating(true);
@@ -1268,7 +1324,7 @@ export default function NewCase() {
           .eq('radicado', radicadoFormatted)
           .maybeSingle();
         dup = res.data;
-        if (res.error) throw res.error;
+        if (res.error && res.error.code !== 'PGRST116') throw res.error;
       } catch (e) {
         await handleDataPermissionError(e, 'list', 'cases');
         throw e;
@@ -2280,6 +2336,7 @@ export default function NewCase() {
               aiAnalysis={aiAnalysis}
               isRadicating={isRadicating}
               consecutiveReady={consecutiveReady}
+              radicadoConflict={radicadoConflict}
               error={error}
               onRadicate={handleRadicate}
             />

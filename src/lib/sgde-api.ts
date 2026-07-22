@@ -576,11 +576,16 @@ export type RefreshSegundaPartiesResult = {
 export async function refreshSegundaPartiesFromFallo(opts: {
   caseId: string;
   force?: boolean;
+  falloDocumentId?: string;
 }): Promise<RefreshSegundaPartiesResult> {
   const res = await fetch(apiUrl('/api/cases/refresh-segunda-parties-from-fallo'), {
     method: 'POST',
     headers: await authHeaders(),
-    body: JSON.stringify({ caseId: opts.caseId, force: opts.force === true }),
+    body: JSON.stringify({
+      caseId: opts.caseId,
+      force: opts.force === true,
+      ...(opts.falloDocumentId ? { falloDocumentId: opts.falloDocumentId } : {}),
+    }),
   });
   const body = (await res.json().catch(() => ({}))) as RefreshSegundaPartiesResult & { error?: string };
   if (!res.ok) {

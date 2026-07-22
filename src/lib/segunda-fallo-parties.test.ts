@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  defaultFalloPickerDocumentId,
+  listFalloPrimeraPickerOptions,
   looksLikeSegundaMisassignedParties,
   pickFalloPrimeraDocument,
 } from './segunda-fallo-parties';
@@ -43,6 +45,19 @@ describe('pickFalloPrimeraDocument', () => {
       doc({ id: 'd', name: '006falloAcciNdetutelaN20600118' }),
     ];
     expect(pickFalloPrimeraDocument(docs)?.name).toBe('16Falloniega24jun2026N16');
+  });
+});
+
+describe('listFalloPrimeraPickerOptions', () => {
+  it('lista PDF de PI y marca sugerido con ★', () => {
+    const opts = listFalloPrimeraPickerOptions([
+      doc({ id: 'a', name: 'CorreoReparto', type: 'email_body', storagePath: 'x/a.pdf' }),
+      doc({ id: 'b', name: '16Falloniega24jun2026N16', notebookCode: 'SI_C01_PRINCIPAL', storagePath: 'x/b.pdf' }),
+      doc({ id: 'c', name: 'ActaReparto', notebookCode: 'SI_IMPUGNACION', storagePath: 'x/c.pdf' }),
+    ]);
+    expect(opts.map((o) => o.id)).toEqual(['b']);
+    expect(opts[0]?.suggested).toBe(true);
+    expect(defaultFalloPickerDocumentId(opts)).toBe('b');
   });
 });
 
