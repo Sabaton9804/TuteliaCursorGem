@@ -1,6 +1,5 @@
 import dotenv from 'dotenv';
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -19,6 +18,10 @@ import type { DocumentTemplateTipo } from './src/types.ts';
 import { PRECEDENT_SEARCH_CONFIG } from './src/config/precedentSearch.ts';
 import { detectActaRepartoInPdfBuffer } from './pdf-acta-detect';
 import { createPrecedentsFileRouter } from './precedents-routes';
+import {
+  createCorsMiddleware,
+  resolveCorsOriginsFromEnv,
+} from './server/cors-config';
 import { SgdeClient, getDefaultSgdeBaseUrl } from './server/sgde-client';
 import {
   appendParseSessionAttachments,
@@ -1123,27 +1126,14 @@ async function startServer() {
   app.use(express.json({ limit: BODY_LIMIT }));
   app.use(express.urlencoded({ extended: true, limit: BODY_LIMIT }));
 
-  const corsOrigins = (process.env.CORS_ORIGIN || process.env.APP_URL || '')
-    .split(',')
-    .map((s) => s.trim().replace(/\/+$/, ''))
-    .filter(Boolean);
+  const corsOrigins = resolveCorsOriginsFromEnv();
   if (corsOrigins.length) {
-    app.use((req, res, next) => {
-      const origin = typeof req.headers.origin === 'string' ? req.headers.origin.replace(/\/+$/, '') : '';
-      if (origin && corsOrigins.includes(origin)) {
-        res.setHeader('Access-Control-Allow-Origin', origin);
-        res.setHeader('Access-Control-Allow-Credentials', 'true');
-        res.setHeader(
-          'Access-Control-Allow-Headers',
-          'Authorization, Content-Type, x-tutelia-mailbox-id'
-        );
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-      }
-      if (req.method === 'OPTIONS') {
-        return res.sendStatus(204);
-      }
-      next();
-    });
+    app.use(createCorsMiddleware(corsOrigins));
+  } else if (process.env.NODE_ENV === 'production') {
+    console.warn(
+      '[cors] CORS_ORIGIN no configurado — el frontend en otro dominio (p. ej. Cloudflare Pages) será bloqueado. ' +
+        'En Render/Railway: CORS_ORIGIN=https://tuteliacursorgem.pages.dev'
+    );
   }
 
   // API Routes
@@ -2301,6 +2291,7 @@ async function startServer() {
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -2316,7 +2307,12 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    const corsOrigins = resolveCorsOriginsFromEnv();
+    console.log(`[cors] orígenes permitidos: ${corsOrigins.length ? corsOrigins.join(', ') : '(ninguno — configure CORS_ORIGIN)'}`);
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('[tutelia] Fallo al arrancar servidor:', err);
+  process.exit(1);
+});

@@ -2,7 +2,9 @@
 <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
-# Tutelia
+# Jurion
+
+Sistema operativo del despacho judicial — tutelas, procesos civiles, expediente digital, plazos, correo y SGDE.
 
 ## Run Locally
 
@@ -42,9 +44,16 @@ Comando de arranque: `npm start`. Verifique `https://SU-API/api/health` → JSON
 |--------|-------|
 | Build command | `npm run build` |
 | Output directory | `dist` |
-| **Variables de build** | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, **`VITE_API_URL=https://SU-API`** (sin barra final) |
+| **Variables de build** | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` |
+| **Variables runtime (Pages Functions)** | `BACKEND_URL=https://tuteliacursorgem.onrender.com` |
 
-Tras cambiar `VITE_API_URL` o Supabase, **vuelva a desplegar** Pages (rebuild).
+**Proxy mismo origen (recomendado):** el repo incluye `functions/api/[[path]].ts`, que reenvía `/api/*` al backend Render. Así el navegador no hace peticiones cross-origin y desaparecen los errores CORS cuando Render devuelve 502.
+
+- **No** defina `VITE_API_URL` en el build de Pages (o déjelo vacío).
+- Defina `BACKEND_URL` en Cloudflare → Settings → Environment variables (Production + Preview).
+- Tras el deploy, las peticiones van a `https://tuteliacursorgem.pages.dev/api/parse-email` → proxy → Render.
+
+Si prefiere llamar a Render directamente desde el navegador (no recomendado), use `VITE_API_URL` + `CORS_ORIGIN` en Render y `VITE_USE_RENDER_API=1` en Pages.
 
 En Pages puede quitar `OPENAI_API_KEY` y secretos de servidor: no los usa el build estático (y deben vivir solo en el API).
 

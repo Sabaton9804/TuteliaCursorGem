@@ -8,7 +8,7 @@ import {
   Search,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { apiUrl } from '../lib/api-base';
+import { apiUrl, describeApiFetchFailure, warmupApiBackend } from '../lib/api-base';
 import { apiAuthHeaders, ensureSupabaseSessionForWrites } from '../lib/supabase-write-auth';
 import { getSupabaseAuthErrorMessage } from '../lib/supabase-auth-errors';
 import { handleDataPermissionError } from '../lib/error-handler';
@@ -288,7 +288,7 @@ function getUserFriendlyRadicadoError(err: any): string {
   ) {
     return (
       'Su usuario no tiene permisos en la base de datos (RLS). Compruebe que exista su fila en public.profiles ' +
-      'con el mismo court_id que su despacho (p. ej. court-1), que haya iniciado sesión en Tutelia (no solo modo local) ' +
+      'con el mismo court_id que su despacho (p. ej. court-1), que haya iniciado sesión en Jurion (no solo modo local) ' +
       'y que en Supabase esté aplicada la migración supabase/migrations/20260518120000_core_tables_rls_by_court.sql ' +
       'o que las políticas de cases permitan INSERT a su perfil.'
     );
@@ -428,7 +428,7 @@ export default function NewCase() {
   const [sgdePreflightLoading, setSgdePreflightLoading] = useState(false);
   const [sgdeNodeIdHint, setSgdeNodeIdHint] = useState<string | null>(null);
   const [segundaPrefillNote, setSegundaPrefillNote] = useState<string | null>(null);
-  /** Radicados Tutelia con la misma base CUI (21 díg.) para calcular sufijo 01, 02… */
+  /** Radicados Jurion con la misma base CUI (21 díg.) para calcular sufijo 01, 02… */
   const [segundaKnownRadicados, setSegundaKnownRadicados] = useState<string[]>([]);
   const [segundaSuffixLoading, setSegundaSuffixLoading] = useState(false);
   const [sierjuDerechoSel, setSierjuDerechoSel] = useState<DerechoTuteladoCode | undefined>();
@@ -1003,19 +1003,31 @@ export default function NewCase() {
     formData.append('email', file);
 
     try {
+      const warmed = await warmupApiBackend();
+      if (!warmed) {
+        throw new Error(
+          'El servidor API en Render no responde (/api/health). Plan gratuito: el servicio puede estar despertando — espere 30–60 s y reintente.',
+        );
+      }
+
       const auth = await apiAuthHeaders({ json: false });
-      const response = await fetch(apiUrl('/api/parse-email'), {
-        method: 'POST',
-        headers: auth,
-        body: formData,
-      });
+      let response: Response;
+      try {
+        response = await fetch(apiUrl('/api/parse-email'), {
+          method: 'POST',
+          headers: auth,
+          body: formData,
+        });
+      } catch (fetchErr) {
+        throw new Error(describeApiFetchFailure(fetchErr));
+      }
 
       const data = (await response.json().catch(() => ({}))) as {
         error?: string;
         [key: string]: unknown;
       };
       if (!response.ok) {
-        const base = data.error || `Error al parsear el archivo (${response.status})`;
+        const base = data.error || describeApiFetchFailure(null, response.status);
         if (response.status === 401) {
           throw new Error(
             `${base} Cierre sesión e ingrese de nuevo para renovar el token.`,
@@ -1025,6 +1037,9 @@ export default function NewCase() {
           throw new Error(
             'El servidor no acepta POST /api/parse-email (405). Cloudflare Pages solo sirve el frontend estático: despliegue el backend Express en otro servicio (Railway, Render, Fly, Cloud Run), configure VITE_API_URL en Cloudflare apuntando a esa URL, y CORS_ORIGIN en el backend con su dominio de Pages.',
           );
+        }
+        if (response.status === 502 || response.status === 503 || response.status === 504) {
+          throw new Error(describeApiFetchFailure(null, response.status));
         }
         throw new Error(base);
       }
@@ -1730,7 +1745,7 @@ export default function NewCase() {
                 const migRow = deepSanitizeForPostgresInsert({
                   case_id: caseId,
                   type: 'sgde_migrate',
-                  description: `Copiados ${mig.migrated} PDF de SGDE al expediente digital Tutelia.`,
+                  description: `Copiados ${mig.migrated} PDF de SGDE al expediente digital Jurion.`,
                   user_id: u.user?.id ?? null,
                   user_name: String(uname),
                   metadata: {
@@ -1743,7 +1758,7 @@ export default function NewCase() {
                 await supabase.from('case_actions').insert(migRow);
               }
             } catch (migErr) {
-              console.error('Copia SGDE → Tutelia tras radicación:', migErr);
+              console.error('Copia SGDE → Jurion tras radicación:', migErr);
             }
           })();
         }
