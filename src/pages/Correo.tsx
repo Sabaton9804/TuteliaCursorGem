@@ -489,7 +489,7 @@ export default function Correo() {
       setError(
         att.kind === 'reference'
           ? 'Este adjunto está en OneDrive. Ábralo desde Outlook.'
-          : 'Este elemento no se puede abrir desde Tutelia.'
+          : 'Este elemento no se puede abrir desde Jurion.'
       );
       return;
     }
@@ -883,7 +883,7 @@ export default function Correo() {
         ) : (
           <motion.div className="space-y-3">
             <p className="text-sm text-slate-600">
-              Autorice a Tutelia con su cuenta corporativa. Se solicitan permisos delegados para buzones compartidos
+              Autorice a Jurion con su cuenta corporativa. Se solicitan permisos delegados para buzones compartidos
               (Mail.Read.Shared, Mail.Send.Shared) y, en piloto, su bandeja personal.
             </p>
             {status.redirectUri ? (

@@ -258,7 +258,7 @@ export function WordReviewRichEditor({
           Este documento fue creado antes de la actualización.
         </p>
         <p className="mt-2 leading-relaxed text-amber-900/95">
-          Descargue el .docx y vuelva a enviarlo a revisión para ver la vista en Tutelia.
+          Descargue el .docx y vuelva a enviarlo a revisión para ver la vista en Jurion.
         </p>
       </div>
     );
@@ -348,7 +348,7 @@ export function WordReviewRichEditor({
 
       {puedeEditar ? (
         <p className="rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2 text-[10px] text-slate-500">
-          Los cambios se guardan solos en Tutelia (unos segundos después de escribir). El .docx del expediente no se
+          Los cambios se guardan solos en Jurion (unos segundos después de escribir). El .docx del expediente no se
           modifica aquí: para enviar correcciones al archivo Word use descarga, edición en Word y nueva carga al
           expediente.
         </p>

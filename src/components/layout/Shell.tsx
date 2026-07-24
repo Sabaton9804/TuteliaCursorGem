@@ -19,6 +19,8 @@ import { GlobalSearch } from './GlobalSearch';
 import { AppSidebarNav } from './AppSidebarNav';
 import { AppPlatformSidebarNav } from './AppPlatformSidebarNav';
 import { useUrgentWorkflowTaskCount } from '../../hooks/useUrgentWorkflowTaskCount';
+import { usePWAUpdate } from '../../hooks/usePWAUpdate';
+import PWAUpdateNotification from '../PWAUpdateNotification';
 import { motion, AnimatePresence } from 'motion/react';
 import type { Provider, User } from '@supabase/supabase-js';
 
@@ -70,6 +72,7 @@ export default function Shell({ children }: ShellProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { count: urgentWorkflowCount } = useUrgentWorkflowTaskCount(user?.uid, profile?.courtId);
+  const { updateAvailable, isUpdating, updateAndReload, dismissUpdate } = usePWAUpdate();
 
   const ensureAnonymousSession = async () => {
     await supabase.auth.getSession();
@@ -414,7 +417,7 @@ export default function Shell({ children }: ShellProps) {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-primary">
-        <div className="text-xl font-mono text-white animate-pulse uppercase tracking-[0.3em]">Cargando Tutelia...</div>
+        <div className="text-xl font-mono text-white animate-pulse uppercase tracking-[0.3em]">Cargando Jurion...</div>
       </div>
     );
   }
@@ -434,8 +437,8 @@ export default function Shell({ children }: ShellProps) {
               <Scale className="w-9 h-9 text-accent" />
             </div>
             <div>
-              <h1 className="text-3xl font-bold tracking-tight text-slate-900">Tutelia</h1>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Gestión Judicial Inteligente</p>
+              <h1 className="text-3xl font-bold tracking-tight text-slate-900">Jurion</h1>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Sistema operativo del despacho judicial</p>
             </div>
           </div>
 
@@ -552,7 +555,7 @@ export default function Shell({ children }: ShellProps) {
                 <Scale className="w-6 h-6 text-white" />
               </div>
               {!sidebarCollapsed && (
-                <span className="text-xl font-bold tracking-tight text-white truncate">Tutelia</span>
+                <span className="text-xl font-bold tracking-tight text-white truncate">Jurion</span>
               )}
             </div>
             <button
@@ -749,7 +752,7 @@ export default function Shell({ children }: ShellProps) {
                   <div className="bg-accent p-2 rounded-lg shrink-0">
                     <Scale className="w-5 h-5 text-white" />
                   </div>
-                  <span className="text-xl font-bold tracking-tight text-white truncate">Tutelia</span>
+                  <span className="text-xl font-bold tracking-tight text-white truncate">Jurion</span>
                 </div>
                 <button
                   type="button"
@@ -807,6 +810,14 @@ export default function Shell({ children }: ShellProps) {
           </>
         )}
       </AnimatePresence>
+
+      {user && updateAvailable && (
+        <PWAUpdateNotification
+          onUpdate={updateAndReload}
+          onDismiss={dismissUpdate}
+          isUpdating={isUpdating}
+        />
+      )}
     </div>
     </CaseNavScopeProvider>
     </SessionCourtProvider>

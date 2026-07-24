@@ -218,7 +218,7 @@ export function ExpedienteDocxPreview({
                   {freehand?.onChange ? (
                     <p className="mt-2">
                       Use <strong className="font-semibold">Anotar</strong> para trazos sobre esta vista; se guardan en
-                      Tutelia y no modifican el .docx del expediente.
+                      Jurion y no modifican el .docx del expediente.
                     </p>
                   ) : null}
                   {engine === 'mammoth' ? (
@@ -306,12 +306,12 @@ export function ExpedienteDocxPreview({
           {compactEditHintPlacement === 'above' ? (
             <>
               El <strong className="font-semibold">texto editable</strong> y los comentarios están en la sección{' '}
-              <strong className="font-semibold">«Edición en Tutelia»</strong> arriba. Esta vista es solo referencia
+              <strong className="font-semibold">«Edición en Jurion»</strong> arriba. Esta vista es solo referencia
               visual (HTML); las anotaciones a mano alzada aquí no cambian el .docx del expediente.
             </>
           ) : (
             <>
-              El <strong className="font-semibold">texto editable</strong> está en <strong className="font-semibold">«Edición en Tutelia»</strong>{' '}
+              El <strong className="font-semibold">texto editable</strong> está en <strong className="font-semibold">«Edición en Jurion»</strong>{' '}
               debajo. Esta zona es solo referencia visual.
             </>
           )}

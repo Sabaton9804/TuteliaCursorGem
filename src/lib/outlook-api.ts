@@ -6,7 +6,7 @@ function parseOutlookClientError(status: number, body: { error?: string }): stri
   const serverMsg = typeof body.error === 'string' ? body.error.trim() : '';
   if (serverMsg) return serverMsg;
   if (status === 401) {
-    return 'Sesión de Tutelia inválida o expirada. Cierre sesión, vuelva a entrar (Google, Microsoft 365 o admin) e intente de nuevo.';
+    return 'Sesión de Jurion inválida o expirada. Cierre sesión, vuelva a entrar (Google, Microsoft 365 o admin) e intente de nuevo.';
   }
   return `Error del servidor (${status}).`;
 }
@@ -43,7 +43,7 @@ async function authHeaders(): Promise<HeadersInit> {
   const token = data.session?.access_token;
   if (!token) {
     throw new Error(
-      'Inicie sesión en Tutelia (no use solo modo local sin Supabase) para conectar Outlook.'
+      'Inicie sesión en Jurion (no use solo modo local sin Supabase) para conectar Outlook.'
     );
   }
   const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
@@ -258,7 +258,7 @@ function outlookAttachmentDownloadUrl(
   return apiUrl(`/api/outlook/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(att.id)}?${params}`);
 }
 
-/** Descarga o vista previa de un adjunto (requiere sesión Tutelia en cabecera). */
+/** Descarga o vista previa de un adjunto (requiere sesión Jurion en cabecera). */
 export async function fetchOutlookAttachmentBytes(
   messageId: string,
   att: OutlookAttachmentMeta

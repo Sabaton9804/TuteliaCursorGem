@@ -12,7 +12,7 @@ export type SierjuProcessTipo = {
   label: string;
   /** Sección del formulario SIERJU. Vigente: solo civil_1a_oral. */
   sectionCode: 'civil_1a_escrito' | 'civil_1a_oral';
-  /** Pipeline operativo Tutelia (colapsado). */
+  /** Pipeline operativo Jurion (colapsado). */
   caseType: CivilCaseType;
 };
 

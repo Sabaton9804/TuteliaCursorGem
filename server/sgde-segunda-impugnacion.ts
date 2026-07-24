@@ -218,7 +218,7 @@ export async function publishSegundaTrasladoToSgdeImpugnacion(opts: {
 
     .maybeSingle();
 
-  if (caseErr || !caseRow?.id) throw new Error('Expediente Tutelia no encontrado.');
+  if (caseErr || !caseRow?.id) throw new Error('Expediente Jurion no encontrado.');
 
 
 

@@ -320,7 +320,7 @@ export function DocxPlantillaImportSection({ template, courtId, disabled, onGuar
           className="inline-flex items-center gap-2 rounded-lg bg-violet-700 px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-white hover:bg-violet-800 disabled:opacity-40"
         >
           {aplicarBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-          Aplicar y guardar en Tutelia
+          Aplicar y guardar en Jurion
         </button>
       </div>
     </div>

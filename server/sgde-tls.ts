@@ -21,7 +21,7 @@ export function formatSgdeConnectionError(raw: string): string {
   ) {
     return (
       'No se pudo conectar al portal SGDE por verificación del certificado TLS (común con proxy o antivirus corporativo). ' +
-      'El administrador de Tutelia puede añadir SGDE_TLS_INSECURE=1 en el .env del servidor y reiniciar npm run dev ' +
+      'El administrador de Jurion puede añadir SGDE_TLS_INSECURE=1 en el .env del servidor y reiniciar npm run dev ' +
       '(solo diagnóstico en red local). En producción conviene NODE_EXTRA_CA_CERTS con el certificado de la CA de la Rama.'
     );
   }

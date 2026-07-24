@@ -564,7 +564,7 @@ export function registerOutlookRoutes(app: Express, getSupabaseAdmin: () => Supa
         const ref = cls.referencia_proceso || cls.radicado_referencia || '';
         return res.status(400).json({
           error: ref
-            ? `No hay expediente en Tutelia para la referencia «${ref}». Cree o localice la tutela antes de ingresar este correo.`
+            ? `No hay expediente en Jurion para la referencia «${ref}». Cree o localice la tutela antes de ingresar este correo.`
             : 'No se encontró expediente vinculado. No puede aprobar el ingreso hasta asociar una tutela existente.',
         });
       }

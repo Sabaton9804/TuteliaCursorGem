@@ -463,7 +463,7 @@ export default function BibliotecaPrecedentes() {
           <h1 className="text-2xl font-bold tracking-tight">Biblioteca de precedentes</h1>
         </div>
         <p className="max-w-3xl rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-relaxed text-slate-700">
-          Los fallos de expedientes en Tutelia se pueden indexar al registrar el sentido del fallo. Además puede{' '}
+          Los fallos de expedientes en Jurion se pueden indexar al registrar el sentido del fallo. Además puede{' '}
           <strong>subir un PDF o Word</strong>: la IA extrae radicado, corporación, materia y argumentos y genera el
           vector para búsqueda.
         </p>

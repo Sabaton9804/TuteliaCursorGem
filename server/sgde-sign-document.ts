@@ -126,9 +126,9 @@ export async function signCaseDocumentInSgde(opts: {
   }
 
   const suffix = refreshed
-    ? ' Se actualizó la copia en Tutelia desde SGDE.'
+    ? ' Se actualizó la copia en Jurion desde SGDE.'
     : refreshLocal
-      ? ' La firma en SGDE fue exitosa; no se pudo descargar la nueva versión a Tutelia (use «Actualizar» en SGDE).'
+      ? ' La firma en SGDE fue exitosa; no se pudo descargar la nueva versión a Jurion (use «Actualizar» en SGDE).'
       : '';
 
   return {

@@ -90,7 +90,7 @@ export function CaseRadicacionConsecutivePanel({
             <p className="font-mono text-sm font-bold text-violet-900 tabular-nums">{derivedFormatted}</p>
             {priorSegunda.length > 0 ? (
               <p className="text-[10px] text-violet-800/90 leading-snug">
-                Ya hay {priorSegunda.length} radicado(s) de segunda en Tutelia con esta base; por eso se propone{' '}
+                Ya hay {priorSegunda.length} radicado(s) de segunda en Jurion con esta base; por eso se propone{' '}
                 <span className="font-mono font-semibold">…{derivedSuffix}</span> y no{' '}
                 <span className="font-mono">{CUI_INSTANCE_SEGUNDA}</span>.
               </p>

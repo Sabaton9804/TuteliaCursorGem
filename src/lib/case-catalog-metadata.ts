@@ -89,7 +89,7 @@ export function catalogSituacionLabel(meta: CaseCatalogMetadata | undefined): st
   return meta?.situacion_plataforma?.trim() || '—';
 }
 
-/** Valores iniciales al radicar un civil en Tutelia (lista Procesos civiles). */
+/** Valores iniciales al radicar un civil en Jurion (lista Procesos civiles). */
 export function buildInitialCivilCatalogMetadata(opts: {
   caseType: CaseType;
   stageCode?: CaseStageCode;

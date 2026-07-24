@@ -86,7 +86,7 @@ export async function createExpedienteInSgde(opts: {
     .eq('id', caseId)
     .maybeSingle();
   if (caseErr || !caseRow?.id) {
-    throw new Error('Expediente Tutelia no encontrado.');
+    throw new Error('Expediente Jurion no encontrado.');
   }
   const c = caseRow as CaseRow;
   const caseType = String(c.case_type || 'tutela_primera');

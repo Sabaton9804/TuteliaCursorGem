@@ -530,7 +530,7 @@ export async function syncDocumentsWithSgde(opts: {
 
   const message = [
     `${linked} sincronizado(s)`,
-    localOnly ? `${localOnly} solo en Tutelia` : null,
+    localOnly ? `${localOnly} solo en Jurion` : null,
     sgdeOnly ? `${sgdeOnly} solo en SGDE` : null,
     uploaded ? `${uploaded} subido(s) a SGDE` : null,
     uploadFailed ? `${uploadFailed} fallo(s) al subir` : null,

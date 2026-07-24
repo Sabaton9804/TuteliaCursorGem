@@ -55,7 +55,7 @@ export function isTipTapDocSubstantivelyEmpty(doc: JSONContent, maxTrivialChars 
  * Elige la semilla del editor de revisión.
  * Por defecto manda el **.docx** del expediente: `review_markup_json` a menudo quedó truncado o
  * desactualizado y no debe ganar en empate. Solo se conserva lo guardado si el usuario añadió
- * claramente más texto en Tutelia que lo que trae el archivo (edición sustancial).
+ * claramente más texto en Jurion que lo que trae el archivo (edición sustancial).
  */
 export function resolveWordReviewSeedDoc(
   saved: JSONContent | null | undefined,
@@ -69,7 +69,7 @@ export function resolveWordReviewSeedDoc(
   const a = tipTapDocApproxPlainTextLen(s);
   const b = tipTapDocApproxPlainTextLen(m);
 
-  /** Texto guardado muy superior al del Word → respetar trabajo del usuario en Tutelia. */
+  /** Texto guardado muy superior al del Word → respetar trabajo del usuario en Jurion. */
   if (a > b + 700 && a > Math.floor(b * 1.08)) return s;
 
   return m;

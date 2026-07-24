@@ -103,7 +103,7 @@ export default function Settings() {
       await deleteSgdeCredentials();
       setSgdeUsername('');
       setSgdePassword('');
-      setSgdeCredStatus('Credenciales SGDE eliminadas de Tutelia.');
+      setSgdeCredStatus('Credenciales SGDE eliminadas de Jurion.');
       await loadSgdeStatus();
     } catch (e) {
       setSgdeCredStatus(e instanceof Error ? e.message : 'Error al eliminar.');
@@ -326,7 +326,7 @@ export default function Settings() {
           Etapas del proceso (por tipo)
         </div>
         <p className="text-sm font-medium text-slate-500 leading-relaxed">
-          Personalice nombres, orden y visibilidad del carril a partir de la plantilla Tutelia. Las etapas propias se
+          Personalice nombres, orden y visibilidad del carril a partir de la plantilla Jurion. Las etapas propias se
           marcan a mano; los automatismos siguen anclados a los códigos de plantilla.
         </p>
         <CourtProcessStagesPanel />
@@ -420,7 +420,7 @@ export default function Settings() {
             )}
 
             <p className="text-sm font-medium text-slate-500 leading-relaxed">
-              Cada funcionario usa su propio usuario y contraseña del portal SGDE de la Rama. Tutelia las guarda
+              Cada funcionario usa su propio usuario y contraseña del portal SGDE de la Rama. Jurion las guarda
               cifradas; no van en un archivo <span className="font-mono text-[11px]">.env</span> compartido.
               {sgdeStatus?.portalBaseUrl ? (
                 <>

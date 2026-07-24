@@ -10,7 +10,7 @@
  * para tipificar tutelas, impugnaciones, desacato o consulta.
  */
 
-/** Sección SIERJU por flujo Tutelia (formulario Civil Circuito 2023 V.4). */
+/** Sección SIERJU por flujo Jurion (formulario Civil Circuito 2023 V.4). */
 export const SIERJU_TUTELA_ACTIVE_SECTION = 'movimiento_tutelas' as const;
 export const SIERJU_DESACATO_ACTIVE_SECTION = 'incidentes_desacato' as const;
 export const SIERJU_IMPUGNACIONES_ACTIVE_SECTION = 'impugnaciones' as const;
@@ -32,7 +32,7 @@ const SIERJU_DERECHO_SECTION_META: Record<
   consultas_desacato: { sheet: 15, title: 'Consultas Incidentes de Desacato' },
 };
 
-/** Mapea case_type Tutelia → sección SIERJU de tipificación por derecho. */
+/** Mapea case_type Jurion → sección SIERJU de tipificación por derecho. */
 export function sierjuDerechoSectionForCaseType(
   caseType: string | null | undefined,
 ): SierjuDerechoSectionCode {

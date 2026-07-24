@@ -287,7 +287,7 @@ export function CaseWordReviewPanel({
       );
       return payload ?? undefined;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'No se pudo guardar la revisión en Tutelia.';
+      const msg = e instanceof Error ? e.message : 'No se pudo guardar la revisión en Jurion.';
       setErr(msg);
       throw e;
     }
@@ -488,7 +488,7 @@ export function CaseWordReviewPanel({
                         <p className="w-full text-[10px] leading-snug text-slate-500">
                           El formato fiel al Word (membrete, márgenes, impresión) lo obtiene con{' '}
                           <strong className="font-semibold text-slate-700">Descargar y abrir en Word</strong>. La
-                          revisión en Tutelia es un solo editor sobre el texto convertido desde ese archivo (sin segunda
+                          revisión en Jurion es un solo editor sobre el texto convertido desde ese archivo (sin segunda
                           vista HTML del mismo documento aquí).
                         </p>
                       </div>
@@ -496,8 +496,8 @@ export function CaseWordReviewPanel({
                         <div className="space-y-2 border-t border-slate-100 pt-4">
                           <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-700">
                             {r.status === 'pendiente_juez'
-                              ? 'Revisión integral en Tutelia'
-                              : 'Revisión en Tutelia (referencia)'}
+                              ? 'Revisión integral en Jurion'
+                              : 'Revisión en Jurion (referencia)'}
                           </p>
                           <p className="text-[10px] leading-snug text-slate-600">
                             {r.status === 'pendiente_juez' ? (
@@ -508,7 +508,7 @@ export function CaseWordReviewPanel({
                                 .docx del expediente).
                               </>
                             ) : (
-                              <>Vista de lo guardado en Tutelia en esta etapa (solo lectura).</>
+                              <>Vista de lo guardado en Jurion en esta etapa (solo lectura).</>
                             )}
                           </p>
                           <WordReviewRichEditor
@@ -566,7 +566,7 @@ export function CaseWordReviewPanel({
                               const rowForRule = flushed ? { ...r, reviewMarkupJson: flushed } : r;
                               if (!notes.trim() && !hasMeaningfulReviewMarkup(rowForRule)) {
                                 setErr(
-                                  'Indique observaciones: texto libre arriba o comentarios/edición en «Revisión integral en Tutelia» (pulse otra vez si acaba de escribir allí).',
+                                  'Indique observaciones: texto libre arriba o comentarios/edición en «Revisión integral en Jurion» (pulse otra vez si acaba de escribir allí).',
                                 );
                                 return;
                               }
@@ -695,7 +695,7 @@ export function CaseWordReviewPanel({
                       {wordDoc?.storagePath?.trim() ? (
                         <div className="space-y-2">
                           <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                            Revisión en Tutelia (guardada)
+                            Revisión en Jurion (guardada)
                           </p>
                           <WordReviewRichEditor
                             key={`${r.id}-readonly`}

@@ -118,7 +118,7 @@ function metaStr(meta: Record<string, unknown> | null | undefined, key: string):
   return typeof v === 'string' && v.trim() ? v.trim() : '';
 }
 
-/** Mapea case_type Tutelia → bucket de síntesis. */
+/** Mapea case_type Jurion → bucket de síntesis. */
 export function mapCaseTypeToSynthesisKind(
   caseType: string | null | undefined,
   catalogMetadata?: Record<string, unknown> | null,

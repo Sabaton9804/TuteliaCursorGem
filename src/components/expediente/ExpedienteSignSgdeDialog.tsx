@@ -118,7 +118,7 @@ export function ExpedienteSignSgdeDialog({ open, caseId, doc, onClose, onSigned 
 
         <p className="mt-4 text-xs leading-relaxed text-slate-600">
           La firma se realiza en el expediente electrónico de la Rama (mismo servicio que el portal
-          SGDE). Tras firmar, Tutelia descargará la nueva versión del PDF al expediente digital.
+          SGDE). Tras firmar, Jurion descargará la nueva versión del PDF al expediente digital.
         </p>
 
         {hint ? <p className="mt-2 text-[10px] text-slate-500">{hint}</p> : null}

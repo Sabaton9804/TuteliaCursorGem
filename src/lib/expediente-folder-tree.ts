@@ -65,7 +65,7 @@ function findOrCreateFolder(
 
 /**
  * En SGDE a veces un PDF contenedor («14. Respuesta…») envuelve el subexpediente real.
- * Para la vista en Tutelia, se omite ese segmento y se muestra «EXPEDIENTE…» al mismo nivel.
+ * Para la vista en Jurion, se omite ese segmento y se muestra «EXPEDIENTE…» al mismo nivel.
  */
 export function flattenSgdePathSegmentsForDisplay(segments: string[]): string[] {
   if (segments.length < 2) return segments;
@@ -125,7 +125,7 @@ export function buildExpedienteTreeFromDocs(docs: Document[]): ExpedienteTreeNod
 
   sortTreeNodes(roots);
 
-  // Piezas solo Tutelia al final (tras carpetas SGDE), para no “romper” 01, 02, 03… del Principal.
+  // Piezas solo Jurion al final (tras carpetas SGDE), para no “romper” 01, 02, 03… del Principal.
   if (localOnly.length > 0) {
     const localChildren = localOnly
       .slice()

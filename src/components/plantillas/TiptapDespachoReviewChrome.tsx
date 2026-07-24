@@ -35,7 +35,7 @@ type Props = {
 };
 
 /**
- * Panel de comentarios + burbuja para el borrador del despacho (misma marca que revisión Word en Tutelia).
+ * Panel de comentarios + burbuja para el borrador del despacho (misma marca que revisión Word en Jurion).
  * Los hilos viven en estado React del padre; no se serializan en `tiptap:` del cuerpo.
  */
 export function TiptapDespachoReviewChrome({

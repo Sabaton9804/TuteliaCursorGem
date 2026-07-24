@@ -191,7 +191,7 @@ export default function Estadisticas() {
         <div className="flex gap-2">
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" aria-hidden />
           <p className="text-xs leading-relaxed">
-            <strong className="font-semibold">Borrador Tutelia</strong> — ingresos por radicación, salidas por{' '}
+            <strong className="font-semibold">Borrador Jurion</strong> — ingresos por radicación, salidas por{' '}
             <code className="rounded bg-white/80 px-1">decision_at</code>, plazos con días hábiles del término
             global (10 días tutela 1ª). <strong className="font-semibold">Oficial CSJ</strong>: inventarios y
             columnas de entrada detalladas (Fase S3).

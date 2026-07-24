@@ -90,7 +90,7 @@ export async function buildInformeIngresoPlainTextPdfBlob(opts: {
   if (physicalLines.length === 0) physicalLines.push('(Sin texto)');
 
   const footer =
-    'Tutelia — informe de ingreso (expediente digital). Revise el Word en Generar documentos si aplica.';
+    'Jurion — informe de ingreso (expediente digital). Revise el Word en Generar documentos si aplica.';
 
   let page = pdfDoc.addPage([PAGE_W, PAGE_H]);
   let y = PAGE_H - margin.top;

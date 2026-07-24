@@ -169,7 +169,7 @@ export function CaseSgdePanel({ caseId, caseItem, onRefetchCase }: CaseSgdePanel
             Expediente en SGDE (solo lectura)
           </h3>
           <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-            Vista del árbol documental en el gestor institucional. El expediente digital de Tutelia (cuadernos y piezas
+            Vista del árbol documental en el gestor institucional. El expediente digital de Jurion (cuadernos y piezas
             subidas aquí) permanece arriba.
           </p>
         </div>

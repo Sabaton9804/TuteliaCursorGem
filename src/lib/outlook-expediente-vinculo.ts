@@ -40,7 +40,7 @@ export function mensajeVinculo(
   }
   if (v === 'no_encontrado') {
     return ref
-      ? `No hay expediente en Tutelia para la referencia «${ref}». Verifique el número o radique la tutela antes de ingresar este correo.`
+      ? `No hay expediente en Jurion para la referencia «${ref}». Verifique el número o radique la tutela antes de ingresar este correo.`
       : 'No se encontró expediente relacionado con las referencias del correo.';
   }
   if (v === 'ambiguo') {

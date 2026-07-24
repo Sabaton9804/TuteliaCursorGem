@@ -23,7 +23,7 @@ export function ExpedientePlannerLinkBar({ caseItem }: { caseItem: Case }) {
             Carpeta del expediente (OneDrive / SharePoint)
           </p>
           <p className="text-sm font-semibold text-slate-800">
-            {deposito ? `Ubicación Planner: ${deposito}` : 'Enlace externo — sin copia en Tutelia'}
+            {deposito ? `Ubicación Planner: ${deposito}` : 'Enlace externo — sin copia en Jurion'}
           </p>
           <p className="text-[11px] text-slate-500">
             Importado desde {fuente}. Los PDF históricos permanecen en la nube; aquí solo el vínculo.

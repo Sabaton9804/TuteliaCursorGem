@@ -34,7 +34,7 @@ export function canDeleteExpedientePieza(doc: Document, caseItem: Case): PiezaAc
     return {
       allowed: true,
       reason:
-        'Se eliminará solo en Tutelia. El archivo en SGDE no se borra automáticamente; retírelo en el portal si corresponde.',
+        'Se eliminará solo en Jurion. El archivo en SGDE no se borra automáticamente; retírelo en el portal si corresponde.',
     };
   }
   return { allowed: true };

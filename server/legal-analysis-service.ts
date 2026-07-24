@@ -5,7 +5,7 @@
  * El cliente manda SOLO datos crudos (caseType + pdfBase64 + flags de truncado).
  * El prompt se construye aquí; no se acepta `prompt` desde el cliente.
  *
- * caseType (4 buckets de radicación Tutelia):
+ * caseType (4 buckets de radicación Jurion):
  * - civil        ← civil_* (hoja 2 Civil-Oral)
  * - tutela       ← tutela_primera (hoja 8)
  * - impugnacion  ← tutela_segunda (hoja 13)

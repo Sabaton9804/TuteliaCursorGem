@@ -217,7 +217,7 @@ export function inferActCodeFromDocument(doc: Document): string | null {
   if (/^Anexos/i.test(doc.name)) return 'anexos_pruebas';
   if (/^EscritoDemanda/i.test(doc.name) || /^DemandaEjecutiva/i.test(doc.name)) return 'escrito_demanda';
   if (/^Demanda/i.test(doc.name) && !/^Demandado/i.test(doc.name)) return 'escrito_demanda';
-  // Nombres SGDE / juzgado (p. ej. 001001demandaanexos01): no vienen en TitleCase Tutelia.
+  // Nombres SGDE / juzgado (p. ej. 001001demandaanexos01): no vienen en TitleCase Jurion.
   const raw = `${doc.name || ''} ${doc.originalName || ''}`.toLowerCase();
   if (/falloniega|fallotutel/.test(raw) && !/notificacion|notificadoautoconcede/.test(raw)) {
     return 'fallo_tutela';

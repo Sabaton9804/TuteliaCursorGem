@@ -1,4 +1,4 @@
-# Tutelia: Express + SPA (dist/). Despliegue Cloud Run desde GitHub.
+# Jurion: Express + SPA (dist/). Despliegue Cloud Run desde GitHub.
 FROM node:22-bookworm-slim
 
 WORKDIR /app

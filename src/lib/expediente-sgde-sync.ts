@@ -7,7 +7,7 @@ export type DocumentSgdeSyncStatus = 'none' | 'linked' | 'local_only' | 'sgde_on
 export const DOCUMENT_SGDE_SYNC_LABELS: Record<DocumentSgdeSyncStatus, string> = {
   none: 'Sin SGDE',
   linked: 'Sincronizado',
-  local_only: 'Solo Tutelia',
+  local_only: 'Solo Jurion',
   sgde_only: 'Solo SGDE',
 };
 

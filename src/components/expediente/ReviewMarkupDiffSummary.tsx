@@ -17,7 +17,7 @@ export function ReviewMarkupDiffSummary({ baselineDoc, currentDoc, previewSketch
 
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50/90 px-3 py-2.5 text-xs text-slate-800">
-      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Resumen de cambios (Tutelia)</p>
+      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Resumen de cambios (Jurion)</p>
       {!summary.hasBaseline ? (
         <p className="mt-1.5 leading-snug text-slate-600">
           No hay línea base guardada para comparar (revisión anterior a esta función o sin guardado intermedio).

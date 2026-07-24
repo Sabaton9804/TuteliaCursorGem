@@ -67,7 +67,7 @@ function normalizeNameKey(name: string): string {
 
 /**
  * Infiera act_code desde nombre/type cuando la fila aún no lo trae
- * (misma semántica que el catálogo Tutelia → tipo SGDE).
+ * (misma semántica que el catálogo Jurion → tipo SGDE).
  */
 export function inferActCodeForSgdeTipo(name: string, docType?: string): string | null {
   const n = normalizeNameKey(name);
@@ -100,7 +100,7 @@ export function inferActCodeForSgdeTipo(name: string, docType?: string): string 
 
 /**
  * Tipo documental SGDE (`rama:tipoDocumental`).
- * Prioridad: act_code del catálogo Tutelia → heurística de nombre/type.
+ * Prioridad: act_code del catálogo Jurion → heurística de nombre/type.
  */
 export function tipoDocumentalSgdeFromFileName(
   name: string,

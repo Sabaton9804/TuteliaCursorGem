@@ -134,7 +134,7 @@ export class SgdeClient {
       validateStatus: () => true,
       headers: {
         'User-Agent':
-          'Mozilla/5.0 (compatible; TuteliaSGDE/1.0; +https://tutelia) Node.js',
+          'Mozilla/5.0 (compatible; JurionSGDE/1.0; +https://jurion) Node.js',
         Accept: 'application/json, text/plain, */*',
         'Accept-Language': 'es,es-ES;q=0.9',
         Origin: base,

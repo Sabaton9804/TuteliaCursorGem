@@ -215,7 +215,7 @@ export async function importExpedienteFromSgde(opts: ImportFromSgdeOpts): Promis
     }
 
     const { error: insErr } = await admin.from('cases').insert(row);
-    if (insErr) throw new Error(insErr.message || 'No se pudo crear el expediente en Tutelia.');
+    if (insErr) throw new Error(insErr.message || 'No se pudo crear el expediente en Jurion.');
   } else if (!String(existing?.sgde_id || '').trim()) {
     await admin
       .from('cases')
@@ -251,7 +251,7 @@ export async function importExpedienteFromSgde(opts: ImportFromSgdeOpts): Promis
 
   const actionDesc =
     created
-      ? `Importación desde SGDE: expediente creado en Tutelia (${mig.migrated} PDF).`
+      ? `Importación desde SGDE: expediente creado en Jurion (${mig.migrated} PDF).`
       : `Importación desde SGDE: expediente existente (${mig.migrated} PDF nuevos).`;
 
   await admin.from('case_actions').insert({
@@ -273,7 +273,7 @@ export async function importExpedienteFromSgde(opts: ImportFromSgdeOpts): Promis
   });
 
   const parts = [
-    created ? 'Expediente creado en Tutelia' : 'Expediente ya existía en Tutelia',
+    created ? 'Expediente creado en Jurion' : 'Expediente ya existía en Jurion',
     `vinculado a SGDE`,
     mig.migrated > 0 ? `${mig.migrated} PDF importados` : 'sin PDF nuevos (ya migrados o carpeta vacía)',
   ];

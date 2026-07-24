@@ -18,12 +18,12 @@ export type BuildJudicialDocEditorExtensionsOptions = {
   placeholder?: string;
   /** Variables `{{clave}}` y toggles de plantilla (plantilla + panel despacho). */
   plantillaNodes?: { resolveLabel: (key: string) => string };
-  /** Marca `reviewComment` (revisión Word en Tutelia). */
+  /** Marca `reviewComment` (revisión Word en Jurion). */
   showComments?: boolean;
 };
 
 /**
- * Misma base TipTap para plantillas, elaboración en expediente y revisión en Tutelia.
+ * Misma base TipTap para plantillas, elaboración en expediente y revisión en Jurion.
  * Orden: marco de texto (`TextStyle`) antes de `Color` / `FontFamily` / `FontSize` (extensiones que lo amplían).
  */
 export function buildJudicialDocEditorExtensions(

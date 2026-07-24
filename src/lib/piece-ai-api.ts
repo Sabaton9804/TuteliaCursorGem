@@ -9,7 +9,7 @@ async function authHeaders(): Promise<HeadersInit> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) {
-    throw new Error('Inicie sesión en Tutelia para usar la lectura rápida con IA.');
+    throw new Error('Inicie sesión en Jurion para usar la lectura rápida con IA.');
   }
   return {
     'Content-Type': 'application/json',

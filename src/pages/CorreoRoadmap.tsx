@@ -15,7 +15,7 @@ export default function CorreoRoadmap() {
       </Link>
       <header className="space-y-2 border-b border-slate-200 pb-4">
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">Roadmap — Módulo Correo</h1>
-        <p className="text-sm text-slate-600">Documento interno de prioridades (Outlook / Tutelia).</p>
+        <p className="text-sm text-slate-600">Documento interno de prioridades (Outlook / Jurion).</p>
       </header>
       <article className="prose prose-sm max-w-none prose-slate prose-headings:text-slate-900 prose-a:text-accent">
         <ReactMarkdown>{roadmapMd}</ReactMarkdown>

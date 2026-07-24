@@ -1,6 +1,6 @@
 {
-  "name": "Tutelia",
-  "description": "Gestión inteligente de tutelas de urgencia para despachos judiciales en Colombia. Incluye radicación, flujo de trabajo, términos y síntesis procesal con IA.",
+  "name": "Jurion",
+  "description": "Sistema operativo del despacho judicial en Colombia. Tutelas, procesos civiles, expediente digital, plazos, correo Outlook, SGDE y asistencia con IA.",
   "requestFramePermissions": [
     "camera",
     "microphone"

@@ -145,7 +145,7 @@ export function CourtProcessStagesPanel() {
     if (!defId || !selected) return;
     if (
       !window.confirm(
-        '¿Restaurar la plantilla Tutelia para este proceso? Se perderán renombres, orden, ocultas y etapas propias.',
+        '¿Restaurar la plantilla Jurion para este proceso? Se perderán renombres, orden, ocultas y etapas propias.',
       )
     )
       return;
@@ -157,7 +157,7 @@ export function CourtProcessStagesPanel() {
       const rows = await restoreCourtProcessStagesFromTemplate(courtId, defId, plantilla);
       setItems(rowsToEditor(rows));
       await refresh();
-      setStatus('Plantilla Tutelia restaurada.');
+      setStatus('Plantilla Jurion restaurada.');
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'No se pudo restaurar.');
     } finally {

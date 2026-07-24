@@ -2,7 +2,7 @@
 export type LegalAnalysisCaseKind = 'civil' | 'tutela' | 'impugnacion' | 'consulta';
 
 /**
- * Mapea case_type Tutelia → kind del endpoint.
+ * Mapea case_type Jurion → kind del endpoint.
  * - civil_* → civil (hoja 2)
  * - tutela_primera → tutela (hoja 8)
  * - tutela_segunda → impugnacion (hoja 13)

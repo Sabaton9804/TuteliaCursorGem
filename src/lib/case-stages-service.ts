@@ -373,7 +373,7 @@ function isBorradorFalloDocType(t: string | undefined): boolean {
   return t.includes('fallo') && t.includes('revision');
 }
 
-/** Juez aprueba borrador en Tutelia (estado aprobado_firma_pendiente). */
+/** Juez aprueba borrador en Jurion (estado aprobado_firma_pendiente). */
 export async function applyStageTransitionJudgeApprovedBorrador(
   supabase: SupabaseClient,
   opts: {

@@ -130,7 +130,7 @@ async function authHeaders(): Promise<HeadersInit> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) {
-    throw new Error('Inicie sesión en Tutelia para usar SGDE.');
+    throw new Error('Inicie sesión en Jurion para usar SGDE.');
   }
   return {
     'Content-Type': 'application/json',
@@ -305,7 +305,7 @@ export type SgdeDocumentViewUrlResult = {
 export async function sgdeDocumentViewUrl(opts: {
   caseId: string;
   documentId: string;
-  /** Timeout de red hacia Tutelia→SGDE (ms). */
+  /** Timeout de red hacia Jurion→SGDE (ms). */
   timeoutMs?: number;
 }): Promise<SgdeDocumentViewUrlResult> {
   const timeoutMs = opts.timeoutMs ?? 45_000;

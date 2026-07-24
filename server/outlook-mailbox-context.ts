@@ -268,7 +268,7 @@ export async function resolveOutlookContext(
       ok: false,
       status: 400,
       message:
-        'Seleccione el buzón del despacho en Tutelia antes de operar el correo. Use el selector de buzón o PUT /api/outlook/context.',
+        'Seleccione el buzón del despacho en Jurion antes de operar el correo. Use el selector de buzón o PUT /api/outlook/context.',
     };
   }
 

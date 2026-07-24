@@ -20,7 +20,7 @@ export async function generarDocxDesdePlantillaAlmacenada(
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     throw new Error(
-      `No se pudo completar la plantilla Word (${msg}). Compruebe que los marcadores coinciden con el catálogo Tutelia.`,
+      `No se pudo completar la plantilla Word (${msg}). Compruebe que los marcadores coinciden con el catálogo Jurion.`,
     );
   }
 }

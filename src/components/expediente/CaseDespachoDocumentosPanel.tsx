@@ -515,7 +515,7 @@ export function CaseDespachoDocumentosPanel({
         );
         if (replaceExisting) {
           throw new Error(
-            'La plantilla Word es demasiado pesada para regenerar el PDF con membrete. Descargue el Word y conviértalo a PDF fuera de Tutelia, o aligere la plantilla.',
+            'La plantilla Word es demasiado pesada para regenerar el PDF con membrete. Descargue el Word y conviértalo a PDF fuera de Jurion, o aligere la plantilla.',
           );
         }
         usedPlainFallback = true;

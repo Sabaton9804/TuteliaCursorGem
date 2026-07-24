@@ -32,7 +32,7 @@ async function authHeaders(): Promise<HeadersInit> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) {
-    throw new Error('Inicie sesión en Tutelia para usar SGDE.');
+    throw new Error('Inicie sesión en Jurion para usar SGDE.');
   }
   return {
     'Content-Type': 'application/json',
@@ -360,7 +360,7 @@ export function ExpedienteSgdeBar({
             <p className="text-[11px] text-slate-500">
               {piezasCount} pieza{piezasCount === 1 ? '' : 's'}
               {syncSummary.linked > 0 ? ` · ${syncSummary.linked} sincronizadas` : ''}
-              {syncSummary.localOnly > 0 ? ` · ${syncSummary.localOnly} pendientes Tutelia→SGDE` : ''}
+              {syncSummary.localOnly > 0 ? ` · ${syncSummary.localOnly} pendientes Jurion→SGDE` : ''}
               {syncReport && syncReport.sgdeOnly > 0 ? ` · ${syncReport.sgdeOnly} solo SGDE` : ''}
             </p>
           </div>
@@ -411,7 +411,7 @@ export function ExpedienteSgdeBar({
               }`}
               title={
                 localOnlyDocs.length > 0
-                  ? `Sube a SGDE las ${localOnlyDocs.length} pieza(s) «Solo Tutelia» (p. ej. informe de ingreso) y alinea el expediente`
+                  ? `Sube a SGDE las ${localOnlyDocs.length} pieza(s) «Solo Jurion» (p. ej. informe de ingreso) y alinea el expediente`
                   : 'Sincronizar piezas con SGDE'
               }
             >
@@ -516,7 +516,7 @@ export function ExpedienteSgdeBar({
             </ul>
           ) : null}
           <SyncDocGroup
-            title="Sincronizados (Tutelia + SGDE)"
+            title="Sincronizados (Jurion + SGDE)"
             empty="Ninguno todavía. Pulse Sincronizar."
             items={linkedDocs.map((d) => ({
               name: d.name,
@@ -525,7 +525,7 @@ export function ExpedienteSgdeBar({
             }))}
           />
           <SyncDocGroup
-            title="Pendientes — solo en Tutelia"
+            title="Pendientes — solo en Jurion"
             empty="Todo lo local con PDF ya está en SGDE."
             items={localOnlyDocs.map((d) => ({
               name: d.name,
@@ -534,7 +534,7 @@ export function ExpedienteSgdeBar({
             }))}
           />
           <SyncDocGroup
-            title="Solo en SGDE (no en Tutelia)"
+            title="Solo en SGDE (no en Jurion)"
             empty="No hay documentos en SGDE sin pareja local."
             items={(syncReport?.sgdeOnlyItems ?? []).map((it) => ({
               name: it.name,

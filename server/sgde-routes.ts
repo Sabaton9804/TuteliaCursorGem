@@ -104,7 +104,7 @@ export function registerSgdeRoutes(
     if (!platform.encryptionReady) {
       return res.status(503).json({
         error:
-          'El servidor no puede almacenar contraseñas SGDE (falta SGDE_CREDENTIALS_KEY). Contacte al administrador de Tutelia.',
+          'El servidor no puede almacenar contraseñas SGDE (falta SGDE_CREDENTIALS_KEY). Contacte al administrador de Jurion.',
       });
     }
 

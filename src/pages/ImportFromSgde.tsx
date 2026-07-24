@@ -170,7 +170,7 @@ export default function ImportFromSgde() {
             {formatRadicado(result.radicado)}
           </p>
           {result.migrated > 0 ? (
-            <p className="mt-1 text-xs text-emerald-800">{result.migrated} PDF importados a Tutelia</p>
+            <p className="mt-1 text-xs text-emerald-800">{result.migrated} PDF importados a Jurion</p>
           ) : null}
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <button
@@ -211,12 +211,12 @@ export default function ImportFromSgde() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-900">Importar desde SGDE</h1>
             <p className="mt-1 text-sm text-slate-600 leading-relaxed">
-              El expediente ya existe en el sistema de gestión documental. Se crea o abre el caso en Tutelia, se
+              El expediente ya existe en el sistema de gestión documental. Se crea o abre el caso en Jurion, se
               descargan los PDF y queda vinculado — sin «Crear» ni «Vincular» de nuevo.
             </p>
           </div>
           <span className="shrink-0 rounded-lg border border-violet-100 bg-violet-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-violet-800">
-            SGDE → Tutelia
+            SGDE → Jurion
           </span>
         </div>
       </header>
@@ -351,7 +351,7 @@ export default function ImportFromSgde() {
           ) : (
             <>
               <CloudDownload className="h-5 w-5" />
-              Importar expediente a Tutelia
+              Importar expediente a Jurion
             </>
           )}
         </button>

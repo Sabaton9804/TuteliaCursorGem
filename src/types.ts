@@ -175,7 +175,7 @@ export type WordReviewStatus =
   | 'aprobado_firma_pendiente'
   | 'cerrado_con_pdf_firmado';
 
-/** Revisión enriquecida en Tutelia (TipTap); columna `review_markup_json`. */
+/** Revisión enriquecida en Jurion (TipTap); columna `review_markup_json`. */
 export type CaseWordReviewMarkupV1 = {
   v: 1;
   /** Legacy: JSON TipTap. Preferir `storage` (`tiptap:` + JSON) para nuevas escrituras. */

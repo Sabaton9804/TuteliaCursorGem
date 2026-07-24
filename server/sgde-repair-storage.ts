@@ -55,7 +55,7 @@ function notebookFromFolderPath(folderPath: string | undefined, fallback: string
   return notebookCodeFromSgdeFolderPath(folderPath, fallback);
 }
 
-/** Tutelia manda: no pisar cuaderno ya asignado (p. ej. C02) solo porque el PDF quedó en Principal por un sync viejo. */
+/** Jurion manda: no pisar cuaderno ya asignado (p. ej. C02) solo porque el PDF quedó en Principal por un sync viejo. */
 function resolveNotebookForRepair(
   existing: string | null | undefined,
   folderPath: string | undefined,

@@ -363,7 +363,7 @@ export async function registerCaseActoPdfEnExpediente(opts: {
  * Sube un .docx generado al cuaderno principal del expediente e inicia un ciclo en «Documentos por revisar».
  * Los autos del despacho deben usar este flujo (no hay PDF directo al expediente desde generar documentos).
  * Si se envía `tipTapContent`, se guarda en `review_markup_json` como `{ v: 1, storage: "tiptap:…" }` para que el juez
- * abra el mismo documento en Tutelia sin depender de Mammoth sobre el .docx.
+ * abra el mismo documento en Jurion sin depender de Mammoth sobre el .docx.
  */
 export async function uploadGeneratedDocxToExpedienteWithWordReview(opts: {
   caseId: string;
@@ -378,7 +378,7 @@ export async function uploadGeneratedDocxToExpedienteWithWordReview(opts: {
   /** Texto legible para la notificación al juez (por defecto el nombre del archivo). */
   documentLabel?: string;
   actorUserName?: string;
-  /** Contenido del editor judicial al enviar a revisión (misma vista que verá el juez en Tutelia). */
+  /** Contenido del editor judicial al enviar a revisión (misma vista que verá el juez en Jurion). */
   tipTapContent?: JSONContent | null;
   /** Hilos de comentarios marginales del borrador (persisten en review_markup_json). */
   commentThreads?: CommentThreadsMap;

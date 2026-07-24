@@ -1331,7 +1331,7 @@ export function ExpedienteDigitalPanel({
               </button>
             </div>
             <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
-              Nombre visible en Tutelia. No cambia el archivo en SGDE si ya estaba sincronizado.
+              Nombre visible en Jurion. No cambia el archivo en SGDE si ya estaba sincronizado.
             </p>
             <label className="mt-3 block text-[10px] font-bold uppercase tracking-wide text-slate-400">
               Nombre

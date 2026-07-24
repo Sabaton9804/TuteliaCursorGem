@@ -36,7 +36,7 @@ export function isTutelaFalloPlazoCaseType(caseType?: CaseType): boolean {
   return caseType === 'tutela_primera' || caseType === 'tutela_segunda';
 }
 
-/** Plazo global del caso (días hábiles) según tipo de tutela en Tutelia. */
+/** Plazo global del caso (días hábiles) según tipo de tutela en Jurion. */
 export function caseTermBusinessDaysFromDecreto2591(caseType?: CaseType): number | null {
   if (caseType === 'tutela_segunda') return PLAZO_FALLAR_SEGUNDA_DIAS;
   if (caseType === 'tutela_primera') return PLAZO_FALLAR_PRIMERA_DIAS;
