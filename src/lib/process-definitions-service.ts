@@ -155,7 +155,7 @@ function rowToTransition(row: Record<string, unknown>): ProcessStageTransitionRo
 
 function pipelineFromStages(stages: ProcessStageDefinitionRow[]): CaseStageCode[] {
   return stages
-    .filter((s) => s.stage_kind === 'linear' || s.stage_kind === 'optional')
+    .filter((s) => s.stage_kind === 'linear' || s.stage_kind === 'optional' || s.stage_kind === 'terminal')
     .sort((a, b) => a.order_index - b.order_index)
     .map((s) => s.code as CaseStageCode);
 }

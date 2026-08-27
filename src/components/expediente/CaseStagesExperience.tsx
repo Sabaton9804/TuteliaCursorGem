@@ -723,7 +723,7 @@ export function CaseStagesExperience() {
                             ) : null}
                           </>
                         ) : null}
-                        {caseType === 'tutela_primera' && openRow?.stageCode === 'REMISION_SUPERIOR' ? (
+                        {(caseType === 'tutela_primera' || isCivil) && openRow?.stageCode === 'REMISION_SUPERIOR' ? (
                           <>
                             <button
                               type="button"

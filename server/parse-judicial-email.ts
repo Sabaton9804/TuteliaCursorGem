@@ -2,6 +2,12 @@ import { simpleParser } from 'mailparser';
 import JSZip from 'jszip';
 import axios from 'axios';
 import {
+  assertSafeJudicialArchiveUrl,
+  JUDICIAL_ARCHIVE_MAX_REDIRECTS,
+  UnsafeJudicialArchiveUrlError,
+  unwrapJudicialArchiveUrl,
+} from './safe-judicial-archive-url';
+import {
   ACTA_REPARTO_DISPLAY_NAME,
   detectActaRepartoInPdfBuffer,
   filenameSuggestsActaReparto,
@@ -18,22 +24,7 @@ export function judicialAttachmentPriority(name: string): number {
   return 5;
 }
 
-/** Desenvuelve SafeLinks/AMP y deja la URL real de Demanda en línea / archivo. */
-export function unwrapJudicialArchiveUrl(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  let url = String(raw).replace(/&amp;/g, '&').trim();
-  if (!url) return null;
-  try {
-    const u = new URL(url);
-    if (u.hostname.toLowerCase().includes('safelinks.protection.outlook.com')) {
-      const inner = u.searchParams.get('url');
-      if (inner) url = inner.trim();
-    }
-  } catch {
-    /* conservar url parcialmente limpia */
-  }
-  return url || null;
-}
+export { unwrapJudicialArchiveUrl };
 
 type ProcAtt = {
   filename: string;
@@ -103,30 +94,61 @@ async function attachmentsFromZipBuffer(
   return Promise.all(filePromises);
 }
 
+async function downloadArchiveBufferFollowingRedirects(
+  startUrl: string,
+): Promise<{ fileBuffer: Buffer; contentType: string; finalUrl: string } | null> {
+  let current = startUrl;
+  for (let hop = 0; hop <= JUDICIAL_ARCHIVE_MAX_REDIRECTS; hop++) {
+    const safe = await assertSafeJudicialArchiveUrl(current);
+    let response;
+    try {
+      response = await axios.get(safe.toString(), {
+        responseType: 'arraybuffer',
+        timeout: ARCHIVE_LINK_TIMEOUT_MS,
+        maxRedirects: 0,
+        maxContentLength: ARCHIVE_LINK_MAX_BYTES,
+        maxBodyLength: ARCHIVE_LINK_MAX_BYTES,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          Accept: 'application/pdf,application/zip,*/*;q=0.8',
+        },
+        validateStatus: (status) => status < 500,
+      });
+    } catch (err) {
+      const ax = err as { response?: { status?: number; headers?: Record<string, unknown>; data?: unknown } };
+      if (ax.response && typeof ax.response.status === 'number' && ax.response.status >= 300 && ax.response.status < 400) {
+        response = ax.response as typeof response;
+      } else {
+        throw err;
+      }
+    }
+    if (response.status >= 300 && response.status < 400) {
+      const loc = String(response.headers.location || '').trim();
+      if (!loc) throw new UnsafeJudicialArchiveUrlError('Redirección del portal sin encabezado Location.');
+      current = new URL(loc, safe).toString();
+      continue;
+    }
+    if (response.status >= 400) return null;
+    const fileBuffer = Buffer.from(response.data);
+    const contentType = String(response.headers['content-type'] || 'application/octet-stream')
+      .split(';')[0]
+      .trim();
+    return { fileBuffer, contentType, finalUrl: safe.toString() };
+  }
+  throw new UnsafeJudicialArchiveUrlError('Demasiadas redirecciones al descargar el archivo judicial.');
+}
+
 async function downloadArchiveLinkAttachments(
   downloadUrl: string,
   nextOrder: () => number
 ): Promise<ProcAtt[]> {
-  const response = await axios.get(downloadUrl, {
-    responseType: 'arraybuffer',
-    timeout: ARCHIVE_LINK_TIMEOUT_MS,
-    maxRedirects: 15,
-    maxContentLength: ARCHIVE_LINK_MAX_BYTES,
-    maxBodyLength: ARCHIVE_LINK_MAX_BYTES,
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      Accept: 'application/pdf,application/zip,*/*;q=0.8',
-    },
-    validateStatus: (status) => status < 500,
-  });
+  const downloaded = await downloadArchiveBufferFollowingRedirects(downloadUrl);
+  if (!downloaded) return [];
 
-  if (response.status >= 400) return [];
-
-  const fileBuffer = Buffer.from(response.data);
-  let contentType = String(response.headers['content-type'] || 'application/octet-stream')
-    .split(';')[0]
-    .trim();
+  const { fileBuffer, finalUrl } = downloaded;
+  let { contentType } = downloaded;
+  const downloadUrlForName = finalUrl;
 
   const isPdfMagic =
     fileBuffer.length >= 5 &&
@@ -138,7 +160,7 @@ async function downloadArchiveLinkAttachments(
 
   const isZip =
     contentType === 'application/zip' ||
-    downloadUrl.toLowerCase().split('?')[0].endsWith('.zip') ||
+    downloadUrlForName.toLowerCase().split('?')[0].endsWith('.zip') ||
     (fileBuffer.length > 4 && fileBuffer[0] === 0x50 && fileBuffer[1] === 0x4b);
 
   if (isZip) {
@@ -146,7 +168,7 @@ async function downloadArchiveLinkAttachments(
   }
 
   let baseName = 'DocumentosPruebasAnexos';
-  const lowerUrl = downloadUrl.toLowerCase();
+  const lowerUrl = downloadUrlForName.toLowerCase();
   if (filenameSuggestsActaReparto(lowerUrl)) baseName = 'ActaReparto';
   else if (lowerUrl.includes('demanda')) baseName = 'EscritoDemanda';
 
@@ -336,7 +358,7 @@ export async function parseJudicialEmailFromBuffer(
     };
   });
 
-  const parseSessionId = createParseSession(sessionAttachments, ownerUserId, {
+  const parseSessionId = createParseSession(sessionAttachments, ownerUserId?.trim() || 'script', {
     linkUrl: downloadUrl,
   });
   /** Límite por adjunto en JSON (el cliente usa esto para el visor sin depender solo de la sesión en RAM). */

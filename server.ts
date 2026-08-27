@@ -25,6 +25,7 @@ import {
   createParseSession,
   getParseSession,
   markParseSessionLinkError,
+  parseSessionOwnedBy,
   sweepParseSessions,
   touchParseSession,
 } from './server/parse-email-sessions';
@@ -33,6 +34,7 @@ import {
   parseJudicialEmailFromBuffer,
   unwrapJudicialArchiveUrl,
 } from './server/parse-judicial-email';
+import { assertSafeJudicialArchiveUrl, UnsafeJudicialArchiveUrlError } from './server/safe-judicial-archive-url';
 import {
   digestPdfAttachmentsForSegundaInstancia,
   shouldDigestPdfsForSegundaInstancia,
@@ -1287,7 +1289,7 @@ async function startServer() {
           'Sesión de parseo expirada o inexistente (p. ej. reinicio del servidor). Vuelva a cargar el archivo .eml.',
       });
     }
-    if (session.ownerUserId && session.ownerUserId !== authHdr.userId) {
+    if (!parseSessionOwnedBy(session, authHdr.userId)) {
       return res.status(403).json({ error: 'No autorizado para esta sesión de parseo.' });
     }
     touchParseSession(sessionId);
@@ -1318,7 +1320,7 @@ async function startServer() {
           'Sesión de parseo expirada o inexistente (p. ej. reinicio del servidor). Vuelva a cargar el archivo .eml.',
       });
     }
-    if (session.ownerUserId && session.ownerUserId !== authHdr.userId) {
+    if (!parseSessionOwnedBy(session, authHdr.userId)) {
       return res.status(403).json({ error: 'No autorizado para esta sesión de parseo.' });
     }
     touchParseSession(sessionId);
@@ -1351,7 +1353,7 @@ async function startServer() {
             'Sesión de parseo expirada o inexistente. Vuelva a cargar el archivo .eml antes de unir documentos.',
         });
       }
-      if (session.ownerUserId && session.ownerUserId !== authHdr.userId) {
+      if (!parseSessionOwnedBy(session, authHdr.userId)) {
         return res.status(403).json({ error: 'No autorizado para esta sesión de parseo.' });
       }
       const multerReq = req as Express.Request & {
@@ -1467,7 +1469,7 @@ async function startServer() {
           'Sesión de parseo expirada o inexistente (p. ej. reinicio del servidor). Vuelva a cargar el archivo .eml.',
       });
     }
-    if (session.ownerUserId && session.ownerUserId !== authHdr.userId) {
+    if (!parseSessionOwnedBy(session, authHdr.userId)) {
       return res.status(403).json({ error: 'No autorizado para esta sesión de parseo.' });
     }
     const bodyUrl =
@@ -1476,6 +1478,12 @@ async function startServer() {
     const url = unwrapJudicialArchiveUrl(rawUrl);
     if (!url) {
       return res.status(400).json({ error: 'No hay URL de Archivo / Demanda en línea para descargar.' });
+    }
+    try {
+      await assertSafeJudicialArchiveUrl(url);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'URL de archivo no permitida.';
+      return res.status(400).json({ error: msg, linkUrl: url });
     }
     const alreadyFromLink = session.attachments.some((a) => a.isFromLink);
     if (alreadyFromLink) {
@@ -1544,7 +1552,8 @@ async function startServer() {
       const msg = error instanceof Error ? error.message : String(error);
       console.error('[parse-session/fetch-archive]', error);
       markParseSessionLinkError(sessionId, msg);
-      return res.status(502).json({
+      const status = error instanceof UnsafeJudicialArchiveUrlError ? 400 : 502;
+      return res.status(status).json({
         error: `Error al descargar el enlace Archivo: ${msg}`,
         linkUrl: url,
       });

@@ -72,4 +72,29 @@ describe('process-stage-transitions', () => {
     expect(resolveTerminoRespuestaVencidoNext('civil_ordinario')).toBe('TRAMITE');
     expect(resolveTerminoRespuestaVencidoNext('tutela_primera')).toBe('INGRESO_DESPACHO_FALLO');
   });
+
+  it('tutela no abre TRAMITE aunque el grafo BD lo tenga (contaminación de seed)', () => {
+    setProcessDefinitionsCache('court-test', [
+      mockDef('tutela_primera', [
+        {
+          process_definition_id: 'pd-tutela_primera',
+          from_stage_code: 'TERMINO_RESPUESTA',
+          to_stage_code: 'TRAMITE',
+          label: 'Trámite contaminado',
+          is_default: false,
+        },
+      ]),
+      mockDef('civil_ordinario', [
+        {
+          process_definition_id: 'pd-civil_ordinario',
+          from_stage_code: 'TERMINO_RESPUESTA',
+          to_stage_code: 'TRAMITE',
+          label: 'Trámite probatorio (CGP)',
+          is_default: false,
+        },
+      ]),
+    ]);
+    expect(resolveTerminoRespuestaVencidoNext('tutela_primera')).toBe('INGRESO_DESPACHO_FALLO');
+    expect(resolveTerminoRespuestaVencidoNext('civil_ordinario')).toBe('TRAMITE');
+  });
 });

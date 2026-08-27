@@ -412,7 +412,8 @@ export function registerOutlookRoutes(app: Express, getSupabaseAdmin: () => Supa
       const { parsed } = await parseOutlookMessageToSession(
         messageId,
         pack.ctx.accessToken,
-        pack.ctx.graphTarget
+        pack.ctx.graphTarget,
+        pack.auth.userId,
       );
       const text = typeof parsed.text === 'string' ? parsed.text : '';
       const html = typeof parsed.html === 'string' ? parsed.html : '';

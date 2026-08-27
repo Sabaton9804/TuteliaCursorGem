@@ -114,7 +114,7 @@ import {
 } from '../hooks/useNewCaseForm';
 import { CaseEmailParser } from '../components/new-case/CaseEmailParser';
 import { CaseTypeInferredBanner } from '../components/new-case/CaseTypeInferredBanner';
-import { mapTipoProcesoToCivilCaseType } from '../lib/case-process-scope';
+import { mapTipoProcesoToCivilCaseType, caseDetailHref } from '../lib/case-process-scope';
 import { inferCaseTypeFromParsedEmail } from '../lib/infer-case-type-from-email';
 import { isCivilCaseType, partyRoleLabels } from '../lib/process-product-scope';
 import { buildInitialCivilCatalogMetadata } from '../lib/case-catalog-metadata';
@@ -417,6 +417,7 @@ export default function NewCase() {
   const [radicationResult, setRadicationResult] = useState<{
     caseId: string;
     radicado: string;
+    caseType: CaseType;
   } | null>(null);
   const [caseFlowType, setCaseFlowType] = useState<CaseType | null>(null);
   const [originCourt, setOriginCourt] = useState('');
@@ -848,7 +849,7 @@ export default function NewCase() {
   useEffect(() => {
     if (!radicationResult) return;
     const t = window.setTimeout(() => {
-      navigate(`/case/${radicationResult.caseId}`);
+      navigate(caseDetailHref(radicationResult.caseId, { caseType: radicationResult.caseType }));
     }, 2800);
     return () => window.clearTimeout(t);
   }, [radicationResult, navigate]);
@@ -1789,7 +1790,11 @@ export default function NewCase() {
 
       console.log('Radicación completada con éxito. Redirigiendo...');
       localStorage.removeItem(NEW_CASE_DRAFT_KEY);
-      setRadicationResult({ caseId, radicado: radicadoFormatted });
+      setRadicationResult({
+        caseId,
+        radicado: radicadoFormatted,
+        caseType: caseFlowType ?? 'tutela_primera',
+      });
     } catch (err: any) {
       console.error("Error al radicar:", err);
       if (uploadedStoragePaths.length > 0) {
@@ -2154,7 +2159,10 @@ export default function NewCase() {
           <CheckCircle2 className="mx-auto mb-6 h-16 w-16 text-emerald-600" aria-hidden />
           <h2 className="text-2xl font-bold tracking-tight text-slate-900">Listo, radicada</h2>
           <p className="mx-auto mt-3 max-w-lg text-sm font-medium leading-relaxed text-slate-600">
-            La tutela quedó registrada. Esta pantalla ya no muestra el formulario del consecutivo para evitar confusiones con un
+            {isCivilCaseType(radicationResult.caseType)
+              ? 'El proceso civil quedó registrado.'
+              : 'La tutela quedó registrada.'}{' '}
+            Esta pantalla ya no muestra el formulario del consecutivo para evitar confusiones con un
             segundo intento de radicación.
           </p>
           <div className="mx-auto mt-8 max-w-xl rounded-2xl border border-slate-200 bg-white px-6 py-5 text-left shadow-sm">
@@ -2167,7 +2175,7 @@ export default function NewCase() {
             Abriendo el expediente en unos segundos… Si no redirige, use el botón siguiente.
           </p>
           <Link
-            to={`/case/${radicationResult.caseId}`}
+            to={caseDetailHref(radicationResult.caseId, { caseType: radicationResult.caseType })}
             className="mt-6 inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-8 py-3 text-xs font-bold uppercase tracking-widest text-white shadow-md hover:opacity-95"
           >
             Abrir expediente ahora

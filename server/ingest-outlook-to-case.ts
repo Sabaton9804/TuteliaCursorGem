@@ -27,11 +27,15 @@ async function resolveSessionAttachments(
   accessToken: string,
   graphTarget: MailboxGraphTarget,
   messageId: string,
-  parseSessionId: string | null
+  parseSessionId: string | null,
+  ownerUserId: string,
 ): Promise<ParseSessionRow[]> {
   if (parseSessionId) {
     const session = getParseSession(parseSessionId);
     if (session?.attachments?.length) {
+      if (session.ownerUserId && session.ownerUserId !== ownerUserId) {
+        throw new Error('No autorizado para esta sesión de parseo.');
+      }
       let attachments = session.attachments;
       const merged = await supplementParseSessionFromGraphAttachments(
         accessToken,
@@ -46,7 +50,12 @@ async function resolveSessionAttachments(
       return attachments;
     }
   }
-  const { parsed, attachments } = await parseOutlookMessageToSession(messageId, accessToken, graphTarget);
+  const { parsed, attachments } = await parseOutlookMessageToSession(
+    messageId,
+    accessToken,
+    graphTarget,
+    ownerUserId,
+  );
   if (parsed.parseSessionId && attachments.length) {
     replaceParseSessionAttachments(parsed.parseSessionId, attachments);
   }
@@ -89,7 +98,8 @@ export async function ingestOutlookReviewToCase(opts: {
     accessToken,
     graphTarget,
     review.outlook_message_id,
-    review.parse_session_id
+    review.parse_session_id,
+    userId,
   );
 
   const classificationFull = review.classification as ClassifyJudicialEmailResult;

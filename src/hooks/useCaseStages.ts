@@ -146,7 +146,7 @@ export function useCaseStages(opts: UseOpts) {
         caseAssignedTo: opts.caseAssignedTo,
       });
       if (assigneeId) {
-        const payload = workflowTaskPayloadForStage(first, opts.radicado);
+        const payload = workflowTaskPayloadForStage(first, opts.radicado, opts.caseType);
         const { error: tErr } = await supabase.from('workflow_tasks').insert({
           court_id: opts.courtId,
           case_id: opts.caseId,

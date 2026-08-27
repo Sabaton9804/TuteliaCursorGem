@@ -18,7 +18,15 @@ export type SgdeExpedienteMetadataInput = {
   claimant: string;
   defendant: string;
   courtName?: string;
+  caseType?: string | null;
 };
+
+export const SGDE_SERIE_CIVIL = 'Civil';
+export const SGDE_SUBSERIE_CIVIL = 'Procesos civiles';
+
+function isCivilSgdeCaseType(caseType?: string | null): boolean {
+  return String(caseType || '').startsWith('civil_');
+}
 
 export function courtRadicacionCode12FromRow(row?: CourtRadicacionCuiRow | null): string {
   const dane = (row?.dane_code || COURT_CONSTANTS.CITY_CODE).trim();
@@ -33,12 +41,19 @@ export function courtRadicacionCode12(): string {
   return courtRadicacionCode12FromRow(null);
 }
 
-export function tituloExpedienteSgde(claimant: string, defendant: string): string {
+export function tituloExpedienteSgde(
+  claimant: string,
+  defendant: string,
+  caseType?: string | null,
+): string {
   const d = (claimant || '').replace(/\s+/g, ' ').trim();
   const dd = (defendant || '').replace(/\s+/g, ' ').trim();
+  const civil = isCivilSgdeCaseType(caseType);
+  const prefix = civil ? 'Proceso civil' : 'Tutela';
   let s = `${d} vs ${dd}`.trim();
-  if (s.length < 3) s = 'Tutela';
-  if (!/^tutela\b/i.test(s)) s = `Tutela — ${s}`;
+  if (s.length < 3) s = prefix;
+  const alreadyPrefixed = civil ? /^proceso civil\b/i.test(s) : /^tutela\b/i.test(s);
+  if (!alreadyPrefixed) s = `${prefix} — ${s}`;
   return s.slice(0, 240);
 }
 
@@ -49,12 +64,13 @@ export function nomOficinaProductoraSgde(courtName?: string): string {
 
 export function buildSgdeExpedienteProperties(input: SgdeExpedienteMetadataInput): Record<string, string> {
   const cui = input.radicado23.replace(/\D/g, '').slice(0, 23);
+  const civil = isCivilSgdeCaseType(input.caseType);
   return {
     'rama:nomExpediente': cui,
-    'rama:nombreSerie': SGDE_SERIE_TUTELA,
-    'rama:nomSubserie': SGDE_SUBSERIE_TUTELA,
+    'rama:nombreSerie': civil ? SGDE_SERIE_CIVIL : SGDE_SERIE_TUTELA,
+    'rama:nomSubserie': civil ? SGDE_SUBSERIE_CIVIL : SGDE_SUBSERIE_TUTELA,
     'rama:nomOficinaProductora': nomOficinaProductoraSgde(input.courtName),
-    'cm:title': tituloExpedienteSgde(input.claimant, input.defendant),
+    'cm:title': tituloExpedienteSgde(input.claimant, input.defendant, input.caseType),
   };
 }
 

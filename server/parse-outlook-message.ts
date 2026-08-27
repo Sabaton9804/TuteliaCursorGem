@@ -16,10 +16,11 @@ export type OutlookMessageSession = {
 export async function parseOutlookMessageToSession(
   messageId: string,
   accessToken: string,
-  target: MailboxGraphTarget
+  target: MailboxGraphTarget,
+  ownerUserId: string,
 ): Promise<OutlookMessageSession> {
   const mime = await getMessageMime(accessToken, target, messageId);
-  const parsed = await parseJudicialEmailFromBuffer(mime);
+  const parsed = await parseJudicialEmailFromBuffer(mime, ownerUserId);
   const session = getParseSession(parsed.parseSessionId);
   if (!session) {
     throw new Error('No se pudo crear la sesión temporal de adjuntos.');

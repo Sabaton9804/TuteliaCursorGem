@@ -422,7 +422,10 @@ export async function sgdePreflightOrigin(
   return body;
 }
 
-export async function sgdePreviewNodeBytes(nodeId: string): Promise<{
+export async function sgdePreviewNodeBytes(
+  nodeId: string,
+  opts?: { caseId?: string | null },
+): Promise<{
   bytes: Uint8Array;
   contentType: string;
   size: number;
@@ -431,7 +434,7 @@ export async function sgdePreviewNodeBytes(nodeId: string): Promise<{
   const res = await fetch(apiUrl('/api/sgde/preview-node'), {
     method: 'POST',
     headers: { ...headers, Accept: 'application/pdf' },
-    body: JSON.stringify({ nodeId }),
+    body: JSON.stringify({ nodeId, caseId: opts?.caseId || undefined }),
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string };

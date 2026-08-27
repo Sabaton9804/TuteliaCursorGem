@@ -1,7 +1,7 @@
 import type { Express, Request } from 'express';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { requireAuthenticatedCaller } from './outlook-auth';
-import { assertCaseCourtAccess, resolveDefaultCourtId, userHasCourtAccess } from './court-access';
+import { assertCaseCourtAccess, requireCaseAccess, resolveDefaultCourtId, userHasCourtAccess } from './court-access';
 import { sgdePlatformState } from './sgde-integration';
 import { getLoggedInSgdeClientForUser, invalidateSgdeSession } from './sgde-session-cache';
 import {
@@ -274,9 +274,18 @@ export function registerSgdeRoutes(
   });
 
   app.post('/api/sgde/preview-node', async (req, res) => {
-    const nodeId = String((req.body as { nodeId?: string })?.nodeId || '').trim();
+    const body = (req.body ?? {}) as { nodeId?: string; caseId?: string };
+    const nodeId = String(body.nodeId || '').trim();
     if (!nodeId || !/^[0-9a-f-]{36}$/i.test(nodeId)) {
       return res.status(400).json({ error: 'nodeId (UUID) es requerido.' });
+    }
+
+    const caseId = String(body.caseId || '').trim();
+    if (caseId) {
+      const acc = await requireCaseAccess(req, getSupabaseAdmin, caseId);
+      if (acc.ok === false) {
+        return res.status(acc.status).json({ error: acc.message });
+      }
     }
 
     const sess = await sgdeClientForRequest(req, getSupabaseAdmin);

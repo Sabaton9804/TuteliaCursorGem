@@ -48,7 +48,7 @@ const STAGE_ACT_GATES: GateRule[] = [
   },
   {
     trigger: 'SECRETARIA_REMISION_SUPERIOR',
-    caseTypes: ['tutela_primera'],
+    caseTypes: ['tutela_primera', ...CIVIL_CASE_TYPE_LIST],
     mode: 'all',
     requiredActs: ['remision_superior'],
     actionLabel: 'registrar la remisión al superior',
@@ -122,6 +122,26 @@ export function canRegistrarNotificacionAutoEnviada(
   caseType: CaseType,
   docs: Document[],
 ): StageActGateResult {
+  if (caseType === 'civil_ejecutivo') {
+    const hasAuto =
+      caseHasAnyAct(docs, ['mandamiento_pago']) || caseHasAnyAct(docs, ['auto_admite']);
+    if (!hasAuto) {
+      return {
+        ok: false,
+        missingActs: ['mandamiento_pago', 'auto_admite'],
+        message:
+          'No puede registrar la notificación del mandamiento sin Mandamiento de pago o auto que lo ordena en el expediente digital.',
+      };
+    }
+    if (!caseHasAnyAct(docs, ['notificacion_admisorio'])) {
+      return {
+        ok: false,
+        missingActs: ['notificacion_admisorio'],
+        message: 'Faltan piezas en el expediente: Notificación mandamiento de pago.',
+      };
+    }
+    return { ok: true };
+  }
   return checkStageActGate('SECRETARIA_NOTIFICACION_AUTO_ENVIADA', caseType, docs);
 }
 

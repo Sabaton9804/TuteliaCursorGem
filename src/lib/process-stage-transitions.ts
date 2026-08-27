@@ -65,9 +65,13 @@ export function resolveNextStageCode(
   return null;
 }
 
-/** Vencimiento de contestación / excepciones → trámite o ingreso despacho. */
+/** Vencimiento de contestación / excepciones → trámite (civil) o ingreso despacho (tutela). */
 export function resolveTerminoRespuestaVencidoNext(caseType: CaseType): CaseStageCode {
   const from = initialResponseTermStageForCaseType(caseType);
+  if (!isCivilCaseType(caseType)) {
+    const linear = getLinearNextStage(caseType, from);
+    return linear ?? 'INGRESO_DESPACHO_FALLO';
+  }
   const transitions = getBranchTransitionsFromStage(caseType, from);
   const tramite = transitions.find((t) => t.to_stage_code === 'TRAMITE');
   if (tramite) return 'TRAMITE';
@@ -75,7 +79,7 @@ export function resolveTerminoRespuestaVencidoNext(caseType: CaseType): CaseStag
   if (ingreso) return 'INGRESO_DESPACHO_FALLO';
   const linear = getLinearNextStage(caseType, from);
   if (linear) return linear;
-  return isCivilCaseType(caseType) ? 'TRAMITE' : 'INGRESO_DESPACHO_FALLO';
+  return 'TRAMITE';
 }
 
 /** Etapas destino de archivo por rama (INADMISION/RECHAZO → EJECUTORIA). */

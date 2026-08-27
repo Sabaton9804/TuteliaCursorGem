@@ -120,7 +120,7 @@ export const TUTELA_PRIMERA_ACT_TYPES: readonly CaseActTypeDef[] = [
   { code: 'notificacion_fallo', labelEs: 'Notificación del fallo', suggestedFilename: 'NotificacionFallo.pdf', sgdeTipoDocumental: 'Notificación', stageCode: 'NOTIFICACION_FALLO', responsibleRole: 'escribiente', sortBand: 21 },
   { code: 'constancia_notificacion_fallo', labelEs: 'Constancia notificación fallo', suggestedFilename: 'ConstanciaNotifFallo.pdf', sgdeTipoDocumental: 'Constancia', stageCode: 'NOTIFICACION_FALLO', responsibleRole: 'escribiente', sortBand: 22 },
   { code: 'impugnacion_escrito', labelEs: 'Escrito de impugnación', suggestedFilename: 'ImpugnacionFallo.pdf', sgdeTipoDocumental: 'Memorial de impugnación', stageCode: 'IMPUGNACION', responsibleRole: 'secretaria', sortBand: 23 },
-  { code: 'remision_superior', labelEs: 'Remisión al superior (impugnación)', suggestedFilename: 'RemisionSuperior.pdf', sgdeTipoDocumental: 'Oficio', stageCode: 'REMISION_SUPERIOR', responsibleRole: 'secretaria', sortBand: 24 },
+  { code: 'remision_superior', labelEs: 'Remisión al superior', suggestedFilename: 'RemisionSuperior.pdf', sgdeTipoDocumental: 'Oficio', stageCode: 'REMISION_SUPERIOR', responsibleRole: 'secretaria', sortBand: 24 },
   { code: 'remision_corte', labelEs: 'Remisión a la Corte Constitucional', suggestedFilename: 'RemisionCorte.pdf', sgdeTipoDocumental: 'Oficio', stageCode: 'REMISION_CORTE', responsibleRole: 'oficial_mayor', sortBand: 30 },
   { code: 'auto_inadmite', labelEs: 'Auto inadmisorio (PDF firmado)', suggestedFilename: 'AutoInadmite.pdf', sgdeTipoDocumental: 'Auto inadmisorio', stageCode: 'INADMISION', responsibleRole: 'despacho', sortBand: 6 },
   { code: 'notificacion_inadmision', labelEs: 'Notificación auto inadmisorio', suggestedFilename: 'NotificacionInadmision.pdf', sgdeTipoDocumental: 'Notificación', stageCode: 'INADMISION', responsibleRole: 'escribiente', sortBand: 7 },
@@ -143,6 +143,7 @@ export const CIVIL_ORDINARIO_ACT_TYPES: readonly CaseActTypeDef[] = [
   { code: 'sentencia', labelEs: 'Sentencia (PDF firmado)', suggestedFilename: 'Sentencia.pdf', sgdeTipoDocumental: 'Sentencia', stageCode: 'FALLO', responsibleRole: 'despacho', sortBand: 20 },
   { code: 'notificacion_fallo', labelEs: 'Notificación de la sentencia', suggestedFilename: 'NotificacionSentencia.pdf', sgdeTipoDocumental: 'Notificación', stageCode: 'NOTIFICACION_FALLO', responsibleRole: 'escribiente', sortBand: 21 },
   { code: 'apelacion_escrito', labelEs: 'Escrito de apelación', suggestedFilename: 'ApelacionSentencia.pdf', sgdeTipoDocumental: 'Memorial', stageCode: 'APELACION', responsibleRole: 'secretaria', sortBand: 22 },
+  { code: 'remision_superior', labelEs: 'Remisión al superior', suggestedFilename: 'RemisionSuperior.pdf', sgdeTipoDocumental: 'Oficio', stageCode: 'REMISION_SUPERIOR', responsibleRole: 'secretaria', sortBand: 24 },
   { code: 'auto_inadmite', labelEs: 'Auto inadmisorio (PDF firmado)', suggestedFilename: 'AutoInadmiteDemanda.pdf', sgdeTipoDocumental: 'Auto inadmisorio', stageCode: 'INADMISION', responsibleRole: 'despacho', sortBand: 30 },
   { code: 'auto_rechazo', labelEs: 'Auto de rechazo (PDF firmado)', suggestedFilename: 'AutoRechazoDemanda.pdf', sgdeTipoDocumental: 'Auto de rechazo', stageCode: 'RECHAZO', responsibleRole: 'despacho', sortBand: 31 },
 ] as const;
@@ -161,6 +162,7 @@ export const CIVIL_EJECUTIVO_ACT_TYPES: readonly CaseActTypeDef[] = [
   { code: 'sentencia', labelEs: 'Sentencia / auto que continúa ejecución', suggestedFilename: 'SentenciaEjecutivo.pdf', sgdeTipoDocumental: 'Sentencia', stageCode: 'FALLO', responsibleRole: 'despacho', sortBand: 20 },
   { code: 'notificacion_fallo', labelEs: 'Notificación de la sentencia', suggestedFilename: 'NotificacionSentencia.pdf', sgdeTipoDocumental: 'Notificación', stageCode: 'NOTIFICACION_FALLO', responsibleRole: 'escribiente', sortBand: 21 },
   { code: 'apelacion_escrito', labelEs: 'Escrito de apelación', suggestedFilename: 'ApelacionSentencia.pdf', sgdeTipoDocumental: 'Memorial', stageCode: 'APELACION', responsibleRole: 'secretaria', sortBand: 22 },
+  { code: 'remision_superior', labelEs: 'Remisión al superior', suggestedFilename: 'RemisionSuperior.pdf', sgdeTipoDocumental: 'Oficio', stageCode: 'REMISION_SUPERIOR', responsibleRole: 'secretaria', sortBand: 24 },
   { code: 'auto_inadmite', labelEs: 'Auto inadmisorio (PDF firmado)', suggestedFilename: 'AutoInadmiteDemanda.pdf', sgdeTipoDocumental: 'Auto inadmisorio', stageCode: 'INADMISION', responsibleRole: 'despacho', sortBand: 30 },
   { code: 'auto_rechazo', labelEs: 'Auto de rechazo (PDF firmado)', suggestedFilename: 'AutoRechazoDemanda.pdf', sgdeTipoDocumental: 'Auto de rechazo', stageCode: 'RECHAZO', responsibleRole: 'despacho', sortBand: 31 },
 ] as const;
@@ -316,6 +318,7 @@ export const UPLOADABLE_ACT_CODES_CIVIL_ORDINARIO: readonly CaseActCode[] = [
   'sentencia',
   'notificacion_fallo',
   'apelacion_escrito',
+  'remision_superior',
   'auto_inadmite',
   'auto_rechazo',
 ];
@@ -334,6 +337,7 @@ export const UPLOADABLE_ACT_CODES_CIVIL_EJECUTIVO: readonly CaseActCode[] = [
   'sentencia',
   'notificacion_fallo',
   'apelacion_escrito',
+  'remision_superior',
   'auto_inadmite',
   'auto_rechazo',
 ];

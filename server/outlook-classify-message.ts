@@ -39,7 +39,7 @@ export async function classifyAndEnqueueOutlookMessage(opts: {
   if (existing) {
     attachments = existing.attachments.filter((a) => a.buffer?.length);
   } else {
-    parseSessionId = createParseSession([]);
+    parseSessionId = createParseSession([], userId);
   }
 
   let manifest: OutlookAttachmentMeta[] = [];

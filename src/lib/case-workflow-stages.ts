@@ -291,18 +291,20 @@ export function workflowTaskPayloadForStage(
 ): { title: string; description: string; task_type: 'custom' | 'generate_notifs' } {
   const label = stageLabelForCaseType(stage, caseType);
   if (stage === 'ADMISION') {
+    const admisorio = caseType && isCivilCaseType(caseType) && caseType === 'civil_ejecutivo'
+      ? 'mandamiento de pago'
+      : 'auto admisorio';
     return {
-      title: `Generar oficios — notificación auto admisorio — ${radicado}`,
-      description:
-        'Auto admisorio firmado. Genere oficios, envíelos por correo a las partes y registre la notificación en el expediente.',
+      title: `Generar oficios — notificación ${admisorio} — ${radicado}`,
+      description: `Providencia firmada. Genere oficios, envíelos por correo a las partes y registre la notificación en el expediente.`,
       task_type: 'generate_notifs',
     };
   }
   if (stage === 'FALLO') {
+    const decision = caseType && isCivilCaseType(caseType) ? 'la sentencia' : 'el fallo';
     return {
-      title: `Generar oficios — notificación del fallo — ${radicado}`,
-      description:
-        'Fallo firmado. Genere oficios de notificación, envíelos por correo y registre «Notificación del fallo enviada».',
+      title: `Generar oficios — notificación de ${decision} — ${radicado}`,
+      description: `Decisión firmada. Genere oficios de notificación, envíelos por correo y registre la notificación enviada.`,
       task_type: 'generate_notifs',
     };
   }

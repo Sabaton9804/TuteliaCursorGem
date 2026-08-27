@@ -247,6 +247,7 @@ export async function syncDocumentsWithSgde(opts: {
     claimant: c.claimant,
     defendant: c.defendant,
     courtName: courtRow?.name ? String(courtRow.name) : undefined,
+    caseType: c.case_type,
   });
 
   const notebookCode = notebookForCaseType(c.case_type);

@@ -152,6 +152,7 @@ async function enqueueWorkflowTaskForStage(
     stage: CaseStageCode;
     creatorId: string | null;
     caseAssignedTo?: string | null;
+    caseType?: CaseType;
   },
 ): Promise<void> {
   const rr = responsibleRoleForStage(opts.stage);
@@ -161,7 +162,7 @@ async function enqueueWorkflowTaskForStage(
     caseAssignedTo: opts.caseAssignedTo,
   });
   if (!assigneeId) return;
-  const payload = workflowTaskPayloadForStage(opts.stage, opts.radicado);
+  const payload = workflowTaskPayloadForStage(opts.stage, opts.radicado, opts.caseType);
   const { error: tErr } = await supabase.from('workflow_tasks').insert({
     court_id: opts.courtId,
     case_id: opts.caseId,
@@ -313,6 +314,7 @@ export async function openRadicacionStageAfterRadicate(
     stage: first,
     creatorId: userId,
     caseAssignedTo: opts.caseAssignedTo,
+    caseType: opts.caseType,
   });
 }
 
@@ -566,6 +568,7 @@ export async function applyStageTransitionFalloPdfFirmado(
     stage: next,
     creatorId: userId,
     caseAssignedTo: opts.caseAssignedTo,
+    caseType: opts.caseType,
   });
 }
 
@@ -669,6 +672,7 @@ export async function applyStageTransitionNotificacionAutoEnviada(
     stage: termino,
     creatorId: userId,
     caseAssignedTo: opts.caseAssignedTo,
+    caseType: opts.caseType,
   });
 }
 
@@ -869,6 +873,7 @@ export async function applyStageTransitionIfTerminoRespuestaVencido(
     stage: next,
     creatorId: userId,
     caseAssignedTo: opts.caseAssignedTo,
+    caseType: opts.caseType,
   });
 }
 
@@ -932,6 +937,7 @@ export async function applyStageTransitionContestacionCerrada(
     stage: next,
     creatorId: userId,
     caseAssignedTo: opts.caseAssignedTo,
+    caseType: opts.caseType,
   });
 }
 
@@ -1001,6 +1007,7 @@ export async function applyStageTransitionExpedienteRecibidoAlDespacho(
     stage: next,
     creatorId: userId,
     caseAssignedTo: opts.caseAssignedTo,
+    caseType: opts.caseType,
   });
 
   if (opts.caseType === 'tutela_segunda') {
@@ -1073,6 +1080,7 @@ export async function applyStageTransitionIngresoDespachoParaSentencia(
     stage: next,
     creatorId: userId,
     caseAssignedTo: opts.caseAssignedTo,
+    caseType: opts.caseType,
   });
 }
 
@@ -1166,6 +1174,7 @@ export async function applyStageTransitionNotificacionFalloEnviada(
     stage: termino,
     creatorId: userId,
     caseAssignedTo: opts.caseAssignedTo,
+    caseType: opts.caseType,
   });
 }
 
@@ -1228,6 +1237,7 @@ export async function applyStageTransitionIfTerminoImpugnacionVencido(
     stage: next,
     creatorId: userId,
     caseAssignedTo: opts.caseAssignedTo,
+    caseType: opts.caseType,
   });
 }
 
@@ -1290,6 +1300,7 @@ export async function applyStageTransitionIfTerminoApelacionVencido(
     stage: next,
     creatorId: userId,
     caseAssignedTo: opts.caseAssignedTo,
+    caseType: opts.caseType,
   });
 }
 
@@ -1366,6 +1377,7 @@ export async function applyStageTransitionApelacionRecibida(
     stage: rem,
     creatorId: userId,
     caseAssignedTo: opts.caseAssignedTo,
+    caseType: opts.caseType,
   });
 }
 
@@ -1449,6 +1461,7 @@ export async function applyStageTransitionImpugnacionRecibida(
     stage: rem,
     creatorId: userId,
     caseAssignedTo: opts.caseAssignedTo,
+    caseType: opts.caseType,
   });
 }
 
@@ -1464,7 +1477,7 @@ export async function applyStageTransitionRemisionSuperiorRegistrada(
     expedienteDocs?: Document[];
   },
 ): Promise<void> {
-  if (opts.caseType !== 'tutela_primera') return;
+  if (opts.caseType !== 'tutela_primera' && !isCivilCaseType(opts.caseType)) return;
   const docs = await resolveExpedienteDocsForGate(supabase, opts.caseId, opts.expedienteDocs);
   const gate = canRegistrarRemisionSuperior(opts.caseType, docs);
   if (!gate.ok) throw new Error('message' in gate ? gate.message : 'Faltan piezas en el expediente.');
@@ -1512,6 +1525,7 @@ export async function applyStageTransitionRemisionSuperiorRegistrada(
     stage: next,
     creatorId: userId,
     caseAssignedTo: opts.caseAssignedTo,
+    caseType: opts.caseType,
   });
 }
 
@@ -1574,6 +1588,7 @@ export async function applyStageTransitionRemisionCorteRegistrada(
     stage: next,
     creatorId: userId,
     caseAssignedTo: opts.caseAssignedTo,
+    caseType: opts.caseType,
   });
 }
 
@@ -1668,6 +1683,7 @@ export async function manualStageGoBack(
     stage: target,
     creatorId: userId,
     caseAssignedTo: opts.caseAssignedTo,
+    caseType: opts.caseType,
   });
 }
 
@@ -1750,6 +1766,7 @@ export async function manualStageSkipTo(
     stage: opts.dest,
     creatorId: userId,
     caseAssignedTo: opts.caseAssignedTo,
+    caseType: opts.caseType,
   });
 }
 

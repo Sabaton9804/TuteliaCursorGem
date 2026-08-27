@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   inferActCodeForSgdeTipo,
   tipoDocumentalSgdeFromFileName,
+  tituloExpedienteSgde,
   uploadOrderPriority,
 } from './sgde-tutela-metadata';
 
@@ -35,6 +36,15 @@ describe('uploadOrderPriority', () => {
     );
     expect(uploadOrderPriority('EscritoDemanda')).toBeLessThan(
       uploadOrderPriority('InformeIngresoDespacho'),
+    );
+  });
+});
+
+describe('tituloExpedienteSgde', () => {
+  it('prefija Tutela o Proceso civil según el tipo', () => {
+    expect(tituloExpedienteSgde('Ana', 'Banco')).toBe('Tutela — Ana vs Banco');
+    expect(tituloExpedienteSgde('Ana', 'Banco', 'civil_ordinario')).toBe(
+      'Proceso civil — Ana vs Banco',
     );
   });
 });

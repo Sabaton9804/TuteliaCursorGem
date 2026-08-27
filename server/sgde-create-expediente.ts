@@ -114,6 +114,7 @@ export async function createExpedienteInSgde(opts: {
     claimant: c.claimant,
     defendant: c.defendant,
     courtName: court.name,
+    caseType,
   });
 
   let sgdeRootId = String(c.sgde_id || '').trim();

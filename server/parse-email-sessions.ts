@@ -45,18 +45,28 @@ export function touchParseSession(sessionId: string): void {
 
 export function createParseSession(
   attachments: ParseSessionRow[],
-  ownerUserId?: string,
+  ownerUserId: string,
   opts?: { linkUrl?: string | null }
 ): string {
   sweepParseSessions();
+  const owner = ownerUserId.trim();
+  if (!owner) {
+    throw new Error('ownerUserId es obligatorio para la sesión de parseo.');
+  }
   const parseSessionId = randomUUID();
   parseSessions.set(parseSessionId, {
     createdAt: Date.now(),
-    ownerUserId: ownerUserId?.trim() || undefined,
+    ownerUserId: owner,
     attachments,
     linkUrl: opts?.linkUrl?.trim() || undefined,
   });
   return parseSessionId;
+}
+
+/** La sesión debe tener dueño y coincidir con el caller. Sesiones sin owner se niegan. */
+export function parseSessionOwnedBy(session: ParseSession, userId: string): boolean {
+  const owner = String(session.ownerUserId || '').trim();
+  return Boolean(owner) && owner === userId;
 }
 
 export function replaceParseSessionAttachments(sessionId: string, attachments: ParseSessionRow[]): boolean {
