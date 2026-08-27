@@ -104,9 +104,9 @@ export function buildCaseContestacionChecklist(opts: {
     if (allResponded) {
       mensajeResumen = 'Excepciones de mérito cargadas — puede cerrar el término e ingresar a trámite.';
     } else if (plazoVencido) {
-      mensajeResumen = 'Plazo de excepciones vencido (CGP art. 443) — puede continuar ejecución / trámite.';
+      mensajeResumen = 'Plazo de excepciones vencido (CGP art. 442) — puede continuar ejecución / trámite.';
     } else {
-      mensajeResumen = 'Pendiente excepciones de mérito o vencimiento del término (5 días hábiles).';
+      mensajeResumen = 'Pendiente excepciones de mérito o vencimiento del término (10 días hábiles).';
     }
     return {
       parties,
@@ -136,7 +136,7 @@ export function buildCaseContestacionChecklist(opts: {
     if (allResponded) {
       mensajeResumen = 'Contestación de la demanda cargada — puede cerrar el término e ingresar a trámite.';
     } else if (plazoVencido) {
-      mensajeResumen = 'Plazo de contestación vencido (CGP art. 76) — puede cerrar el término e ingresar a trámite.';
+      mensajeResumen = 'Plazo de contestación vencido (CGP art. 369) — puede cerrar el término e ingresar a trámite.';
     } else {
       mensajeResumen = 'Pendiente contestación de la demanda o vencimiento del término (20 días hábiles).';
     }

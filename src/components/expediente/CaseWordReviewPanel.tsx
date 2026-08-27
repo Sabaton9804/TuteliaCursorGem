@@ -819,6 +819,11 @@ export function CaseWordReviewPanel({
                                   });
                                 } catch (se) {
                                   console.error('Cambio de etapa fallo PDF firmado:', se);
+                                  setErr(
+                                    se instanceof Error
+                                      ? se.message
+                                      : 'No se pudo avanzar a sentencia. Revise el acta de inspección (art. 375 num. 9).',
+                                  );
                                 }
                                 await onRefetchCase?.();
                               }

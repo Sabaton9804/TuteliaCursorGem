@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Loader2, Upload, X } from 'lucide-react';
 import type { CaseType } from '../../types';
+import type { CgpResolveInput } from '../../lib/tramites-cgp';
 import {
   actRequiresPartyEntity,
   suggestedLogicalNameForAct,
@@ -20,6 +21,7 @@ type Props = {
   files: File[];
   notebookCode: string;
   caseType?: CaseType | null;
+  cgpOpts?: CgpResolveInput;
   busy?: boolean;
   onCancel: () => void;
   onConfirm: (payload: ExpedienteUploadActPayload) => void | Promise<void>;
@@ -30,11 +32,15 @@ export function ExpedienteUploadActDialog({
   files,
   notebookCode,
   caseType,
+  cgpOpts,
   busy = false,
   onCancel,
   onConfirm,
 }: Props) {
-  const actOptions = useMemo(() => uploadableActsForCaseType(caseType), [caseType]);
+  const actOptions = useMemo(
+    () => uploadableActsForCaseType(caseType, { ...cgpOpts, caseType: caseType ?? cgpOpts?.caseType }),
+    [caseType, cgpOpts],
+  );
   const [actCode, setActCode] = useState('');
   const [partyEntity, setPartyEntity] = useState('');
 

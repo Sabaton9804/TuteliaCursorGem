@@ -46,12 +46,15 @@ import {
   canRegistrarRemisionCorte,
   canRegistrarRemisionSuperior,
   stageActGateMessage,
+  canRegistrarIngresoDespachoParaSentencia,
 } from '../../lib/case-stage-act-gates';
 import { CaseContestacionChecklistPanel } from './CaseContestacionChecklistPanel';
 import { canRegistrarHitosSecretaria, canRegistrarRamaAdmision } from '../../lib/role-capabilities';
 import { isCivilCaseType } from '../../lib/process-product-scope';
 import { getBranchTransitionsFromStage } from '../../lib/process-stage-transitions';
 import { isCivilEjecutivoCaseType, supportsContestacionWorkflow } from '../../lib/sgde-case-scope';
+import { cgpOptsFromCase, resolveCgpTramite } from '../../lib/tramites-cgp';
+import { caseHasAnyAct } from '../../lib/case-act-types';
 import { startOfLocalDay } from '../../lib/business-days';
 import { plazoFallarSnapshotForCase } from '../../lib/plazo-fallar-tutela';
 import {
@@ -129,6 +132,12 @@ export function CaseStagesExperience() {
   const gateRechazo = useMemo(
     () => canRegistrarRechazoDemanda(caseType ?? 'tutela_primera', docs),
     [caseType, docs],
+  );
+  const cgpOpts = useMemo(() => cgpOptsFromCase(caseItem), [caseItem]);
+  const cgpTramite = useMemo(() => resolveCgpTramite(cgpOpts), [cgpOpts]);
+  const gateIngresoSentencia = useMemo(
+    () => canRegistrarIngresoDespachoParaSentencia(caseType ?? 'civil_ordinario', docs, cgpOpts),
+    [caseType, docs, cgpOpts],
   );
 
   useEffect(() => {
@@ -499,6 +508,7 @@ export function CaseStagesExperience() {
         radicado,
         caseType: caseType ?? 'civil_ordinario',
         caseAssignedTo: assignedTo,
+        expedienteDocs: docs,
       });
       await stages.refetch();
       await refetch.refetchCase();
@@ -508,7 +518,7 @@ export function CaseStagesExperience() {
     } finally {
       setBusy(false);
     }
-  }, [caseId, courtId, radicado, caseType, assignedTo, stages.refetch, refetch]);
+  }, [caseId, courtId, radicado, caseType, assignedTo, docs, stages.refetch, refetch]);
 
   const hist = useMemo(() => [...stages.rows].sort((a, b) => a.enteredAt.localeCompare(b.enteredAt)), [stages.rows]);
 
@@ -777,19 +787,46 @@ export function CaseStagesExperience() {
                             className="rounded-lg bg-indigo-600 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-indigo-700 disabled:opacity-40"
                           >
                             {isEjecutivo
-                              ? 'Excepciones cerradas → trámite (CGP art. 443)'
-                              : 'Contestación cerrada → trámite (CGP art. 76)'}
+                              ? 'Excepciones cerradas → trámite (CGP art. 442)'
+                              : 'Contestación cerrada → trámite (CGP art. 369)'}
                           </button>
                         ) : null}
                         {isCivil && openRow?.stageCode === 'TRAMITE' && canRegistrarRamaAdmision(role) ? (
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void registrarIngresoSentencia()}
-                            className="rounded-lg bg-emerald-700 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-emerald-800 disabled:opacity-40"
-                          >
-                            Ingreso al despacho para sentencia
-                          </button>
+                          <>
+                            {cgpTramite ? (
+                              <p className="text-[11px] leading-snug text-indigo-950/90">
+                                Carril CGP: <span className="font-semibold">{cgpTramite.label}</span>
+                                {cgpTramite.tramite === 'verbal' ? (
+                                  <span className="block text-indigo-900/80">
+                                    Cubo trámite:{' '}
+                                    {[
+                                      ['descorre_370', 'descorre 370'],
+                                      ['acta_372', 'acta 372'],
+                                      ['acta_373', 'acta 373'],
+                                    ]
+                                      .map(([code, label]) => `${caseHasAnyAct(docs, [code]) ? '✓' : '○'} ${label}`)
+                                      .join(' · ')}
+                                    {cgpTramite.perfil === '375'
+                                      ? ` · ${caseHasAnyAct(docs, ['acta_inspeccion_judicial']) ? '✓' : '○'} acta 375 num. 9`
+                                      : ''}
+                                  </span>
+                                ) : null}
+                              </p>
+                            ) : null}
+                            <button
+                              type="button"
+                              disabled={busy || !gateIngresoSentencia.ok}
+                              onClick={() => void registrarIngresoSentencia()}
+                              className="rounded-lg bg-emerald-700 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-emerald-800 disabled:opacity-40"
+                            >
+                              Ingreso al despacho para sentencia
+                            </button>
+                            {stageActGateMessage(gateIngresoSentencia) ? (
+                              <p className="text-[11px] leading-snug text-indigo-950/90">
+                                {stageActGateMessage(gateIngresoSentencia)}
+                              </p>
+                            ) : null}
+                          </>
                         ) : null}
                         {isCivil && openRow?.stageCode === 'TERMINO_APELACION' ? (
                           <>

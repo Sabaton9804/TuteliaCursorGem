@@ -10,6 +10,8 @@ import {
   canRegistrarInadmision,
   canRegistrarRechazoDemanda,
   canRegistrarApelacionRecibida,
+  canRegistrarIngresoDespachoParaSentencia,
+  canRegistrarFalloCivil,
 } from './case-stage-act-gates';
 import { businessDayTermEnd } from './business-days';
 import { PLAZO_REMISION_EXPEDIENTE_IMPUGNACION_DIAS } from './decreto-2591-plazos';
@@ -62,6 +64,20 @@ async function resolveExpedienteDocsForGate(
   const { data, error } = await supabase.from('case_documents').select('*').eq('case_id', caseId);
   if (error) throw new Error(error.message);
   return (data ?? []).map((r) => rowToCaseDoc(r as Record<string, unknown>, caseId));
+}
+
+async function resolveCgpOptsForCase(
+  supabase: SupabaseClient,
+  caseId: string,
+  caseType: CaseType,
+): Promise<{ tipoProceso?: string; clase?: string; caseType: CaseType }> {
+  const { data } = await supabase.from('cases').select('catalog_metadata').eq('id', caseId).maybeSingle();
+  const meta = parseCatalogMetadata(data?.catalog_metadata);
+  return {
+    caseType,
+    tipoProceso: meta?.tipo_proceso,
+    clase: meta?.clase,
+  };
 }
 
 export type CaseStageRowDb = {
@@ -528,6 +544,12 @@ export async function applyStageTransitionFalloPdfFirmado(
   if (!open?.stage_code) return;
   const current = open.stage_code as CaseStageCode;
   if (current !== 'INGRESO_DESPACHO_FALLO') return;
+  if (isCivilCaseType(opts.caseType)) {
+    const docs = await resolveExpedienteDocsForGate(supabase, opts.caseId);
+    const cgpOpts = await resolveCgpOptsForCase(supabase, opts.caseId, opts.caseType);
+    const gate = canRegistrarFalloCivil(opts.caseType, docs, cgpOpts);
+    if (!gate.ok) throw new Error('message' in gate ? gate.message : 'Faltan piezas para sentencia.');
+  }
   const { userId, userName } = await authActor(supabase);
   const now = new Date().toISOString();
   const next: CaseStageCode = 'FALLO';
@@ -1030,10 +1052,15 @@ export async function applyStageTransitionIngresoDespachoParaSentencia(
     radicado: string;
     caseType: CaseType;
     caseAssignedTo?: string | null;
+    expedienteDocs?: Document[];
   },
 ): Promise<void> {
   if (!isCivilCaseType(opts.caseType)) return;
   await ensureSupabaseSessionForWrites();
+  const docs = await resolveExpedienteDocsForGate(supabase, opts.caseId, opts.expedienteDocs);
+  const cgpOpts = await resolveCgpOptsForCase(supabase, opts.caseId, opts.caseType);
+  const gate = canRegistrarIngresoDespachoParaSentencia(opts.caseType, docs, cgpOpts);
+  if (!gate.ok) throw new Error('message' in gate ? gate.message : 'Faltan piezas para sentencia.');
   const open = requireOpenStageAt(
     await fetchOpenStageRow(supabase, opts.caseId),
     'TRAMITE',

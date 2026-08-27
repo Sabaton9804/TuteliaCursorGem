@@ -1,0 +1,127 @@
+{
+  "id": "tramites-cgp-civil-circuito",
+  "version": "2026-08-27",
+  "norma": "Ley 1564 de 2012 (CGP)",
+  "especialidad": "civil_circuito",
+  "alcance": "Juzgados civiles de circuito en todo el país. No es catálogo de un despacho ni catálogo SIERJU.",
+  "piloto": "El Juzgado 051 Civil del Circuito de Bogotá es el primer tenant que valida; no define el modelo.",
+  "runtime_plazos": "src/lib/civil-business-days.ts",
+  "runtime_catalogo": "src/data/catalogos/tramites-cgp.json",
+  "seed_plazos": "supabase/migrations/20260827155000_fix_cgp_civil_term_articles.sql",
+  "seed_actos": "supabase/migrations/20260827160000_cgp_tramite_act_types.sql",
+  "nota_carga": "Runtime: overlay de actos + gate 375. No activar PROCESS_RUNTIME_BD_ONLY hasta que process_stages_definition coincida con este JSON. Overlay de despacho (membrete, oficios): docs/cgp/overlay-despacho.example.json",
+  "modelo": {
+    "capa_nacional": "CGP, Decreto 2591, Ley 2213, protocolo CSJ. Igual en Cúcuta, Cali o Bogotá.",
+    "capa_especialidad": "Civil circuito vs municipal vs familia vs laboral: mismo código, distinto formulario SIERJU y a veces plazos especiales. Este JSON es civil circuito.",
+    "capa_despacho": "Membrete, numeración de oficios, court_process_stages, prácticas locales. Nunca cambia el artículo del CGP.",
+    "case_type": "Tubo gordo de producto (civil_ordinario, civil_ejecutivo, …). No explotar un case_type por pretensión ni por juzgado.",
+    "tramite": "Qué capítulo del CGP rige (verbal, ejecutivo, …).",
+    "perfil": "Norma especial que se suma al trámite (ninguno, 375, 376, 406, hipotecario). Pertenencia no es proceso aparte.",
+    "etapa": "Eje de secretaría. Se infiere por piezas; override humano. SIERJU no manda el carril.",
+    "hilos_paralelos": "Cautelares, incidentes y recursos no son la siguiente casilla del carril lineal."
+  },
+  "plazos_canonicos": {
+    "contestacion_verbal": { "dias_habiles": 20, "cgp": "369", "nota": "No es art. 76 (terminación del poder)." },
+    "pago_ejecutivo": { "dias_habiles": 5, "cgp": "431", "nota": "Concomitante con excepciones; no es el término de excepciones." },
+    "excepciones_ejecutivo": { "dias_habiles": 10, "cgp": "442", "nota": "Art. 443 es el trámite posterior (traslado 10 días al ejecutante)." },
+    "traslado_excepciones_ejecutivo": { "dias_habiles": 10, "cgp": "443" },
+    "traslado_excepciones_merito_verbal": { "dias_habiles": 5, "cgp": "370", "forma": "110" },
+    "apelacion_fuera_audiencia": { "dias_habiles": 3, "cgp": "322", "nota": "En audiencia se interpone de inmediato. Art. 318 es reposición." },
+    "reposicion": { "dias_habiles": 3, "cgp": "318" }
+  },
+  "tramites": [
+    {
+      "id": "verbal",
+      "case_type": "civil_ordinario",
+      "tramite": "verbal",
+      "perfil": "ninguno",
+      "cgp": ["368", "369", "370", "372", "373"],
+      "sierju_ejemplos": ["Declarativos Verbal", "Responsabilidad Civil"],
+      "etapas": [
+        { "code": "RADICACION", "cgp": null, "pieza_cierra": "demanda" },
+        { "code": "ADMISION", "cgp": "90", "pieza_cierra": "auto_admisorio" },
+        { "code": "NOTIFICACION_AUTO_ADMISORIO", "cgp": "8 Ley 2213", "pieza_cierra": "constancia_notificacion" },
+        { "code": "TERMINO_RESPUESTA", "cgp": "369", "dias_habiles": 20, "pieza_cierra": "contestacion_demanda" },
+        { "code": "TRAMITE", "cgp": ["370", "372", "373"], "nota": "Cajón actual de Tutelia. Desglosar: descorre 370, previas 100-101, audiencia inicial 372, instrucción 373.", "piezas": ["descorre_370", "auto_resuelve_previas", "acta_372", "acta_373"] },
+        { "code": "INGRESO_DESPACHO_FALLO", "pieza_cierra": "informe_ingreso_despacho" },
+        { "code": "FALLO", "cgp": "373", "pieza_cierra": "sentencia" },
+        { "code": "NOTIFICACION_FALLO", "pieza_cierra": "constancia_notificacion_sentencia" },
+        { "code": "TERMINO_APELACION", "cgp": "322", "dias_habiles": 3, "nota": "Solo si la sentencia se notifica por estado / fuera de audiencia." },
+        { "code": "APELACION", "cgp": ["321", "322", "323"] },
+        { "code": "REMISION_SUPERIOR", "pieza_cierra": "remision_superior" },
+        { "code": "EJECUTORIA", "cgp": "302" }
+      ]
+    },
+    {
+      "id": "verbal_pertenencia",
+      "case_type": "civil_ordinario",
+      "tramite": "verbal",
+      "perfil": "375",
+      "overlay_on": "verbal",
+      "cgp": ["368", "375"],
+      "sierju_ejemplos": ["Declarativos Verbal Pertenencia"],
+      "overlay": [
+        { "desde": "ADMISION", "cgp": "375 nums. 5-6", "actos": ["inscripcion_orip", "emplazamiento", "oficios"] },
+        { "cgp": "375 num. 7", "actos": ["valla", "fotos", "registro_nacional"] },
+        { "cgp": "375 num. 8", "actos": ["curador_indeterminados"] }
+      ],
+      "gates": [
+        {
+          "id": "inspeccion_375_9",
+          "before_stage": "FALLO",
+          "required_act": "acta_inspeccion_judicial",
+          "cgp": "375 num. 9",
+          "nota": "No abrir sentencia sin acta. La inspección es personal y obligatoria; puede concentrar 372 y 373 en el inmueble."
+        }
+      ]
+    },
+    {
+      "id": "verbal_servidumbre",
+      "case_type": "civil_ordinario",
+      "tramite": "verbal",
+      "perfil": "376",
+      "overlay_on": "verbal",
+      "cgp": ["368", "376"],
+      "sierju_ejemplos": ["Declarativos Verbal Servidumbres"],
+      "nota": "Misma regla: leer el título especial y las normas de trámite que cite. No es case_type nuevo."
+    },
+    {
+      "id": "divisorio",
+      "case_type": "civil_ordinario",
+      "tramite": "verbal",
+      "perfil": "406",
+      "overlay_on": "verbal",
+      "cgp": ["406"],
+      "sierju_ejemplos": ["Declarativos Especiales Divisorio"],
+      "nota": "Traslado y actos del título especial (p. ej. art. 409) se suman al verbal. No duplicar Admisión/372."
+    },
+    {
+      "id": "ejecutivo",
+      "case_type": "civil_ejecutivo",
+      "tramite": "ejecutivo",
+      "perfil": "ninguno",
+      "cgp": ["422", "430", "431", "442", "443"],
+      "sierju_ejemplos": ["EJECUTIVOS"],
+      "etapas": [
+        { "code": "RADICACION", "pieza_cierra": "demanda" },
+        { "code": "ADMISION", "cgp": "430", "label": "Mandamiento de pago", "pieza_cierra": "mandamiento" },
+        { "code": "NOTIFICACION_AUTO_ADMISORIO", "label": "Notificación mandamiento de pago", "pieza_cierra": "constancia_notificacion" },
+        {
+          "code": "TERMINO_EXCEPCIONES",
+          "cgp": "442",
+          "dias_habiles": 10,
+          "pieza_cierra": "excepciones_ejecutivo",
+          "hilo_paralelo": { "code": "PAGO_431", "cgp": "431", "dias_habiles": 5, "nota": "No es etapa del carril lineal hoy; no mezclar con 442." }
+        },
+        { "code": "TRAMITE", "cgp": "443", "nota": "Traslado 10 días al ejecutante; luego 372/373 o 392 según cuantía." },
+        { "code": "INGRESO_DESPACHO_FALLO", "pieza_cierra": "informe_ingreso_despacho" },
+        { "code": "FALLO", "cgp": "443 nums. 3-4", "pieza_cierra": "sentencia" },
+        { "code": "NOTIFICACION_FALLO", "pieza_cierra": "constancia_notificacion_sentencia" },
+        { "code": "TERMINO_APELACION", "cgp": "322", "dias_habiles": 3 },
+        { "code": "APELACION", "cgp": ["321", "322"] },
+        { "code": "REMISION_SUPERIOR", "pieza_cierra": "remision_superior" },
+        { "code": "EJECUTORIA", "cgp": "302" }
+      ]
+    }
+  ]
+}

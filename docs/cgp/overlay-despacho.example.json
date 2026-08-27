@@ -1,0 +1,14 @@
+{
+  "layer": "despacho",
+  "nota": "Membrete, oficios, numeración y prácticas locales. No cambia arts. 369, 442, 375 ni el carril CGP.",
+  "piloto_ejemplo": {
+    "court_code": "051",
+    "label": "Juzgado 051 Civil del Circuito de Bogotá D.C.",
+    "usa": ["courts.branding", "court_process_stages", "court_office_sequences", "document_templates"]
+  },
+  "no_va_aqui": [
+    "Plazos del CGP (van en tramites-cgp.json)",
+    "Clases SIERJU (van en sierju_process_classes)",
+    "Un case_type por juzgado"
+  ]
+}

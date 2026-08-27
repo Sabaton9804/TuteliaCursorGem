@@ -5,9 +5,9 @@
 - **UI:** menú ⋯ «Lectura rápida con IA» + panel bajo el visor del expediente digital.
 - **API:** `POST /api/ai/analyze-piece` (sesión Bearer + acceso al despacho).
 - **Modelo:** `OPENAI_MODEL` (por defecto `gpt-4o-mini`).
-- **Prompt:** versión `PIECE_AI_PROMPT_VERSION = 'v2.0'` en `src/lib/piece-ai-analysis.ts`.
+- **Prompt:** versión `PIECE_AI_PROMPT_VERSION = 'v2.1'` en `src/lib/piece-ai-analysis.ts`.
 - **Ramas de prompt:**
-  - **CGP auto v2** (`cgp_auto_v2`): procesos `civil_*` o `catalog_metadata.tipo_registro = civil` y pieza que parece auto/providencia. Salida operativa para secretaría J51 (resolución, término art. 118, Planner/Due, actuaciones posteriores, borrador informe). **Contestación ordinaria: art. 76 CGP** (20 días hábiles), alineado con `civil-business-days.ts`.
+  - **CGP auto v2** (`cgp_auto_v2`): procesos `civil_*` o `catalog_metadata.tipo_registro = civil` y pieza que parece auto/providencia. Salida operativa para secretaría de un juzgado civil (CGP nacional; el membrete es del despacho). **Contestación verbal: art. 369 CGP** (20 días hábiles), alineado con `civil-business-days.ts`.
   - **General v1** (`general_v1`): tutela y demás piezas (memoriales, informes, etc.).
 - **Caché:** tabla `case_document_ai_analyses`; invalidación por `content_hash`, `prompt_version` y `model`.
 - **Límites:** `AI_PIECE_MAX_PAGES` (default 40) para PDF; Word vía Mammoth con tope de caracteres en servidor.

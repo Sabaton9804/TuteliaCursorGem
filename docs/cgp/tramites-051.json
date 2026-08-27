@@ -1,0 +1,7 @@
+{
+  "id": "redirect-tramites-051",
+  "mensaje": "Tutelia es nacional. El catálogo CGP de civil circuito no es del Juzgado 51.",
+  "usar": "docs/cgp/tramites-cgp.json",
+  "runtime": "src/data/catalogos/tramites-cgp.json",
+  "piloto": "El 051 es el primer tenant. Overlay de despacho: overlay-despacho.example.json"
+}

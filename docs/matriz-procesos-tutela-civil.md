@@ -21,8 +21,8 @@ Referencia de producto para diferenciar flujos en Tutelia.
 |---------|-----------------|------------------|
 | Tutela 1ª | Decreto 2591/1991 | `decreto-2591-plazos.ts` |
 | Tutela 2ª | D. 2591 art. 32 | 20 háb. fallo; 10 háb. remisión Corte |
-| Civil ordinario | CGP | `civil-business-days.ts` |
-| Civil ejecutivo | CGP | Excepciones art. 443 |
+| Civil ordinario | CGP | Traslado art. 369 (`civil-business-days.ts`) |
+| Civil ejecutivo | CGP | Pago art. 431; excepciones art. 442; trámite art. 443 |
 | Notificaciones (medio) | Ley 2213/2022 | Pendiente F2 |
 
 ---
@@ -40,19 +40,21 @@ RADICACION → ADMISION → NOTIFICACION_AUTO → TERMINO_RESPUESTA (2 háb.)
 ### Civil ordinario
 
 ```
-RADICACION → ADMISION → NOTIFICACION_AUTO → TERMINO_RESPUESTA (20 háb. art. 76)
+RADICACION → ADMISION → NOTIFICACION_AUTO → TERMINO_RESPUESTA (20 háb. art. 369)
 → TRAMITE → INGRESO_DESPACHO_FALLO → FALLO/Sentencia → NOTIFICACION_FALLO
-→ TERMINO_APELACION (10 háb. art. 318) → APELACION → REMISION_SUPERIOR → EJECUTORIA
+→ TERMINO_APELACION (3 háb. art. 322 si es por estado) → APELACION → REMISION_SUPERIOR → EJECUTORIA
 ```
 
 ### Civil ejecutivo
 
 ```
-RADICACION → ADMISION → NOTIFICACION_AUTO → TERMINO_EXCEPCIONES (5 háb. art. 443)
+RADICACION → ADMISION → NOTIFICACION_AUTO → TERMINO_EXCEPCIONES (10 háb. art. 442)
 → TRAMITE → … → (igual post-trámite que ordinario con apelación)
 ```
 
-**Diferencia clave ejecutivo vs ordinario:** etapa `TERMINO_EXCEPCIONES` en lugar de `TERMINO_RESPUESTA` con plazo de contestación.
+El 5 días del art. 431 es **pago**, concomitante con el 442; no sustituye el término de excepciones. El art. 443 es el **trámite** de las excepciones ya propuestas (traslado 10 días al ejecutante).
+
+**Diferencia clave ejecutivo vs ordinario:** etapa `TERMINO_EXCEPCIONES` (art. 442) en lugar de `TERMINO_RESPUESTA` (art. 369).
 
 ---
 
@@ -61,8 +63,8 @@ RADICACION → ADMISION → NOTIFICACION_AUTO → TERMINO_EXCEPCIONES (5 háb. a
 | Etapa / concepto | Tutela 1ª | Civil ordinario | Civil ejecutivo |
 |------------------|-----------|-----------------|-----------------|
 | Plazo global caso | 10 háb. (art. 29) | Sin perentorio global | Sin perentorio global |
-| Traslado / contestación | 2 háb. (práctica 051) | 20 háb. (art. 76) | 5 háb. excepciones (art. 443) |
-| Recurso post-decisión | Impugnación 3 háb. (art. 31) | Apelación 10 háb. (art. 318) | Apelación 10 háb. |
+| Traslado / contestación | 2 háb. (práctica 051) | 20 háb. (art. 369) | 10 háb. excepciones (art. 442); 5 háb. pago (art. 431) |
+| Recurso post-decisión | Impugnación 3 háb. (art. 31) | Apelación 3 háb. por estado (art. 322) | Apelación 3 háb. (art. 322) |
 | Remisión superior | 2 háb. post-impugnación (art. 32) | Según apelación | Según apelación |
 | Remisión Corte | No (salvo consulta desacato) | No | No |
 | Trámite probatorio | No etapa `TRAMITE` | Sí | Sí |
@@ -127,6 +129,8 @@ Definición: `SECRETARIA_STAGES` / `DESPACHO_STAGES` en `case-workflow-stages.ts
 
 ---
 
-## Próximos tipos (plan F3)
+## Próximos tipos (F3 replanteado)
 
-`civil_verbal`, `civil_abreviado`, `civil_verbal_sumario`, `civil_monitorio`, `civil_ejecutivo_hipotecario`.
+No explotar `case_type`. El cubo es **trámite** (`verbal` / `ejecutivo` / …) + **perfil** (`ninguno` / `375` / `376` / `406` / hipotecario) sobre los cinco tubos gordos. SIERJU sigue siendo etiqueta estadística.
+
+Fuente canónica **nacional** (civil circuito): [`docs/cgp/tramites-cgp.json`](cgp/tramites-cgp.json). El 051 es el piloto, no el modelo; overlay de despacho: [`overlay-despacho.example.json`](cgp/overlay-despacho.example.json).

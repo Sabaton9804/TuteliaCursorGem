@@ -2,7 +2,7 @@ import type { Document } from '../types';
 import { isCaseDocumentDocx, isCaseDocumentPdf } from './expediente-docx';
 
 /** Versión del prompt; al cambiar, invalida caché en servidor. */
-export const PIECE_AI_PROMPT_VERSION = 'v2.0';
+export const PIECE_AI_PROMPT_VERSION = 'v2.2';
 
 export const PIECE_AI_MAX_PAGES = 40;
 
@@ -129,7 +129,7 @@ function buildCgpAutoSummaryMarkdown(data: PieceAiCgpAutoAnalysisData): string {
     }
     lines.push('');
   }
-  lines.push('**Borrador informe de ingreso (J51)**');
+  lines.push('**Borrador informe de ingreso**');
   lines.push(data.informe_j51_draft.trim() || '—');
   lines.push('');
   if (data.cautions.length > 0) {

@@ -17,10 +17,11 @@ where psd.process_definition_id = pd.id
   and psd.code in ('ADMISION', 'EJECUTORIA');
 
 -- Orden CGP ordinario (y buckets asimilados). Ejecutivo ya tiene 1–12 en 20260709200000.
+-- psd (tabla del UPDATE) no puede usarse en el ON de un JOIN del FROM; el cruce va en WHERE.
 update public.process_stages_definition psd
 set order_index = v.ord
 from public.process_definitions pd
-join (
+cross join (
   values
     ('RADICACION', 1),
     ('ADMISION', 2),
@@ -34,8 +35,9 @@ join (
     ('APELACION', 10),
     ('REMISION_SUPERIOR', 11),
     ('EJECUTORIA', 12)
-) as v (code, ord) on v.code = psd.code
+) as v (code, ord)
 where psd.process_definition_id = pd.id
+  and psd.code = v.code
   and pd.code in (
     'civil_ordinario',
     'civil_jurisdiccion_voluntaria',

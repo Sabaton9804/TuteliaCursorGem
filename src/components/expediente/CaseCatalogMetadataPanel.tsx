@@ -4,6 +4,7 @@ import {
   catalogSituacionLabel,
   catalogTipoProcesoVisible,
 } from '../../lib/case-catalog-metadata';
+import { cgpOptsFromCase, resolveCgpTramite } from '../../lib/tramites-cgp';
 
 type Props = {
   caseItem: Case;
@@ -36,6 +37,7 @@ export function CaseCatalogMetadataPanel({ caseItem }: Props) {
   return (
     <div className="flex w-full min-w-0 flex-wrap items-end gap-4 rounded-xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
       <Field label="Tipo proceso" value={catalogTipoProcesoVisible(meta, caseItem.subject)} />
+      <Field label="Carril CGP" value={resolveCgpTramite(cgpOptsFromCase(caseItem))?.label} />
       <Field label="Situación" value={catalogSituacionLabel(meta)} />
       <Field label="Ubicación interna" value={meta.ubicacion_interna || caseItem.operationalStatus} />
       <Field label="Encargado" value={meta.encargado_nombre || caseItem.assignedTo} />

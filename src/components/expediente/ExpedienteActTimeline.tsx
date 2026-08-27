@@ -2,17 +2,22 @@ import React, { useMemo, useState } from 'react';
 import { Check, ChevronDown, Circle, Minus } from 'lucide-react';
 import type { CaseType, Document } from '../../types';
 import { buildActTimeline } from '../../lib/case-act-types';
+import type { CgpResolveInput } from '../../lib/tramites-cgp';
 
 type Props = {
   docs: Document[];
   caseType?: CaseType | null;
+  cgpOpts?: CgpResolveInput;
   compact?: boolean;
 };
 
 /** Checklist colapsable (cerrado por defecto): no debe tapar el árbol del expediente. */
-export function ExpedienteActTimeline({ docs, caseType, compact = false }: Props) {
+export function ExpedienteActTimeline({ docs, caseType, cgpOpts, compact = false }: Props) {
   const [open, setOpen] = useState(false);
-  const entries = useMemo(() => buildActTimeline(docs, caseType), [docs, caseType]);
+  const entries = useMemo(
+    () => buildActTimeline(docs, caseType, { ...cgpOpts, caseType: caseType ?? cgpOpts?.caseType }),
+    [docs, caseType, cgpOpts],
+  );
   if (entries.length === 0) return null;
 
   const presentCount = entries.filter((e) => e.present).length;

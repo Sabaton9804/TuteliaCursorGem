@@ -25,7 +25,7 @@
 | **F0** | Fundación documental y normativa | **Cerrada** |
 | **F1** | Runtime 100% `process_definitions` | Pendiente |
 | **F2** | Secretaría, Ley 2213, oficios J51 | Pendiente |
-| **F3** | Civil granular (SIERJU / verbales) | Pendiente |
+| **F3** | Civil granular (trámite + perfil) | Pendiente |
 | **F4** | Procesos laterales (comisiones, archivo…) | Pendiente |
 | **F5** | Jurisprudencia en redacción | Parcial |
 | **F6** | Laboral, penal, onboarding nacional | Pendiente |
@@ -65,7 +65,7 @@ gantt
 | **F0** | Fundación documental y normativa | 1 semana | — |
 | **F1** | Runtime 100% `process_definitions` | 3–4 semanas | F0 |
 | **F2** | Secretaría, Ley 2213, oficios J51 | 3–4 semanas | F1 |
-| **F3** | Civil granular (SIERJU / verbales) | 4 semanas | F1 |
+| **F3** | Civil granular (trámite + perfil) | 4 semanas | F1 |
 | **F4** | Procesos laterales (comisiones, competencia, archivo) | 4 semanas | F2, F3 |
 | **F5** | Jurisprudencia integrada en despacho | 2 semanas | F2 |
 | **F6** | Laboral, penal, escala nacional | 6+ semanas | F4 |
@@ -99,7 +99,7 @@ gantt
 |----|-------|----------|-----|
 | F0.2.1 | Copiar consolidados desde skill J51 o submodule | `docs/normativa/` (nuevo); fuente: `~/.cursor/skills/oficios-juzgado-51-civil-bogota/normativa/full_text/` | IA y desarrolladores pueden `@docs/normativa` sin skill externo |
 | F0.2.2 | Resumen operativo Ley 2213 para notificaciones | `docs/ley-2213-notificaciones-resumen.md` (nuevo) | Arts. aplicables a correo, constancias, validez |
-| F0.2.3 | Unificar referencia contestación CGP (art. 76 vs 371) | `server/analyze-piece-service.ts`, `docs/piece-ai-lectura-rapida.md` | Un solo artículo citado; actualizar tests snapshot del prompt si existen |
+| F0.2.3 | Unificar referencia contestación CGP | `server/analyze-piece-service.ts`, `docs/piece-ai-lectura-rapida.md` | **Ago 2026:** verbal = art. **369** (20 háb.). Ni 76 (terminación del poder) ni 371. |
 
 ### F0.3 Reglas de producto explícitas
 
@@ -192,36 +192,46 @@ gantt
 
 ---
 
-## F3 — Civil granular (SIERJU y tipos de proceso)
+## F3 — Civil granular (trámite + perfil + etapa)
 
-**Problema:** 26+ clases SIERJU colapsadas en 5 `case_type`.
+**Problema:** 26+ clases SIERJU colapsadas en 5 `case_type`. `civil_ordinario` es un solo tubo; el cubo `TRAMITE` esconde 370 / 372 / 373 y la inspección del 375. F3 **no** se resuelve inventando `civil_verbal` / `civil_pertenencia` como tubos paralelos.
 
-### F3.1 Modelo de subclase procesal
+**Modelo (tres capas):**
 
-| ID | Tarea | Archivos | DoD |
-|----|-------|----------|-----|
-| F3.1.1 | Obligar `cases.sierju_process_class_id` FK a `sierju_process_classes` | migración + `NewCase.tsx`, `sierju-catalog-service.ts` | NOT NULL al radicar civil |
-| F3.1.2 | Mapeo clase SIERJU → `process_definition_id` | `docs/sierju/mapeo-tyba-sgde-clases.md` implementado en TS | Sin ambigüedad ejecutivo singular/hipotecario |
-| F3.1.3 | UI selector clase al radicar civil | `NewCase.tsx`, `CaseTypeSelector.tsx` | Filtra por `case_type` padre |
+1. **Trámite** — qué capítulo del CGP rige (`verbal`, `ejecutivo`, `divisorio`, …).
+2. **Perfil** — norma especial que se suma (`ninguno`, `375`, `376`, `406`, hipotecario). Pertenencia no es proceso aparte.
+3. **Etapa** — eje de secretaría; se infiere por piezas (admisorio, contestación, descorre 370, acta 375 num. 9). Override humano.
 
-### F3.2 Nuevos `case_type` o definiciones hijas
+SIERJU sigue siendo etiqueta estadística. Cautelares, incidentes y recursos son hilos paralelos (F4), no la siguiente casilla del carril.
 
-| ID | Tarea | Prioridad | Pipeline | DoD |
-|----|-------|-----------|----------|-----|
-| F3.2.1 | `civil_verbal` | Alta | Similar ordinario; plazos CGP verbal | Radicable + SIERJU |
-| F3.2.2 | `civil_abreviado` | Alta | Trámite abreviado CGP | Etapas propias |
-| F3.2.3 | `civil_verbal_sumario` | Media | Plazo contestación reducido | art. CGP correspondiente |
-| F3.2.4 | `civil_monitorio` | Media | Sin contestación clásica | Actos monitorio |
-| F3.2.5 | `civil_ejecutivo_hipotecario` | Media | Extiende ejecutivo | Acto hipoteca |
-| F3.2.6 | Mantener `civil_otros` como comodín | Baja | Pipeline ordinario | Solo si clase SIERJU sin pipeline |
+Fuente canónica **nacional** (civil circuito): `docs/cgp/tramites-cgp.json`. El 051 es el primer tenant. **No** activar BD-only hasta que el seed coincida con ese JSON y con `civil-business-days.ts`.
 
-### F3.3 Actos y plantillas por subtipo
+### F3.1 SIERJU como estadística (no manda el carril)
 
 | ID | Tarea | Archivos | DoD |
 |----|-------|----------|-----|
-| F3.3.1 | Extender `case-act-types.ts` por subtipo | `case-act-types.ts`, migración act types | Gates de etapa correctos |
-| F3.3.2 | Plantillas despacho: mandamiento, auto verbal, etc. | `document_templates` seeds `20260709210000_*` | Una plantilla mínima por tipo |
-| F3.3.3 | Checklist contestación por subtipo | `case-contestacion-checklist.ts` | Mensajes CGP correctos |
+| F3.1.1 | Pedir `cases.sierju_process_class_id` al radicar civil | `NewCase.tsx`, `sierju-catalog-service.ts` | Clase SIERJU en cada civil; el pipeline sale del trámite+perfil, no de la etiqueta |
+| F3.1.2 | Mapa SIERJU → trámite + perfil (no un `process_definition` por clase) | `docs/sierju/mapeo-tyba-sgde-clases.md` + `tramites-cgp.json` | Pertenencia / servidumbre / RC → `civil_ordinario` + perfil 375/376/ninguno |
+| F3.1.3 | UI selector clase al radicar | `NewCase.tsx`, `CaseTypeSelector.tsx` | Filtra por `case_type` padre; muestra perfil CGP inferido |
+
+### F3.2 Overlays sobre los cinco tubos (sin nuevos `case_type`)
+
+| ID | Tarea | Prioridad | DoD |
+|----|-------|-----------|-----|
+| F3.2.1 | Cargar `tramites-cgp.json` a actos + gates en runtime TS | Alta | **Parcial ago 2026:** overlay + gate 375 (nacional, civil circuito). Falta substages BD y BD-only |
+| F3.2.2 | Desglosar cubo `TRAMITE` (370, 372, 373) en actos gatillo | Alta | Secretaría ve qué pieza cierra cada tramo; no forzar `FALLO` si falta 372/373 |
+| F3.2.3 | Gate pertenencia 375 num. 9 | Alta | No abrir sentencia sin `acta_inspeccion_judicial` |
+| F3.2.4 | Verbal sumario / monitorio | Media | Nuevas filas en el JSON, overlay sobre tubo existente |
+| F3.2.5 | Hipotecario | Media | Perfil sobre `civil_ejecutivo`, no `civil_ejecutivo_hipotecario` |
+| F3.2.6 | `civil_otros` | Baja | Comodín solo si no hay trámite en el JSON |
+
+### F3.3 Actos y plantillas por trámite/perfil
+
+| ID | Tarea | Archivos | DoD |
+|----|-------|----------|-----|
+| F3.3.1 | Extender `case-act-types.ts` (descorre 370, acta 375-9, etc.) | `case-act-types.ts`, migración act types | Gates de F3.2.2–F3.2.3 |
+| F3.3.2 | Plantillas despacho: mandamiento, auto verbal, pertenencia | `document_templates` seeds | Una plantilla mínima por trámite/perfil frecuente |
+| F3.3.3 | Checklist contestación / excepciones | `case-contestacion-checklist.ts` | Arts. 369 y 442; no 76 ni 443 |
 
 ### F3.4 Estadística SIERJU
 
@@ -230,7 +240,7 @@ gantt
 | F3.4.1 | Export trimestral desde `sierju_process_class_id` | `src/lib/sierju-export.ts` (nuevo) | CSV validado contra formulario CSJ |
 | F3.4.2 | Dashboard segmentado por clase | `Estadisticas.tsx`, `tutela-stats-dashboard.ts` | Filtro civil por clase |
 
-**DoD fase F3:** cada radicación civil tiene clase SIERJU; al menos verbal, abreviado y ejecutivo hipotecario con pipeline propio; export SIERJU coherente.
+**DoD fase F3:** cada civil tiene trámite+perfil (JSON nacional civil circuito) y clase SIERJU para estadística; pertenencia/divisorio no son `case_type` nuevos; cubo `TRAMITE` tiene actos gatillo; export SIERJU coherente. Un despacho nuevo no exige un tubo nuevo.
 
 ---
 
@@ -564,7 +574,7 @@ npm run lint          # si configurado
 | R7 | ¿Desacato no crea caso hijo? | sin `cases` nuevo en incidente |
 | R8 | ¿Nombres PDF protocolo CSJ? | `InformeIngresoDespacho.pdf`, TitleCase, F8.6 grep |
 | R9 | ¿Archivo genera índice? | `00IndiceElectronicoC01.pdf` |
-| R10 | ¿CGP arts. 76/318/443 en UI? | etiquetas etapa civil |
+| R10 | ¿UI civil cita 369 / 442 / 322 (no 76 / 318-apelación / 443-excepciones)? | etiquetas etapa + `civil-business-days.ts` |
 
 ### 12.3 Matriz de cierre (22 gaps auditoría · 23 filas de seguimiento)
 
@@ -573,7 +583,7 @@ npm run lint          # si configurado
 | Docs architecture desactualizados | F0 | F0.1.1, F0.1.3 | **Cerrado** (jul 2026) |
 | AUDITORIA_TECNICA desactualizada | F0 | F0.1.2 | **Cerrado** (jul 2026) |
 | CGP/2213 fuera del repo | F0 | F0.2.* | **Cerrado** (normativa + resumen 2213) |
-| art. 76 vs 371 IA | F0 | F0.2.3 | **Cerrado** (jul 2026) |
+| art. 76 vs 371 IA | F0 | F0.2.3 | **Corregido ago 2026** (verbal = art. 369; 76 y 371 eran citas erróneas) |
 | QA checklist tutela 051 | F0 | F0.1.4, F7.5 | **Cerrado** (doc creado; ejecución QA pendiente) |
 | Matriz tutela/civil | F0 | F0.3.1 | **Cerrado** (jul 2026) |
 | Regla Cursor Ley 2213 | F0 | F0.3.2 | **Cerrado** (jul 2026) |
@@ -585,7 +595,7 @@ npm run lint          # si configurado
 | Sin numeración oficios | F2 | F2.2.1 | Pendiente |
 | Términos suspendidos CGP | F2 | F2.3.* | Pendiente |
 | SIERJU colapsado | F3 | F3.1–F3.4 | Pendiente |
-| Verbal/abreviado ausente | F3 | F3.2.* | Pendiente |
+| Verbal/abreviado como `case_type` | F3 | F3.2.* | **Replanteado ago 2026:** overlay trámite+perfil nacional (`docs/cgp/tramites-cgp.json`); 051 = tenant |
 | Comisiones incompletas | F4 | F4.1.* | Pendiente |
 | Competencia sin trazabilidad | F4 | F4.2.* | Pendiente |
 | Archivo judicial | F4 | F4.3.* | Pendiente |

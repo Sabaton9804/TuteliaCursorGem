@@ -92,6 +92,7 @@ import {
   suggestedLogicalNameForAct,
   uploadableActsForCaseType,
 } from '../../lib/case-act-types';
+import { cgpOptsFromCase } from '../../lib/tramites-cgp';
 import { sortExpedienteCuadernoPiezas } from '../../lib/expediente-document-order';
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
@@ -685,7 +686,7 @@ export function ExpedienteDigitalPanel({
       }
       // Provisional: no pedir «Tipo de acto procesal» al subir; reactivar el diálogo cuando el flujo de actos esté listo.
       const PROMPT_ACT_ON_UPLOAD = false;
-      if (PROMPT_ACT_ON_UPLOAD && uploadableActsForCaseType(caseItem.caseType).length > 0) {
+      if (PROMPT_ACT_ON_UPLOAD && uploadableActsForCaseType(caseItem.caseType, cgpOptsFromCase(caseItem)).length > 0) {
         setUploadActDialog({ files, notebookCode });
         if (fileInputRef.current) fileInputRef.current.value = '';
         return;
@@ -1217,12 +1218,13 @@ export function ExpedienteDigitalPanel({
         files={uploadActDialog?.files ?? []}
         notebookCode={uploadActDialog?.notebookCode ?? defaultNb}
         caseType={caseItem.caseType}
+        cgpOpts={cgpOptsFromCase(caseItem)}
         busy={Boolean(uploadingNb)}
         onCancel={() => setUploadActDialog(null)}
         onConfirm={confirmUploadWithAct}
       />
-      {uploadableActsForCaseType(caseItem.caseType).length > 0 ? (
-        <ExpedienteActTimeline docs={docs} caseType={caseItem.caseType} />
+      {uploadableActsForCaseType(caseItem.caseType, cgpOptsFromCase(caseItem)).length > 0 ? (
+        <ExpedienteActTimeline docs={docs} caseType={caseItem.caseType} cgpOpts={cgpOptsFromCase(caseItem)} />
       ) : null}
       <ExpedienteSignSgdeDialog
         open={Boolean(signDoc)}

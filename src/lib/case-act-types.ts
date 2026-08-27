@@ -2,6 +2,10 @@ import type { Document } from '../types';
 import type { CaseType } from '../types';
 import { isCivilCaseType } from './process-product-scope';
 import { isCivilEjecutivoCaseType } from './sgde-case-scope';
+import {
+  resolveCgpTramite,
+  type CgpResolveInput,
+} from './tramites-cgp';
 export type CaseActCode =
   | 'correo_reparto'
   | 'escrito_tutela'
@@ -34,7 +38,17 @@ export type CaseActCode =
   | 'titulo_ejecutivo'
   | 'mandamiento_pago'
   | 'excepciones_ejecutivo'
-  | 'auto_embargo';
+  | 'auto_embargo'
+  | 'descorre_370'
+  | 'auto_resuelve_previas'
+  | 'acta_372'
+  | 'acta_373'
+  | 'acta_inspeccion_judicial'
+  | 'inscripcion_orip'
+  | 'emplazamiento'
+  | 'valla'
+  | 'curador_indeterminados'
+  | 'traslado_excepciones_ejecutante';
 
 /** Actos procesales tutela 1ª (alineados a `case_act_types.code`). */
 
@@ -100,6 +114,16 @@ export const SGDE_TIPO_DOCUMENTAL_BY_ACT: Readonly<Record<CaseActCode, string>> 
   mandamiento_pago: 'Mandamiento de pago',
   excepciones_ejecutivo: 'Excepciones',
   auto_embargo: 'Auto interlocutorio',
+  descorre_370: 'Traslado',
+  auto_resuelve_previas: 'Auto interlocutorio',
+  acta_372: 'Acta de audiencia',
+  acta_373: 'Acta de audiencia',
+  acta_inspeccion_judicial: 'Acta de inspección judicial',
+  inscripcion_orip: 'Oficio',
+  emplazamiento: 'Emplazamiento',
+  valla: 'Constancia',
+  curador_indeterminados: 'Auto interlocutorio',
+  traslado_excepciones_ejecutante: 'Traslado',
 };
 
 /** Catálogo estático tutela 1ª (espejo del seed SQL hasta cargar desde BD). */
@@ -167,13 +191,37 @@ export const CIVIL_EJECUTIVO_ACT_TYPES: readonly CaseActTypeDef[] = [
   { code: 'auto_rechazo', labelEs: 'Auto de rechazo (PDF firmado)', suggestedFilename: 'AutoRechazoDemanda.pdf', sgdeTipoDocumental: 'Auto de rechazo', stageCode: 'RECHAZO', responsibleRole: 'despacho', sortBand: 31 },
 ] as const;
 
+/** Cubo TRAMITE verbal: 370 / previas / 372 / 373. Overlay sobre civil_ordinario. */
+export const CIVIL_VERBAL_TRAMITE_ACT_TYPES: readonly CaseActTypeDef[] = [
+  { code: 'descorre_370', labelEs: 'Descorre excepciones de mérito (art. 370)', suggestedFilename: 'DescorreExcepcionesMerito.pdf', sgdeTipoDocumental: 'Traslado', stageCode: 'TRAMITE', responsibleRole: 'escribiente', sortBand: 13, repeatable: true },
+  { code: 'auto_resuelve_previas', labelEs: 'Auto que resuelve excepciones previas (100-101)', suggestedFilename: 'AutoResuelvePrevias.pdf', sgdeTipoDocumental: 'Auto interlocutorio', stageCode: 'TRAMITE', responsibleRole: 'despacho', sortBand: 14 },
+  { code: 'acta_372', labelEs: 'Acta audiencia inicial (art. 372)', suggestedFilename: 'ActaAudienciaInicial.pdf', sgdeTipoDocumental: 'Acta de audiencia', stageCode: 'TRAMITE', responsibleRole: 'secretaria', sortBand: 15 },
+  { code: 'acta_373', labelEs: 'Acta instrucción y juzgamiento (art. 373)', suggestedFilename: 'ActaInstruccionJuzgamiento.pdf', sgdeTipoDocumental: 'Acta de audiencia', stageCode: 'TRAMITE', responsibleRole: 'secretaria', sortBand: 16 },
+];
+
+/** Perfil 375: actos extra del verbal (no proceso aparte). */
+export const CIVIL_PERTENENCIA_ACT_TYPES: readonly CaseActTypeDef[] = [
+  { code: 'inscripcion_orip', labelEs: 'Inscripción en ORIP (375 nums. 5-6)', suggestedFilename: 'InscripcionOrip.pdf', sgdeTipoDocumental: 'Oficio', stageCode: 'ADMISION', responsibleRole: 'secretaria', sortBand: 9 },
+  { code: 'emplazamiento', labelEs: 'Emplazamiento de indeterminados (375 nums. 5-6)', suggestedFilename: 'Emplazamiento.pdf', sgdeTipoDocumental: 'Emplazamiento', stageCode: 'ADMISION', responsibleRole: 'secretaria', sortBand: 9 },
+  { code: 'valla', labelEs: 'Constancia de valla y fotos (375 num. 7)', suggestedFilename: 'ConstanciaValla.pdf', sgdeTipoDocumental: 'Constancia', stageCode: 'TRAMITE', responsibleRole: 'secretaria', sortBand: 17 },
+  { code: 'curador_indeterminados', labelEs: 'Curador de indeterminados (375 num. 8)', suggestedFilename: 'AutoCuradorIndeterminados.pdf', sgdeTipoDocumental: 'Auto interlocutorio', stageCode: 'TRAMITE', responsibleRole: 'despacho', sortBand: 18 },
+  { code: 'acta_inspeccion_judicial', labelEs: 'Acta inspección judicial personal (375 num. 9)', suggestedFilename: 'ActaInspeccionJudicial.pdf', sgdeTipoDocumental: 'Acta de inspección judicial', stageCode: 'TRAMITE', responsibleRole: 'despacho', sortBand: 19 },
+];
+
+export const CIVIL_EJECUTIVO_TRAMITE_ACT_TYPES: readonly CaseActTypeDef[] = [
+  { code: 'traslado_excepciones_ejecutante', labelEs: 'Traslado de excepciones al ejecutante (art. 443)', suggestedFilename: 'TrasladoExcepcionesEjecutante.pdf', sgdeTipoDocumental: 'Traslado', stageCode: 'TRAMITE', responsibleRole: 'secretaria', sortBand: 13 },
+];
+
 export function sgdeTipoDocumentalForActCode(actCode: string | null | undefined): string | null {
   if (!actCode?.trim()) return null;
   const code = actCode.trim() as CaseActCode;
   const fromCatalog =
     TUTELA_PRIMERA_ACT_TYPES.find((a) => a.code === code)?.sgdeTipoDocumental ??
     CIVIL_ORDINARIO_ACT_TYPES.find((a) => a.code === code)?.sgdeTipoDocumental ??
-    CIVIL_EJECUTIVO_ACT_TYPES.find((a) => a.code === code)?.sgdeTipoDocumental;
+    CIVIL_EJECUTIVO_ACT_TYPES.find((a) => a.code === code)?.sgdeTipoDocumental ??
+    CIVIL_VERBAL_TRAMITE_ACT_TYPES.find((a) => a.code === code)?.sgdeTipoDocumental ??
+    CIVIL_PERTENENCIA_ACT_TYPES.find((a) => a.code === code)?.sgdeTipoDocumental ??
+    CIVIL_EJECUTIVO_TRAMITE_ACT_TYPES.find((a) => a.code === code)?.sgdeTipoDocumental;
   if (fromCatalog?.trim()) return fromCatalog.trim();
   return SGDE_TIPO_DOCUMENTAL_BY_ACT[code] ?? null;
 }
@@ -187,6 +235,9 @@ for (const a of [
   ...TUTELA_PRIMERA_ACT_TYPES,
   ...CIVIL_EJECUTIVO_ACT_TYPES,
   ...CIVIL_ORDINARIO_ACT_TYPES,
+  ...CIVIL_VERBAL_TRAMITE_ACT_TYPES,
+  ...CIVIL_PERTENENCIA_ACT_TYPES,
+  ...CIVIL_EJECUTIVO_TRAMITE_ACT_TYPES,
 ]) {
   ACT_LABEL_BY_CODE.set(a.code, a.labelEs);
 }
@@ -209,6 +260,16 @@ export function inferActCodeFromDocument(doc: Document): string | null {
   if (/^Sentencia/i.test(doc.name)) return 'sentencia';
   if (/^AutoInterloc/i.test(doc.name)) return 'auto_interlocutorio';
   if (/^DecretoPruebas/i.test(doc.name) || /^Prueba/i.test(doc.name)) return 'prueba_documental';
+  if (/^ActaInspeccion/i.test(doc.name)) return 'acta_inspeccion_judicial';
+  if (/^ActaAudienciaInicial/i.test(doc.name)) return 'acta_372';
+  if (/^ActaInstruccion/i.test(doc.name)) return 'acta_373';
+  if (/^Descorre/i.test(doc.name)) return 'descorre_370';
+  if (/^AutoResuelvePrevias/i.test(doc.name)) return 'auto_resuelve_previas';
+  if (/^InscripcionOrip/i.test(doc.name)) return 'inscripcion_orip';
+  if (/^Emplazamiento/i.test(doc.name)) return 'emplazamiento';
+  if (/^ConstanciaValla/i.test(doc.name)) return 'valla';
+  if (/^AutoCurador/i.test(doc.name)) return 'curador_indeterminados';
+  if (/^TrasladoExcepcionesEjecutante/i.test(doc.name)) return 'traslado_excepciones_ejecutante';
   if (/^ActaAudiencia/i.test(doc.name)) return 'acta_audiencia';
   if (/^Contestacion/i.test(doc.name)) return 'contestacion_demanda';
   if (/^Excepciones/i.test(doc.name)) return 'excepciones_ejecutivo';
@@ -234,6 +295,10 @@ export function inferActCodeFromDocument(doc: Document): string | null {
     if (/tutela/.test(raw)) return 'escrito_tutela';
     return 'escrito_demanda';
   }
+  if (/actainspeccion|inspeccion.?judicial/.test(raw)) return 'acta_inspeccion_judicial';
+  if (/actaaudienciainicial|audiencia.?inicial/.test(raw)) return 'acta_372';
+  if (/actainstruccion|instruccion.?y.?juzgamiento/.test(raw)) return 'acta_373';
+  if (/descorre/.test(raw)) return 'descorre_370';
   if (/^Respuesta/i.test(doc.name)) return 'respuesta_accionado';
   return null;
 }
@@ -252,19 +317,30 @@ export function caseHasAnyAct(docs: Document[], actCodes: readonly string[]): bo
   return actCodes.some((c) => present.has(c));
 }
 
-export function actCatalogForCaseType(caseType: CaseType | null | undefined): readonly CaseActTypeDef[] {
+export function actCatalogForCaseType(
+  caseType: CaseType | null | undefined,
+  opts?: CgpResolveInput,
+): readonly CaseActTypeDef[] {
   if (caseType === 'tutela_primera') return TUTELA_PRIMERA_ACT_TYPES;
-  if (caseType && isCivilEjecutivoCaseType(caseType)) return CIVIL_EJECUTIVO_ACT_TYPES;
-  if (caseType && isCivilCaseType(caseType)) return CIVIL_ORDINARIO_ACT_TYPES;
+  if (caseType && isCivilEjecutivoCaseType(caseType)) {
+    return [...CIVIL_EJECUTIVO_ACT_TYPES, ...CIVIL_EJECUTIVO_TRAMITE_ACT_TYPES];
+  }
+  if (caseType && isCivilCaseType(caseType)) {
+    const overlay: CaseActTypeDef[] = [...CIVIL_VERBAL_TRAMITE_ACT_TYPES];
+    const tram = resolveCgpTramite({ ...opts, caseType });
+    if (tram?.perfil === '375') overlay.push(...CIVIL_PERTENENCIA_ACT_TYPES);
+    return [...CIVIL_ORDINARIO_ACT_TYPES, ...overlay];
+  }
   return [];
 }
 
 export function labelForActCode(
   code: string | null | undefined,
   caseType?: CaseType | null,
+  opts?: CgpResolveInput,
 ): string | null {
   if (!code?.trim()) return null;
-  const catalog = actCatalogForCaseType(caseType);
+  const catalog = actCatalogForCaseType(caseType, { ...opts, caseType: caseType ?? opts?.caseType });
   const fromCatalog = catalog.find((a) => a.code === code)?.labelEs;
   if (fromCatalog) return fromCatalog;
   return ACT_LABEL_BY_CODE.get(code) ?? null;
@@ -279,7 +355,20 @@ export type ActTimelineEntry = {
   optional: boolean;
 };
 
-const OPTIONAL_ACT_CODES = new Set<string>(['auto_amplia_termino', 'auto_requiere', 'correo_contestacion']);
+const OPTIONAL_ACT_CODES = new Set<string>([
+  'auto_amplia_termino',
+  'auto_requiere',
+  'correo_contestacion',
+  'descorre_370',
+  'auto_resuelve_previas',
+  'acta_372',
+  'acta_373',
+  'inscripcion_orip',
+  'emplazamiento',
+  'valla',
+  'curador_indeterminados',
+  'traslado_excepciones_ejecutante',
+]);
 
 export function caseHasRulingAct(docs: Document[], caseType: CaseType): boolean {
   if (isCivilCaseType(caseType)) {
@@ -323,6 +412,21 @@ export const UPLOADABLE_ACT_CODES_CIVIL_ORDINARIO: readonly CaseActCode[] = [
   'auto_rechazo',
 ];
 
+const UPLOADABLE_OVERLAY_VERBAL = [
+  'descorre_370',
+  'auto_resuelve_previas',
+  'acta_372',
+  'acta_373',
+] as const;
+
+const UPLOADABLE_OVERLAY_PERTENENCIA = [
+  'inscripcion_orip',
+  'emplazamiento',
+  'valla',
+  'curador_indeterminados',
+  'acta_inspeccion_judicial',
+] as const;
+
 /** Actos subibles en proceso ejecutivo (CGP). */
 export const UPLOADABLE_ACT_CODES_CIVIL_EJECUTIVO: readonly CaseActCode[] = [
   'titulo_ejecutivo',
@@ -340,6 +444,7 @@ export const UPLOADABLE_ACT_CODES_CIVIL_EJECUTIVO: readonly CaseActCode[] = [
   'remision_superior',
   'auto_inadmite',
   'auto_rechazo',
+  'traslado_excepciones_ejecutante',
 ];
 
 /** @deprecated Usar UPLOADABLE_ACT_CODES_CIVIL_ORDINARIO */
@@ -348,14 +453,23 @@ export const UPLOADABLE_ACT_CODES_CIVIL = UPLOADABLE_ACT_CODES_CIVIL_ORDINARIO;
 /** @deprecated Usar uploadableActsForCaseType */
 export const UPLOADABLE_ACT_CODES = UPLOADABLE_ACT_CODES_TUTELA;
 
-export function uploadableActsForCaseType(caseType: CaseType | null | undefined): CaseActTypeDef[] {
-  const catalog = actCatalogForCaseType(caseType);
+export function uploadableActsForCaseType(
+  caseType: CaseType | null | undefined,
+  opts?: CgpResolveInput,
+): CaseActTypeDef[] {
+  const catalog = actCatalogForCaseType(caseType, opts);
   if (catalog.length === 0) return [];
   const allowed = new Set<string>(
     caseType && isCivilEjecutivoCaseType(caseType)
       ? UPLOADABLE_ACT_CODES_CIVIL_EJECUTIVO
       : caseType && isCivilCaseType(caseType)
-        ? UPLOADABLE_ACT_CODES_CIVIL_ORDINARIO
+        ? [
+            ...UPLOADABLE_ACT_CODES_CIVIL_ORDINARIO,
+            ...UPLOADABLE_OVERLAY_VERBAL,
+            ...(resolveCgpTramite({ ...opts, caseType })?.perfil === '375'
+              ? UPLOADABLE_OVERLAY_PERTENENCIA
+              : []),
+          ]
         : UPLOADABLE_ACT_CODES_TUTELA,
   );
   return catalog.filter((a) => allowed.has(a.code));
@@ -388,7 +502,10 @@ export function suggestedLogicalNameForAct(
     catalog.find((a) => a.code === actCode) ??
     TUTELA_PRIMERA_ACT_TYPES.find((a) => a.code === actCode) ??
     CIVIL_ORDINARIO_ACT_TYPES.find((a) => a.code === actCode) ??
-    CIVIL_EJECUTIVO_ACT_TYPES.find((a) => a.code === actCode);
+    CIVIL_EJECUTIVO_ACT_TYPES.find((a) => a.code === actCode) ??
+    CIVIL_VERBAL_TRAMITE_ACT_TYPES.find((a) => a.code === actCode) ??
+    CIVIL_PERTENENCIA_ACT_TYPES.find((a) => a.code === actCode) ??
+    CIVIL_EJECUTIVO_TRAMITE_ACT_TYPES.find((a) => a.code === actCode);
   let base = def?.suggestedFilename?.replace(/\.pdf$/i, '') ?? 'Documento';
   if (actCode === 'respuesta_accionado' && opts?.partyEntity?.trim()) {
     base = `Respuesta${sanitizePartyEntityForFilename(opts.partyEntity, opts.caseType)}`;
@@ -409,10 +526,16 @@ export function nextActSequenceForDocs(docs: Document[], actCode: string, caseTy
   return Math.max(...existing) + 1;
 }
 
-/** Timeline de actos esperados vs piezas cargadas (tutela 1ª). */
-export function buildActTimeline(docs: Document[], caseType: CaseType | null | undefined): ActTimelineEntry[] {
-  const catalog = actCatalogForCaseType(caseType);
+/** Timeline de actos esperados vs piezas cargadas. */
+export function buildActTimeline(
+  docs: Document[],
+  caseType: CaseType | null | undefined,
+  opts?: CgpResolveInput,
+): ActTimelineEntry[] {
+  const catalog = actCatalogForCaseType(caseType, opts);
   if (catalog.length === 0) return [];
+  const tram = resolveCgpTramite({ ...opts, caseType });
+  const requiredInspeccion = tram?.perfil === '375';
 
   const counts = new Map<string, number>();
   for (const d of docs) {
@@ -427,7 +550,7 @@ export function buildActTimeline(docs: Document[], caseType: CaseType | null | u
     sortBand: a.sortBand,
     present: (counts.get(a.code) ?? 0) > 0,
     count: counts.get(a.code) ?? 0,
-    optional: OPTIONAL_ACT_CODES.has(a.code),
+    optional: a.code === 'acta_inspeccion_judicial' ? !requiredInspeccion : OPTIONAL_ACT_CODES.has(a.code),
   }));
 }
 

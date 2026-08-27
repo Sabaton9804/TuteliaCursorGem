@@ -68,9 +68,12 @@ La tutela tiene plazos propios (D. 2591). La Ley 2213 complementa el **medio** d
 | Tema | CGP | Ley 2213 |
 |------|-----|----------|
 | Cómputo días hábiles | Art. 118 | Complementa |
-| Contestación ordinaria | Art. 76 (20 días) | Notificación art. 8 |
-| Excepciones ejecutivo | Art. 443 (5 días) | Idem |
-| Apelación | Art. 318 (10 días) | Art. 12 trámite apelación civil/familia |
+| Contestación verbal | Art. 369 (20 días) | Notificación art. 8 |
+| Pago ejecutivo | Art. 431 (5 días) | Idem |
+| Excepciones ejecutivo | Art. 442 (10 días) | Idem |
+| Trámite de esas excepciones | Art. 443 (traslado 10 días al ejecutante) | Idem |
+| Apelación (fuera de audiencia) | Art. 322 (3 días) | Art. 12 trámite apelación civil/familia |
+| Reposición | Art. 318 (3 días) | Idem |
 | Oficios | Art. 111 | Art. 11 refuerza medio electrónico |
 
 ---

@@ -29,12 +29,28 @@ export function stageDeadlineFromMetadata(
   return typeof v === 'string' && v.trim() ? v.trim() : null;
 }
 
+/**
+ * Seed julio 2026: excepciones ejecutivo = 5 (art. 443) y apelación = 10 (art. 318).
+ * Esos valores son citas erróneas; ignorarlos hasta que corra
+ * `20260827155000_fix_cgp_civil_term_articles.sql`.
+ */
+export function isStaleCgpStageTerm(
+  stageCode: CaseStageCode,
+  days: number,
+  caseType?: CaseType,
+): boolean {
+  if (!caseType || !isCivilCaseType(caseType)) return false;
+  if (stageCode === 'TERMINO_EXCEPCIONES' && days === 5) return true;
+  if (stageCode === 'TERMINO_APELACION' && days === 10) return true;
+  return false;
+}
+
 function resolveStageTermBusinessDays(
   stageCode: CaseStageCode,
   caseType?: CaseType,
 ): number | null {
   const fromBd = getCachedStageTermBusinessDays(caseType, stageCode);
-  if (fromBd != null) return fromBd;
+  if (fromBd != null && !isStaleCgpStageTerm(stageCode, fromBd, caseType)) return fromBd;
   if (stageCode === 'TERMINO_RESPUESTA') {
     if (caseType && isCivilCaseType(caseType)) return CONTESTACION_CIVIL_BUSINESS_DAYS;
     return CONTESTACION_BUSINESS_DAYS;
@@ -144,7 +160,7 @@ export function subStageDeadlineLabel(stageCode: CaseStageCode, caseType?: CaseT
   if (days == null) return null;
   if (stageCode === 'TERMINO_RESPUESTA') {
     if (caseType && isCivilCaseType(caseType)) {
-      return `Contestación de la demanda (${days} días hábiles — CGP art. 76)`;
+      return `Contestación de la demanda (${days} días hábiles — CGP art. 369)`;
     }
     return `Contestación de accionados (${days} días hábiles)`;
   }
@@ -152,10 +168,10 @@ export function subStageDeadlineLabel(stageCode: CaseStageCode, caseType?: CaseT
     return `Impugnación (${days} días háb. siguientes — D. 2591/91 art. 31)`;
   }
   if (stageCode === 'TERMINO_APELACION') {
-    return `Apelación (${days} días hábiles — CGP art. 318)`;
+    return `Apelación (${days} días hábiles — CGP art. 322)`;
   }
   if (stageCode === 'TERMINO_EXCEPCIONES') {
-    return `Excepciones de mérito (${days} días hábiles — CGP art. 443)`;
+    return `Excepciones de mérito (${days} días hábiles — CGP art. 442)`;
   }
   if (stageCode === 'TRAMITE' && caseType && isCivilCaseType(caseType)) {
     return 'Trámite probatorio y audiencia (CGP)';

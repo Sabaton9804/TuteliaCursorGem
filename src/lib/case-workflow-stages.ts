@@ -5,6 +5,11 @@ import {
   findStaffByAssignedValue,
   normalizeStaffKey,
 } from './court-staff-assignees';
+import {
+  APELACION_CIVIL_BUSINESS_DAYS,
+  CONTESTACION_CIVIL_BUSINESS_DAYS,
+  EXCEPCIONES_EJECUTIVO_BUSINESS_DAYS,
+} from './civil-business-days';
 import { getCachedPipelineForCaseType, getCachedStageLabel } from './process-definitions-service';
 import { isCivilCaseType } from './process-product-scope';
 
@@ -201,8 +206,15 @@ export function stageLabelForCaseType(stage: CaseStageCode, caseType?: CaseType)
   if (stage === 'INGRESO_DESPACHO_FALLO') return 'Ingreso despacho / sentencia';
   if (stage === 'NOTIFICACION_FALLO') return 'Notificación de la sentencia';
   if (stage === 'TRAMITE') return 'Trámite (prueba, audiencia)';
-  if (stage === 'TERMINO_APELACION') return 'Apelación (10 días hábiles — CGP art. 318)';
-  if (stage === 'TERMINO_EXCEPCIONES') return 'Excepciones de mérito (5 días hábiles — CGP art. 443)';
+  if (stage === 'TERMINO_RESPUESTA') {
+    return `Término contestación (${CONTESTACION_CIVIL_BUSINESS_DAYS} días hábiles — CGP art. 369)`;
+  }
+  if (stage === 'TERMINO_APELACION') {
+    return `Apelación (${APELACION_CIVIL_BUSINESS_DAYS} días hábiles — CGP art. 322)`;
+  }
+  if (stage === 'TERMINO_EXCEPCIONES') {
+    return `Excepciones de mérito (${EXCEPCIONES_EJECUTIVO_BUSINESS_DAYS} días hábiles — CGP art. 442)`;
+  }
   if (stage === 'NOTIFICACION_AUTO_ADMISORIO' && caseType === 'civil_ejecutivo') {
     return 'Notificación mandamiento de pago';
   }

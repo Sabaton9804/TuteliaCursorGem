@@ -3,6 +3,7 @@ import type { CaseType } from '../types';
 import { CIVIL_CASE_TYPES, isCivilCaseType } from './process-product-scope';
 import { caseHasAnyAct, caseHasRulingAct, labelForActCode } from './case-act-types';
 import type { StageActTriggerCode } from './case-act-types';
+import { requiredActsBeforeStage, resolveCgpTramite, type CgpResolveInput } from './tramites-cgp';
 
 export type StageActGateResult =
   | { ok: true }
@@ -209,6 +210,33 @@ export function canRegistrarInadmision(
   docs: Document[],
 ): StageActGateResult {
   return checkStageActGate('DESPACHO_INADMISION_REGISTRADA', caseType, docs);
+}
+
+/** Pertenencia: no abrir sentencia / ingreso a fallo sin acta del 375 num. 9. */
+export function canRegistrarIngresoDespachoParaSentencia(
+  caseType: CaseType,
+  docs: Document[],
+  opts?: CgpResolveInput,
+): StageActGateResult {
+  if (!isCivilCaseType(caseType)) return { ok: true };
+  const tram = resolveCgpTramite({ ...opts, caseType });
+  const required = requiredActsBeforeStage(tram, 'FALLO');
+  if (required.length === 0) return { ok: true };
+  const missing = required.filter((code) => !caseHasAnyAct(docs, [code]));
+  if (missing.length === 0) return { ok: true };
+  return {
+    ok: false,
+    missingActs: missing,
+    message: `Pertenencia (art. 375 num. 9): no puede ingresar a sentencia sin ${formatMissingActs(missing, caseType)} en el expediente.`,
+  };
+}
+
+export function canRegistrarFalloCivil(
+  caseType: CaseType,
+  docs: Document[],
+  opts?: CgpResolveInput,
+): StageActGateResult {
+  return canRegistrarIngresoDespachoParaSentencia(caseType, docs, opts);
 }
 
 export function stageActGateMessage(result: StageActGateResult): string | null {
